@@ -1,0 +1,760 @@
+//! DPT 14.xxx - 4-byte float values
+
+use super::{DptValue, Result};
+use crate::error::ProtocolError;
+
+/// DPT 14.000 - 4-byte IEEE 754 float base type (m/s²)
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dpt14Float {
+    data: [u8; 4],
+}
+
+impl Dpt14Float {
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::DptError`] if `value` is not finite (NaN or infinite).
+    pub fn new(value: f32) -> Result<Self> {
+        if !value.is_finite() {
+            return Err(ProtocolError::DptError {
+                dpt_type: "14.000".to_string(),
+                details: "Value must be finite".to_string(),
+            }
+            .into());
+        }
+        Ok(Self {
+            data: value.to_be_bytes(),
+        })
+    }
+
+    #[must_use]
+    pub fn value(&self) -> f32 {
+        f32::from_be_bytes(self.data)
+    }
+}
+
+impl DptValue for Dpt14Float {
+    const DPT_NUMBER: &'static str = "14.000";
+    const VALUE_TYPE: &'static str = "acceleration";
+    const UNIT: Option<&'static str> = Some("m/s²");
+    const BYTE_LENGTH: usize = 4;
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != Self::BYTE_LENGTH {
+            return Err(ProtocolError::DptError {
+                dpt_type: Self::DPT_NUMBER.to_string(),
+                details: format!(
+                    "Invalid length: expected {}, got {}",
+                    Self::BYTE_LENGTH,
+                    bytes.len()
+                ),
+            }
+            .into());
+        }
+        Ok(Self {
+            data: [bytes[0], bytes[1], bytes[2], bytes[3]],
+        })
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    fn validate(&self) -> Result<()> {
+        if !self.value().is_finite() {
+            return Err(ProtocolError::DptError {
+                dpt_type: Self::DPT_NUMBER.to_string(),
+                details: "Value must be finite".to_string(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    fn value_range() -> (f64, f64) {
+        (f64::from(f32::MIN), f64::from(f32::MAX))
+    }
+}
+
+// Python-style aliases - Adding most commonly used DPT 14 types
+use super::DptInnerType;
+use crate::dpt_alias;
+
+impl DptInnerType for Dpt14Float {
+    type InnerType = f32;
+    fn new(value: f32) -> Self {
+        Self {
+            data: value.to_be_bytes(),
+        }
+    }
+    fn into_inner(self) -> f32 {
+        self.value()
+    }
+}
+
+dpt_alias!(
+    DPTAcceleration,
+    14,
+    000,
+    Dpt14Float,
+    "acceleration",
+    Some("m/s²"),
+    None
+);
+dpt_alias!(
+    DPTAccelerationAngular,
+    14,
+    001,
+    Dpt14Float,
+    "acceleration_angular",
+    Some("rad/s²"),
+    None
+);
+dpt_alias!(
+    DPTActivationEnergy,
+    14,
+    002,
+    Dpt14Float,
+    "activation_energy",
+    Some("J/mol"),
+    None
+);
+dpt_alias!(
+    DPTActivity,
+    14,
+    003,
+    Dpt14Float,
+    "activity",
+    Some("s⁻¹"),
+    None
+);
+dpt_alias!(DPTMol, 14, 004, Dpt14Float, "mol", Some("mol"), None);
+dpt_alias!(DPTAmplitude, 14, 005, Dpt14Float, "amplitude", None, None);
+dpt_alias!(
+    DPTAngleRad,
+    14,
+    006,
+    Dpt14Float,
+    "angle_rad",
+    Some("rad"),
+    None
+);
+dpt_alias!(
+    DPTAngleDeg,
+    14,
+    007,
+    Dpt14Float,
+    "angle_deg",
+    Some("°"),
+    None
+);
+dpt_alias!(
+    DPTAngularMomentum,
+    14,
+    008,
+    Dpt14Float,
+    "angular_momentum",
+    Some("J s"),
+    None
+);
+dpt_alias!(
+    DPTAngularVelocity,
+    14,
+    009,
+    Dpt14Float,
+    "angular_velocity",
+    Some("rad/s"),
+    None
+);
+dpt_alias!(DPTArea, 14, 010, Dpt14Float, "area", Some("m²"), None);
+dpt_alias!(
+    DPTCapacitance,
+    14,
+    011,
+    Dpt14Float,
+    "capacitance",
+    Some("F"),
+    None
+);
+dpt_alias!(
+    DPTChargeDensitySurface,
+    14,
+    012,
+    Dpt14Float,
+    "charge_density_surface",
+    Some("C/m²"),
+    None
+);
+dpt_alias!(
+    DPTChargeDensityVolume,
+    14,
+    013,
+    Dpt14Float,
+    "charge_density_volume",
+    Some("C/m³"),
+    None
+);
+dpt_alias!(
+    DPTCompressibility,
+    14,
+    014,
+    Dpt14Float,
+    "compressibility",
+    Some("m²/N"),
+    None
+);
+dpt_alias!(
+    DPTConductance,
+    14,
+    015,
+    Dpt14Float,
+    "conductance",
+    Some("S"),
+    None
+);
+dpt_alias!(
+    DPTElectricalConductivity,
+    14,
+    016,
+    Dpt14Float,
+    "electrical_conductivity",
+    Some("S/m"),
+    None
+);
+dpt_alias!(
+    DPTDensity,
+    14,
+    017,
+    Dpt14Float,
+    "density",
+    Some("kg/m³"),
+    None
+);
+dpt_alias!(
+    DPTElectricCharge,
+    14,
+    018,
+    Dpt14Float,
+    "electric_charge",
+    Some("C"),
+    None
+);
+dpt_alias!(
+    DPTElectricCurrent,
+    14,
+    019,
+    Dpt14Float,
+    "electric_current",
+    Some("A"),
+    Some("current")
+);
+dpt_alias!(
+    DPTElectricCurrentDensity,
+    14,
+    020,
+    Dpt14Float,
+    "electric_current_density",
+    Some("A/m²"),
+    None
+);
+dpt_alias!(
+    DPTElectricDipoleMoment,
+    14,
+    021,
+    Dpt14Float,
+    "electric_dipole_moment",
+    Some("C m"),
+    None
+);
+dpt_alias!(
+    DPTElectricDisplacement,
+    14,
+    022,
+    Dpt14Float,
+    "electric_displacement",
+    Some("C/m²"),
+    None
+);
+dpt_alias!(
+    DPTElectricFieldStrength,
+    14,
+    023,
+    Dpt14Float,
+    "electric_field_strength",
+    Some("V/m"),
+    None
+);
+dpt_alias!(
+    DPTElectricFlux,
+    14,
+    024,
+    Dpt14Float,
+    "electric_flux",
+    Some("c"),
+    None
+);
+dpt_alias!(
+    DPTElectricFluxDensity,
+    14,
+    025,
+    Dpt14Float,
+    "electric_flux_density",
+    Some("C/m²"),
+    None
+);
+dpt_alias!(
+    DPTElectricPolarization,
+    14,
+    026,
+    Dpt14Float,
+    "electric_polarization",
+    Some("C/m²"),
+    None
+);
+dpt_alias!(
+    DPTElectricPotential,
+    14,
+    027,
+    Dpt14Float,
+    "electric_potential",
+    Some("V"),
+    None
+);
+dpt_alias!(
+    DPTElectricPotentialDifference,
+    14,
+    028,
+    Dpt14Float,
+    "electric_potential_difference",
+    Some("V"),
+    None
+);
+dpt_alias!(
+    DPTElectromagneticMoment,
+    14,
+    029,
+    Dpt14Float,
+    "electromagnetic_moment",
+    Some("A m²"),
+    None
+);
+dpt_alias!(
+    DPTElectromotiveForce,
+    14,
+    030,
+    Dpt14Float,
+    "electromotive_force",
+    Some("V"),
+    None
+);
+dpt_alias!(DPTEnergy, 14, 031, Dpt14Float, "energy", Some("J"), None);
+dpt_alias!(DPTForce, 14, 032, Dpt14Float, "force", Some("N"), None);
+dpt_alias!(
+    DPTFrequency,
+    14,
+    033,
+    Dpt14Float,
+    "frequency",
+    Some("Hz"),
+    Some("frequency")
+);
+dpt_alias!(
+    DPTAngularFrequency,
+    14,
+    034,
+    Dpt14Float,
+    "angular_frequency",
+    Some("rad/s"),
+    None
+);
+dpt_alias!(
+    DPTHeatCapacity,
+    14,
+    035,
+    Dpt14Float,
+    "heatcapacity",
+    Some("J/K"),
+    None
+);
+dpt_alias!(
+    DPTHeatFlowRate,
+    14,
+    036,
+    Dpt14Float,
+    "heatflowrate",
+    Some("W"),
+    None
+);
+dpt_alias!(
+    DPTHeatQuantity,
+    14,
+    037,
+    Dpt14Float,
+    "heat_quantity",
+    Some("J"),
+    None
+);
+dpt_alias!(
+    DPTImpedance,
+    14,
+    038,
+    Dpt14Float,
+    "impedance",
+    Some("Ω"),
+    None
+);
+dpt_alias!(
+    DPTLength,
+    14,
+    039,
+    Dpt14Float,
+    "length",
+    Some("m"),
+    Some("distance")
+);
+dpt_alias!(
+    DPTLightQuantity,
+    14,
+    040,
+    Dpt14Float,
+    "light_quantity",
+    Some("lm s"),
+    None
+);
+dpt_alias!(
+    DPTLuminance,
+    14,
+    041,
+    Dpt14Float,
+    "luminance",
+    Some("cd/m²"),
+    None
+);
+dpt_alias!(
+    DPTLuminousFlux,
+    14,
+    042,
+    Dpt14Float,
+    "luminous_flux",
+    Some("lm"),
+    None
+);
+dpt_alias!(
+    DPTLuminousIntensity,
+    14,
+    043,
+    Dpt14Float,
+    "luminous_intensity",
+    Some("cd"),
+    None
+);
+dpt_alias!(
+    DPTMagneticFieldStrength,
+    14,
+    044,
+    Dpt14Float,
+    "magnetic_field_strength",
+    Some("A/m"),
+    None
+);
+dpt_alias!(
+    DPTMagneticFlux,
+    14,
+    045,
+    Dpt14Float,
+    "magnetic_flux",
+    Some("Wb"),
+    None
+);
+dpt_alias!(
+    DPTMagneticFluxDensity,
+    14,
+    046,
+    Dpt14Float,
+    "magnetic_flux_density",
+    Some("T"),
+    None
+);
+dpt_alias!(
+    DPTMagneticMoment,
+    14,
+    047,
+    Dpt14Float,
+    "magnetic_moment",
+    Some("A m²"),
+    None
+);
+dpt_alias!(
+    DPTMagneticPolarization,
+    14,
+    048,
+    Dpt14Float,
+    "magnetic_polarization",
+    Some("T"),
+    None
+);
+dpt_alias!(
+    DPTMagnetization,
+    14,
+    049,
+    Dpt14Float,
+    "magnetization",
+    Some("A/m"),
+    None
+);
+dpt_alias!(
+    DPTMagnetomotiveForce,
+    14,
+    050,
+    Dpt14Float,
+    "magnetomotive_force",
+    Some("A"),
+    None
+);
+dpt_alias!(
+    DPTMass,
+    14,
+    051,
+    Dpt14Float,
+    "mass",
+    Some("kg"),
+    Some("weight")
+);
+dpt_alias!(
+    DPTMassFlux,
+    14,
+    052,
+    Dpt14Float,
+    "mass_flux",
+    Some("kg/s"),
+    None
+);
+dpt_alias!(
+    DPTMomentum,
+    14,
+    053,
+    Dpt14Float,
+    "momentum",
+    Some("N/s"),
+    None
+);
+dpt_alias!(
+    DPTPhaseAngleRad,
+    14,
+    054,
+    Dpt14Float,
+    "phaseanglerad",
+    Some("rad"),
+    None
+);
+dpt_alias!(
+    DPTPhaseAngleDeg,
+    14,
+    055,
+    Dpt14Float,
+    "phaseangledeg",
+    Some("°"),
+    None
+);
+dpt_alias!(
+    DPTPower,
+    14,
+    056,
+    Dpt14Float,
+    "power",
+    Some("W"),
+    Some("power")
+);
+dpt_alias!(
+    DPTPowerFactor,
+    14,
+    057,
+    Dpt14Float,
+    "powerfactor",
+    None,
+    Some("power_factor")
+);
+dpt_alias!(
+    DPTPressure,
+    14,
+    058,
+    Dpt14Float,
+    "pressure",
+    Some("Pa"),
+    Some("pressure")
+);
+dpt_alias!(
+    DPTReactance,
+    14,
+    059,
+    Dpt14Float,
+    "reactance",
+    Some("Ω"),
+    None
+);
+dpt_alias!(
+    DPTResistance,
+    14,
+    060,
+    Dpt14Float,
+    "resistance",
+    Some("Ω"),
+    None
+);
+dpt_alias!(
+    DPTResistivity,
+    14,
+    061,
+    Dpt14Float,
+    "resistivity",
+    Some("Ωm"),
+    None
+);
+dpt_alias!(
+    DPTSelfInductance,
+    14,
+    062,
+    Dpt14Float,
+    "self_inductance",
+    Some("H"),
+    None
+);
+dpt_alias!(
+    DPTSolidAngle,
+    14,
+    063,
+    Dpt14Float,
+    "solid_angle",
+    Some("sr"),
+    None
+);
+dpt_alias!(
+    DPTSoundIntensity,
+    14,
+    064,
+    Dpt14Float,
+    "sound_intensity",
+    Some("W/m²"),
+    None
+);
+dpt_alias!(
+    DPTSpeed,
+    14,
+    065,
+    Dpt14Float,
+    "speed",
+    Some("m/s"),
+    Some("speed")
+);
+dpt_alias!(DPTStress, 14, 066, Dpt14Float, "stress", Some("Pa"), None);
+dpt_alias!(
+    DPTSurfaceTension,
+    14,
+    067,
+    Dpt14Float,
+    "surface_tension",
+    Some("N/m"),
+    None
+);
+dpt_alias!(
+    DPTCommonTemperature,
+    14,
+    068,
+    Dpt14Float,
+    "common_temperature",
+    Some("°C"),
+    None
+);
+dpt_alias!(
+    DPTAbsoluteTemperature,
+    14,
+    069,
+    Dpt14Float,
+    "absolute_temperature",
+    Some("K"),
+    None
+);
+dpt_alias!(
+    DPTTemperatureDifference,
+    14,
+    070,
+    Dpt14Float,
+    "temperature_difference",
+    Some("K"),
+    None
+);
+dpt_alias!(
+    DPTThermalCapacity,
+    14,
+    071,
+    Dpt14Float,
+    "thermal_capacity",
+    Some("J/K"),
+    None
+);
+dpt_alias!(
+    DPTThermalConductivity,
+    14,
+    072,
+    Dpt14Float,
+    "thermal_conductivity",
+    Some("W/mK"),
+    None
+);
+dpt_alias!(
+    DPTThermoelectricPower,
+    14,
+    073,
+    Dpt14Float,
+    "thermoelectric_power",
+    Some("V/K"),
+    None
+);
+dpt_alias!(
+    DPTTimeSeconds,
+    14,
+    074,
+    Dpt14Float,
+    "time_seconds",
+    Some("s"),
+    None
+);
+dpt_alias!(DPTTorque, 14, 075, Dpt14Float, "torque", Some("Nm"), None);
+dpt_alias!(DPTVolume, 14, 076, Dpt14Float, "volume", Some("m³"), None);
+dpt_alias!(
+    DPTVolumeFlux,
+    14,
+    077,
+    Dpt14Float,
+    "volume_flux",
+    Some("m³/s"),
+    None
+);
+dpt_alias!(DPTWeight, 14, 078, Dpt14Float, "weight", Some("N"), None);
+dpt_alias!(DPTWork, 14, 079, Dpt14Float, "work", Some("J"), None);
+dpt_alias!(
+    DPTApparentPower,
+    14,
+    080,
+    Dpt14Float,
+    "apparent_power",
+    Some("VA"),
+    Some("apparent_power")
+);
+dpt_alias!(
+    DPTVolumeFluxMeter,
+    14,
+    1200,
+    Dpt14Float,
+    "volume_flux_meter",
+    Some("m³/h"),
+    None
+);
+dpt_alias!(
+    DPTVolumeFluxLs,
+    14,
+    1201,
+    Dpt14Float,
+    "volume_flux_ls",
+    Some("L/s"),
+    None
+);

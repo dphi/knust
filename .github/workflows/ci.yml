@@ -1,0 +1,43 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "rustfmt, clippy" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
+      - run: cargo test --all-features
+      - name: feature matrix
+        run: |
+          cargo install cargo-hack --locked
+          cargo hack check --each-feature --no-dev-deps
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with: { token: "${{ secrets.GITHUB_TOKEN }}" }
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so diff-cover can diff against the base branch
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+      - uses: actions/upload-artifact@v4
+        with: { name: lcov, path: lcov.info }
+      - name: Fail if new/changed lines aren't covered
+        if: github.event_name == 'pull_request'
+        run: |
+          pip install diff-cover
+          git fetch origin "$GITHUB_BASE_REF" --depth=1
+          diff-cover lcov.info --compare-branch="origin/$GITHUB_BASE_REF" --fail-under=80

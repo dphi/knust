@@ -1,0 +1,114 @@
+[package]
+name = "knust"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.1"
+authors = ["knust Contributors"]
+description = "Asynchronous KNX/IP library for Rust"
+license = "MIT"
+repository = "https://github.com/dphi/knust"
+keywords = ["knx", "home-automation", "building-automation", "iot"]
+categories = ["network-programming", "asynchronous"]
+
+[features]
+default = ["dpt"]
+
+# Datapoint-type encode/decode (DPT 1..251). On by default; disable for a
+# raw-frame-only client that never interprets group values. Owns the `strum` dep.
+dpt = ["dep:strum"]
+
+# ETS CSV group-address import. The only default consumer of tokio's `fs`,
+# so it lives here. Needs `dpt` (CSV import maps DPT strings).
+ets = ["dep:strum", "dpt", "tokio/fs"]
+
+# Act as a KNXnet/IP tunneling server (gateway role). Most consumers are
+# clients and don't need it.
+server = []
+
+# KNX IP Secure + KNX Data Security: session handshake, group encryption,
+# keyring (.knxkeys) parsing, and the secure TunnelServer path. Pulls in the
+# crypto stack. Off by default — the plaintext KNX/IP library needs none of it.
+# Implies `ets` (keyring parsing + validation live in the config module and use
+# tokio `fs`).
+# NOTE: KNX IP Secure (session handshake) is verified against real hardware.
+# KNX Data Security (group encryption, src/security/group.rs) is experimental:
+# it has no verified round-trip against a reference implementation or a real
+# Data-Secure device.
+secure = ["dep:aes", "dep:ctr", "dep:sha2", "dep:pbkdf2", "dep:x25519-dalek", "dep:zeroize", "ets"]
+
+[dependencies]
+# Only the tokio pieces the library actually touches. rt-multi-thread and
+# process are test/example-only and live in dev-dependencies (feature-unified).
+tokio = { version = "1.52", default-features = false, features = ["rt", "macros", "sync", "time", "net", "io-util"] }
+thiserror = "2.0"
+log = "0.4"
+async-trait = "0.1"
+rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+strum = { version = "0.28", default-features = false, features = ["derive"], optional = true }
+
+# secure feature only
+aes = { version = "0.9", default-features = false, optional = true }
+ctr = { version = "0.10", default-features = false, optional = true }
+sha2 = { version = "0.11", default-features = false, optional = true }
+pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"], optional = true }
+x25519-dalek = { version = "2.0", default-features = false, features = ["static_secrets"], optional = true }
+zeroize = { version = "1.9", default-features = false, features = ["derive", "alloc"], optional = true }
+
+[dev-dependencies]
+# Multi-thread runtime (#[tokio::main] examples, Runtime::new) + process (test_config).
+tokio = { version = "1.52", features = ["rt-multi-thread", "process", "macros", "signal"] }
+proptest = "1.11"
+tokio-test = "0.4"
+chrono = "0.4"
+dotenvy = "0.15.7"
+env_logger = "0.11"
+anyhow = "1"
+
+[lib]
+name = "knust"
+path = "src/lib.rs"
+
+[[example]]
+name = "gateway_discovery"
+path = "examples/gateway_discovery.rs"
+
+[[example]]
+name = "tunneling_connection"
+path = "examples/tunneling_connection.rs"
+
+[[example]]
+name = "logging_demo"
+path = "examples/logging_demo.rs"
+
+[[example]]
+name = "memory_optimization_demo"
+path = "examples/memory_optimization_demo.rs"
+
+[[example]]
+name = "secure_connection"
+path = "examples/secure_connection.rs"
+required-features = ["secure"]
+
+[[example]]
+name = "secure_tunnel_smoke"
+path = "examples/secure_tunnel_smoke.rs"
+required-features = ["secure"]
+
+[[example]]
+name = "tcp_connection_demo"
+path = "examples/tcp_connection_demo.rs"
+
+[[example]]
+name = "configuration_examples"
+path = "examples/configuration_examples.rs"
+
+[[example]]
+name = "color_dpt_demo"
+path = "examples/color_dpt_demo.rs"
+required-features = ["dpt"]
+
+[[example]]
+name = "custom_devices"
+path = "examples/custom_devices.rs"
+required-features = ["dpt"]

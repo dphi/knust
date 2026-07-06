@@ -1,0 +1,11 @@
+/target/
+/.venv/
+/xknx/
+/.kiro/
+/proptest-regressions/
+
+# Local environment files — may contain secrets, never commit
+.env*
+
+# Keep the documented template committable
+!.env.example
