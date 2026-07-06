@@ -26,4 +26,6 @@ jobs:
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --all-features
+        # --allow-dirty: the version rewrite above is intentionally left
+        # uncommitted (see "Set version from tag").
+        run: cargo publish --all-features --allow-dirty
