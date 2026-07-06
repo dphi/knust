@@ -26,15 +26,15 @@ use super::address_probe::auto_select_address;
 use super::address_registry::AddressRegistry;
 use super::connection::{Connection, ConnectionState, ConnectionStats};
 use super::frame_transport::{FrameTransport, TcpFrameTransport, TransportKind, UdpFrameTransport};
-use super::heartbeat::{HeartbeatConfig, HeartbeatMonitor};
+use super::heartbeat::{HeartbeatConfig, HeartbeatEvent, HeartbeatMonitor};
 use super::router::FrameRouter;
 use crate::error::{ProtocolError, Result, TransportError};
 use crate::log_transport;
 use crate::logging::LogLevel;
 use crate::protocol::address::IndividualAddress;
 use crate::protocol::knxip::{
-    ConnectRequest, ConnectResponse, ConnectionstateRequest, DisconnectRequest, DisconnectResponse,
-    Hpai, KnxIpFrame, ServiceType, TunnellingAck,
+    ConnectRequest, ConnectResponse, ConnectionstateRequest, ConnectionstateResponse,
+    DisconnectRequest, DisconnectResponse, Hpai, KnxIpFrame, ServiceType, TunnellingAck,
 };
 #[cfg(feature = "secure")]
 use crate::security::{SecureSession, SessionConfig};
@@ -65,7 +65,7 @@ pub struct Tunnel {
     connection_timeout: Duration,
     established_at: Option<Instant>,
     router: Arc<FrameRouter>,
-    heartbeat: Option<Arc<HeartbeatMonitor>>,
+    heartbeat: std::sync::RwLock<Option<Arc<HeartbeatMonitor>>>,
     #[cfg(feature = "secure")]
     secure_session: Option<Arc<tokio::sync::RwLock<SecureSession>>>,
     /// Whether the `ConnectionState` heartbeat should run for this tunnel.
@@ -143,7 +143,7 @@ impl Tunnel {
             connection_timeout,
             established_at: None,
             router: Arc::new(FrameRouter::new()),
-            heartbeat: None,
+            heartbeat: std::sync::RwLock::new(None),
             #[cfg(feature = "secure")]
             secure_session: None,
             use_heartbeat,
@@ -656,24 +656,91 @@ impl Tunnel {
 
     // --- Heartbeat / router ---
 
-    /// Initialise the heartbeat monitor (loop is driven externally).
+    /// Start the `ConnectionState` heartbeat loop (KNX spec 03.08.02 §5.4):
+    /// periodically sends `ConnectionState_Request`, correlates the response
+    /// through the [`FrameRouter`], and reports each outcome via the returned
+    /// handle. Declares the tunnel lost after `max_failures` consecutive
+    /// failures (see [`HeartbeatConfig`]).
     ///
-    /// No-op if this tunnel was built without `use_heartbeat` (see
-    /// [`Tunnel::new_tcp_with_timeout`]).
-    pub fn init_heartbeat(&mut self, label: String) {
+    /// Inert (no task spawned, [`HeartbeatHandle::lost`] never fires) if this
+    /// tunnel was built without `use_heartbeat` (see [`Tunnel::new_tcp_with_timeout`]).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal lock is poisoned.
+    #[must_use]
+    pub fn start_heartbeat(self: Arc<Self>, label: String) -> HeartbeatHandle {
+        let lost = Arc::new(tokio::sync::Notify::new());
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         if !self.use_heartbeat {
-            return;
+            return HeartbeatHandle {
+                lost,
+                events: event_rx,
+                task: None,
+            };
         }
+
         let monitor = Arc::new(HeartbeatMonitor::new(
             HeartbeatConfig::default(),
             self.channel_id,
             label,
         ));
-        self.heartbeat = Some(monitor);
-    }
+        *self.heartbeat.write().unwrap() = Some(monitor.clone());
 
-    pub fn heartbeat_monitor(&self) -> Option<Arc<HeartbeatMonitor>> {
-        self.heartbeat.clone()
+        let conn = self;
+        let task_lost = lost.clone();
+        let task = tokio::spawn(async move {
+            let interval = monitor.config().interval;
+            let response_timeout = monitor.config().timeout;
+            loop {
+                tokio::select! {
+                    () = tokio::time::sleep(interval) => {}
+                    () = task_lost.notified() => break,
+                }
+                let rx = conn.router().register(ServiceType::ConnectionstateResponse);
+                let t0 = Instant::now();
+                if conn.send_connectionstate_request().await.is_err() {
+                    let _ = event_tx.send(HeartbeatEvent {
+                        ok: false,
+                        latency_ms: None,
+                    });
+                    if monitor.record_failure() {
+                        task_lost.notify_waiters();
+                        break;
+                    }
+                    continue;
+                }
+                let ok = match timeout(response_timeout, rx).await {
+                    Ok(Ok(frame)) => ConnectionstateResponse::parse(&frame.body)
+                        .is_ok_and(|r| r.status == ConnectionstateResponse::STATUS_OK),
+                    _ => false,
+                };
+                if ok {
+                    let latency_ms = t0.elapsed().as_millis() as u64;
+                    monitor.record_success();
+                    let _ = event_tx.send(HeartbeatEvent {
+                        ok: true,
+                        latency_ms: Some(latency_ms),
+                    });
+                } else {
+                    let dead = monitor.record_failure();
+                    let _ = event_tx.send(HeartbeatEvent {
+                        ok: false,
+                        latency_ms: None,
+                    });
+                    if dead {
+                        task_lost.notify_waiters();
+                        break;
+                    }
+                }
+            }
+        });
+
+        HeartbeatHandle {
+            lost,
+            events: event_rx,
+            task: Some(task),
+        }
     }
 
     pub fn router(&self) -> Arc<FrameRouter> {
@@ -693,8 +760,15 @@ impl Tunnel {
         transport.send_frame(&frame.serialize()).await
     }
 
+    /// # Panics
+    ///
+    /// Panics if the internal lock is poisoned.
     pub fn is_tunnel_lost(&self) -> bool {
-        self.heartbeat.as_ref().is_some_and(|m| m.is_tunnel_lost())
+        self.heartbeat
+            .read()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|m| m.is_tunnel_lost())
     }
 
     // --- Sequence numbers (UDP reliability) ---
@@ -763,6 +837,37 @@ impl Tunnel {
     /// Connection uptime since the tunnel was established.
     pub fn uptime(&self) -> Option<Duration> {
         self.established_at.map(|t| t.elapsed())
+    }
+}
+
+/// Handle to a heartbeat loop started by [`Tunnel::start_heartbeat`].
+pub struct HeartbeatHandle {
+    lost: Arc<tokio::sync::Notify>,
+    events: tokio::sync::mpsc::UnboundedReceiver<HeartbeatEvent>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl HeartbeatHandle {
+    /// Notified when the tunnel is declared lost (`max_failures` consecutive
+    /// heartbeat failures), or immediately when [`HeartbeatHandle::stop`] runs.
+    #[must_use]
+    pub fn lost(&self) -> Arc<tokio::sync::Notify> {
+        self.lost.clone()
+    }
+
+    /// Await the next heartbeat outcome. Resolves to `None` once the loop has
+    /// stopped.
+    pub async fn recv_event(&mut self) -> Option<HeartbeatEvent> {
+        self.events.recv().await
+    }
+
+    /// Stop the heartbeat loop and wait for its task to finish.
+    pub async fn stop(self) {
+        self.lost.notify_waiters();
+        if let Some(task) = self.task {
+            task.abort();
+            let _ = task.await;
+        }
     }
 }
 

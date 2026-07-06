@@ -1,9 +1,11 @@
 //! KNX/IP connection heartbeat monitor (KNX spec 03.08.02 §5.4).
 //!
 //! The monitor holds heartbeat state (consecutive failures, tunnel-lost flag,
-//! last success). The heartbeat loop is driven externally and correlates the
-//! `ConnectionState_Response` through the connection's `FrameRouter`, then calls
-//! [`HeartbeatMonitor::record_success`] / [`HeartbeatMonitor::record_failure`].
+//! last success). The loop that drives it — periodically sending
+//! `ConnectionState_Request` and correlating the response through the
+//! connection's `FrameRouter` — is owned by [`super::tunnel::Tunnel::start_heartbeat`],
+//! which calls [`HeartbeatMonitor::record_success`] / [`HeartbeatMonitor::record_failure`]
+//! and reports outcomes as [`HeartbeatEvent`]s.
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use tokio::time::{Duration, Instant};
@@ -30,6 +32,15 @@ impl Default for HeartbeatConfig {
             max_failures: 3,
         }
     }
+}
+
+/// Outcome of a single heartbeat cycle, reported by [`super::tunnel::HeartbeatHandle::recv_event`].
+#[derive(Debug, Clone, Copy)]
+pub struct HeartbeatEvent {
+    /// Whether the `ConnectionState_Response` was received and OK within the timeout.
+    pub ok: bool,
+    /// Round-trip latency in milliseconds, if the heartbeat succeeded.
+    pub latency_ms: Option<u64>,
 }
 
 /// Heartbeat monitor state for a single tunnel connection.
