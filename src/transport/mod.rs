@@ -14,7 +14,6 @@ pub mod frame_transport;
 pub mod gateway_connection;
 pub mod health;
 pub mod heartbeat;
-pub mod multi;
 pub mod queue;
 pub mod rate_limit;
 pub mod receive_limiter;
@@ -34,8 +33,7 @@ mod tunneling_test;
 mod integration_tests;
 
 use crate::protocol::address::IndividualAddress;
-use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
+use std::net::IpAddr;
 
 pub use address_probe::{auto_select_address, probe_address};
 pub use address_registry::AddressRegistry;
@@ -45,7 +43,6 @@ pub use discovery::{GatewayCapabilities, GatewayInfo, GatewayScanner, ServiceTyp
 pub use frame_transport::{FrameTransport, TcpFrameTransport, TransportKind, UdpFrameTransport};
 pub use gateway_connection::GatewayConnection;
 pub use health::{ConnectionHealth, GatewayConnectionState};
-pub use multi::MultiConnection;
 pub use queue::{QueueConfig, QueueStats, TelegramQueue};
 pub use rate_limit::{RateLimitConfig, RateLimiter};
 pub use receive_limiter::{ReceiveLimitConfig, ReceiveRateLimiter, ReceiveResult, ReceiveStats};
@@ -203,51 +200,6 @@ impl Default for TcpConfig {
             keep_alive_enabled: true,
             keep_alive_interval_ms: 30000,
             tcp_nodelay: true, // Disable Nagle for low-latency KNX communication
-        }
-    }
-}
-
-/// Configuration for a single KNX/IP gateway.
-#[derive(Debug, Clone)]
-pub struct GatewayConfig {
-    /// Gateway socket address (IP:port)
-    pub address: SocketAddr,
-    /// Human-readable name for logging/identification
-    pub name: Option<String>,
-    /// Priority (0 = highest, used for failover ordering)
-    pub priority: u8,
-    /// Connection type for this gateway
-    pub connection_type: ConnectionType,
-    /// Individual address override (if None, uses `MultiConnectionConfig` default)
-    pub individual_address: Option<IndividualAddress>,
-}
-
-/// Configuration for multi-gateway connections.
-#[derive(Debug, Clone)]
-pub struct MultiConnectionConfig {
-    /// List of gateways to connect to (ordered by priority)
-    pub gateways: Vec<GatewayConfig>,
-    /// Backoff configuration for reconnection
-    pub backoff: BackoffConfig,
-    /// Rate limiting configuration per connection
-    pub rate_limit: RateLimitConfig,
-    /// Deduplication time window (telegrams within this window are considered duplicates)
-    pub deduplication_window: Duration,
-    /// Default individual address for all connections
-    pub individual_address: IndividualAddress,
-    /// Heartbeat configuration
-    pub heartbeat: heartbeat::HeartbeatConfig,
-}
-
-impl Default for MultiConnectionConfig {
-    fn default() -> Self {
-        Self {
-            gateways: Vec::new(),
-            backoff: BackoffConfig::default(),
-            rate_limit: RateLimitConfig::default(),
-            deduplication_window: Duration::from_secs(2),
-            individual_address: IndividualAddress::new(1, 1, 240),
-            heartbeat: heartbeat::HeartbeatConfig::default(),
         }
     }
 }
