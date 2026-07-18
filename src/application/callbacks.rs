@@ -938,7 +938,6 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction,
                     telegram_type: TelegramType::GroupValueWrite,
-                    gateway_id: None,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1041,7 +1040,6 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
-                    gateway_id: None,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1143,7 +1141,6 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
-                    gateway_id: None,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1219,7 +1216,6 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
-                    gateway_id: None,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1416,7 +1412,6 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
-                    gateway_id: None,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1587,7 +1582,6 @@ mod tests {
                             priority: crate::protocol::telegram::Priority::Normal,
                             direction: Direction::Incoming,
                             telegram_type: TelegramType::GroupValueWrite,
-                            gateway_id: None,
                             timestamp: std::time::SystemTime::now(),
                         };
 
@@ -1798,7 +1792,6 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
-                    gateway_id: None,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1959,7 +1952,6 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
-                    gateway_id: None,
                     timestamp: std::time::SystemTime::now(),
                 };
 

@@ -995,7 +995,6 @@ fn parse_cemi_to_telegram(cemi_data: &[u8]) -> Result<Telegram> {
         },
         direction: Direction::Incoming,
         telegram_type,
-        gateway_id: None,
         timestamp: std::time::SystemTime::now(),
     })
 }

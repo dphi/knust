@@ -43,7 +43,6 @@ impl Switch {
             priority: Priority::Normal,
             direction: Direction::Outgoing,
             telegram_type: TelegramType::GroupValueWrite,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         };
         self.knx.send_telegram(&telegram).await

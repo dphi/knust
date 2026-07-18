@@ -38,7 +38,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         priority: Priority::Normal,
         direction: Direction::Outgoing,
         telegram_type: TelegramType::GroupValueWrite,
-        gateway_id: None,
         timestamp: std::time::SystemTime::now(),
     };
 
@@ -58,7 +57,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         priority: Priority::Normal,
         direction: Direction::Outgoing,
         telegram_type: TelegramType::GroupValueWrite,
-        gateway_id: None,
         timestamp: std::time::SystemTime::now(),
     };
 
@@ -78,7 +76,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         priority: Priority::Normal,
         direction: Direction::Outgoing,
         telegram_type: TelegramType::GroupValueWrite,
-        gateway_id: None,
         timestamp: std::time::SystemTime::now(),
     };
 

@@ -29,7 +29,6 @@ fn write_telegram(
         priority: Priority::Normal,
         direction: Direction::Outgoing,
         telegram_type: TelegramType::GroupValueWrite,
-        gateway_id: None,
         timestamp: std::time::SystemTime::now(),
     }
 }

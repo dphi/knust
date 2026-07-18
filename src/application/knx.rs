@@ -2313,7 +2313,6 @@ impl Knx {
             },
             direction: Direction::Incoming,
             telegram_type,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -2526,7 +2525,6 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -2644,7 +2642,6 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -2694,7 +2691,6 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -2705,7 +2701,6 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -2749,7 +2744,6 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -2809,7 +2803,6 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         };
 
