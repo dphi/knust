@@ -2284,11 +2284,21 @@ impl Knx {
         // Parse CEMI frame
         let cemi_frame = CemiFrame::parse(cemi_data)?;
 
-        let payload =
-            crate::protocol::GroupValueService::decode(cemi_frame.tpci, &cemi_frame.apci_data)
-                .ok()
-                .and_then(|service| service.payload().map(<[u8]>::to_vec))
-                .unwrap_or_else(|| cemi_frame.apci_data.clone());
+        let service =
+            crate::protocol::GroupValueService::decode(cemi_frame.tpci, &cemi_frame.apci_data).ok();
+        let payload = service
+            .as_ref()
+            .and_then(|service| service.payload().map(<[u8]>::to_vec))
+            .unwrap_or_else(|| cemi_frame.apci_data.clone());
+        let telegram_type = match &service {
+            Some(crate::protocol::GroupValueService::Read) => TelegramType::GroupValueRead,
+            Some(crate::protocol::GroupValueService::Response(_)) => {
+                TelegramType::GroupValueResponse
+            }
+            Some(crate::protocol::GroupValueService::Write(_)) | None => {
+                TelegramType::GroupValueWrite
+            }
+        };
 
         // Convert CEMI frame to Telegram
         let telegram = Telegram {
@@ -2302,7 +2312,7 @@ impl Knx {
                 crate::protocol::cemi::Priority::Low => Priority::Low,
             },
             direction: Direction::Incoming,
-            telegram_type: TelegramType::GroupValueWrite,
+            telegram_type,
             gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         };
@@ -2397,7 +2407,9 @@ mod integration_tests {
     use super::*;
     use crate::application::callbacks::{ConnectionState, TelegramFilter};
     use crate::protocol::{
+        GroupValueService,
         address::{Address, GroupAddress, IndividualAddress},
+        cemi::{CemiFrame, MessageCode},
         telegram::{Direction, Priority, Telegram, TelegramType},
     };
     use crate::transport::ConnectionType;
@@ -2418,6 +2430,59 @@ mod integration_tests {
             // Sleep longer than the callback timeout to test error handling
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+
+    fn assert_parsed_group_service(
+        service: GroupValueService,
+        expected_type: TelegramType,
+        expected_payload: &[u8],
+    ) -> Telegram {
+        let source = IndividualAddress::new(1, 1, 5);
+        let destination = Address::Group(GroupAddress::new(1, 2, 3));
+        let frame = CemiFrame::new(MessageCode::LDataInd, source, destination, service.encode());
+        let before_parse = std::time::SystemTime::now();
+
+        let telegram = Knx::parse_cemi_to_telegram(&frame.serialize()).unwrap();
+
+        let after_parse = std::time::SystemTime::now();
+        assert_eq!(telegram.source, source);
+        assert_eq!(telegram.destination, destination);
+        assert_eq!(telegram.priority, Priority::Normal);
+        assert_eq!(telegram.direction, Direction::Incoming);
+        assert_eq!(telegram.telegram_type, expected_type);
+        assert_eq!(telegram.payload, expected_payload);
+        assert!(telegram.timestamp >= before_parse);
+        assert!(telegram.timestamp <= after_parse);
+        telegram
+    }
+
+    #[test]
+    fn parse_cemi_to_telegram_classifies_group_value_read() {
+        assert_parsed_group_service(
+            GroupValueService::Read,
+            TelegramType::GroupValueRead,
+            &[0x00],
+        );
+    }
+
+    #[test]
+    fn parse_cemi_to_telegram_classifies_group_value_response() {
+        let telegram = assert_parsed_group_service(
+            GroupValueService::Response(vec![0x0c, 0x3f]),
+            TelegramType::GroupValueResponse,
+            &[0x0c, 0x3f],
+        );
+        assert_ne!(telegram.telegram_type, TelegramType::GroupValueWrite);
+    }
+
+    #[test]
+    fn parse_cemi_to_telegram_classifies_group_value_write() {
+        let telegram = assert_parsed_group_service(
+            GroupValueService::Write(vec![0x0c, 0x3f]),
+            TelegramType::GroupValueWrite,
+            &[0x0c, 0x3f],
+        );
+        assert_ne!(telegram.telegram_type, TelegramType::GroupValueResponse);
     }
 
     #[tokio::test]
