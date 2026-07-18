@@ -2432,7 +2432,7 @@ mod integration_tests {
     }
 
     fn assert_parsed_group_service(
-        service: GroupValueService,
+        service: &GroupValueService,
         expected_type: TelegramType,
         expected_payload: &[u8],
     ) -> Telegram {
@@ -2458,7 +2458,7 @@ mod integration_tests {
     #[test]
     fn parse_cemi_to_telegram_classifies_group_value_read() {
         assert_parsed_group_service(
-            GroupValueService::Read,
+            &GroupValueService::Read,
             TelegramType::GroupValueRead,
             &[0x00],
         );
@@ -2467,7 +2467,7 @@ mod integration_tests {
     #[test]
     fn parse_cemi_to_telegram_classifies_group_value_response() {
         let telegram = assert_parsed_group_service(
-            GroupValueService::Response(vec![0x0c, 0x3f]),
+            &GroupValueService::Response(vec![0x0c, 0x3f]),
             TelegramType::GroupValueResponse,
             &[0x0c, 0x3f],
         );
@@ -2477,7 +2477,7 @@ mod integration_tests {
     #[test]
     fn parse_cemi_to_telegram_classifies_group_value_write() {
         let telegram = assert_parsed_group_service(
-            GroupValueService::Write(vec![0x0c, 0x3f]),
+            &GroupValueService::Write(vec![0x0c, 0x3f]),
             TelegramType::GroupValueWrite,
             &[0x0c, 0x3f],
         );
