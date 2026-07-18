@@ -898,6 +898,11 @@ impl TunnelServer {
 
 impl TunnelServer {
     /// Send a telegram to every currently connected tunnelling client.
+    ///
+    /// # Errors
+    ///
+    /// Per-client send failures are logged and the failed session is removed;
+    /// the broadcast operation otherwise returns `Ok(())`.
     pub async fn send(&self, telegram: Telegram) -> Result<()> {
         let sessions: Vec<Arc<ClientSession>> =
             self.sessions.read().await.values().cloned().collect();
