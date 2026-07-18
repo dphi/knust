@@ -8,7 +8,6 @@ pub mod address_probe;
 pub mod address_registry;
 pub mod backoff;
 pub mod connection;
-pub mod dedup;
 pub mod discovery;
 pub mod frame_transport;
 pub mod heartbeat;
