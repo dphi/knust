@@ -1638,6 +1638,12 @@ impl Knx {
         connection.as_ref().map(|c| c.stats())
     }
 
+    /// Capture health for this instance's current connection.
+    pub async fn connection_health(&self) -> Option<crate::transport::ConnectionHealth> {
+        let connection = self.connection.read().await;
+        connection.as_ref().map(|connection| connection.health())
+    }
+
     /// Get memory usage statistics
     pub async fn memory_stats(&self) -> crate::memory::MemoryStats {
         self.memory_monitor.get_stats().await
