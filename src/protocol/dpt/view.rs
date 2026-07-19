@@ -544,108 +544,213 @@ impl DptView<'_> {
 }
 
 fn format_bool(value: bool, dpt: DptType) -> String {
-    match dpt {
-        DptType::Switch => if value { "On" } else { "Off" }.to_string(),
-        DptType::OpenClose | DptType::WindowDoor => {
-            if value { "Open" } else { "Closed" }.to_string()
-        }
-        DptType::UpDown => if value { "Down" } else { "Up" }.to_string(),
-        DptType::Start => if value { "Start" } else { "Stop" }.to_string(),
-        DptType::Alarm => if value { "Alarm" } else { "No Alarm" }.to_string(),
-        DptType::DayNight => if value { "Night" } else { "Day" }.to_string(),
-        DptType::HeatCool => if value { "Heat" } else { "Cool" }.to_string(),
-        DptType::Enable => if value { "Enable" } else { "Disable" }.to_string(),
-        DptType::Occupancy => if value { "Occupied" } else { "Not Occupied" }.to_string(),
-        _ => if value { "True" } else { "False" }.to_string(),
-    }
+    bool_label(value, dpt).to_string()
 }
 
-/// Semantic label for a DPT 2.xxx control value bit, using the same enum
-/// names as the corresponding DPT 1.xxx type.
-fn format_control2(value: bool, dpt: DptType) -> &'static str {
+/// Semantic label for a DPT 1.xxx boolean value, one pair per subtype.
+fn bool_label(value: bool, dpt: DptType) -> &'static str {
     match dpt {
-        DptType::SwitchControl => {
+        DptType::Switch => {
             if value {
-                "on"
+                "On"
             } else {
-                "off"
+                "Off"
             }
         }
-        DptType::BoolControl => {
+        // DptType::Bool falls through to the wildcard below (True/False).
+        DptType::Enable => {
             if value {
-                "true"
+                "Enable"
             } else {
-                "false"
+                "Disable"
             }
         }
-        DptType::EnableControl => {
+        DptType::Ramp => {
             if value {
-                "enable"
+                "Ramp"
             } else {
-                "disable"
+                "No Ramp"
             }
         }
-        DptType::RampControl => {
+        DptType::Alarm => {
             if value {
-                "ramp"
+                "Alarm"
             } else {
-                "no_ramp"
+                "No Alarm"
             }
         }
-        DptType::AlarmControl => {
+        DptType::BinaryValue => {
             if value {
-                "alarm"
+                "High"
             } else {
-                "no_alarm"
+                "Low"
             }
         }
-        DptType::BinaryValueControl => {
+        DptType::Step => {
             if value {
-                "high"
+                "Increase"
             } else {
-                "low"
+                "Decrease"
             }
         }
-        DptType::StepControl => {
+        DptType::UpDown => {
             if value {
-                "increase"
+                "Down"
             } else {
-                "decrease"
+                "Up"
             }
         }
-        DptType::Direction1Control | DptType::Direction2Control => {
+        DptType::OpenClose | DptType::WindowDoor => {
             if value {
-                "down"
+                "Open"
             } else {
-                "up"
+                "Closed"
             }
         }
-        DptType::StartControl => {
+        DptType::Start => {
             if value {
-                "start"
+                "Start"
             } else {
-                "stop"
+                "Stop"
             }
         }
-        DptType::StateControl => {
+        DptType::State => {
             if value {
-                "active"
+                "Active"
             } else {
-                "inactive"
+                "Inactive"
             }
         }
-        DptType::InvertControl => {
+        DptType::Invert => {
             if value {
-                "inverted"
+                "Inverted"
             } else {
-                "not_inverted"
+                "Not Inverted"
+            }
+        }
+        DptType::DimSendStyle => {
+            if value {
+                "Cyclically"
+            } else {
+                "Start/Stop"
+            }
+        }
+        DptType::InputSource => {
+            if value {
+                "Calculated"
+            } else {
+                "Fixed"
+            }
+        }
+        DptType::Reset => {
+            if value {
+                "Reset"
+            } else {
+                "No Action"
+            }
+        }
+        DptType::Ack => {
+            if value {
+                "Acknowledge"
+            } else {
+                "No Action"
+            }
+        }
+        DptType::Trigger => {
+            if value {
+                "Trigger"
+            } else {
+                "Trigger 0"
+            }
+        }
+        DptType::Occupancy => {
+            if value {
+                "Occupied"
+            } else {
+                "Not Occupied"
+            }
+        }
+        DptType::LogicalFunction => {
+            if value {
+                "And"
+            } else {
+                "Or"
+            }
+        }
+        DptType::SceneAB => {
+            if value {
+                "Scene B"
+            } else {
+                "Scene A"
+            }
+        }
+        DptType::ShutterBlindsMode => {
+            if value {
+                "Step/Stop Mode"
+            } else {
+                "Up/Down Mode"
+            }
+        }
+        DptType::DayNight => {
+            if value {
+                "Night"
+            } else {
+                "Day"
+            }
+        }
+        DptType::HeatCool => {
+            if value {
+                "Heat"
+            } else {
+                "Cool"
+            }
+        }
+        DptType::ConsumerProducer => {
+            if value {
+                "Producer"
+            } else {
+                "Consumer"
+            }
+        }
+        DptType::EnergyDirection => {
+            if value {
+                "Negative"
+            } else {
+                "Positive"
             }
         }
         _ => {
             if value {
-                "1"
+                "True"
             } else {
-                "0"
+                "False"
+            }
+        }
+    }
+}
+
+/// Semantic label for a DPT 2.xxx control value bit, using the same labels
+/// as the corresponding DPT 1.xxx type.
+fn format_control2(value: bool, dpt: DptType) -> &'static str {
+    match dpt {
+        DptType::SwitchControl => bool_label(value, DptType::Switch),
+        DptType::BoolControl => bool_label(value, DptType::Bool),
+        DptType::EnableControl => bool_label(value, DptType::Enable),
+        DptType::RampControl => bool_label(value, DptType::Ramp),
+        DptType::AlarmControl => bool_label(value, DptType::Alarm),
+        DptType::BinaryValueControl => bool_label(value, DptType::BinaryValue),
+        DptType::StepControl => bool_label(value, DptType::Step),
+        DptType::Direction1Control | DptType::Direction2Control => {
+            bool_label(value, DptType::UpDown)
+        }
+        DptType::StartControl => bool_label(value, DptType::Start),
+        DptType::StateControl => bool_label(value, DptType::State),
+        DptType::InvertControl => bool_label(value, DptType::Invert),
+        _ => {
+            if value {
+                "True"
+            } else {
+                "False"
             }
         }
     }
@@ -681,6 +786,28 @@ fn format_enum(value: u8, dpt: DptType) -> String {
             3 => "Economy".to_string(),
             4 => "Building Protection".to_string(),
             _ => format!("HVAC Mode {value}"),
+        },
+        DptType::HVACContrMode => match value {
+            0 => "Auto".to_string(),
+            1 => "Heat".to_string(),
+            2 => "Morning Warmup".to_string(),
+            3 => "Cool".to_string(),
+            4 => "Night Purge".to_string(),
+            5 => "Precool".to_string(),
+            6 => "Off".to_string(),
+            7 => "Test".to_string(),
+            8 => "Emergency Heat".to_string(),
+            9 => "Fan Only".to_string(),
+            10 => "Free Cool".to_string(),
+            11 => "Ice".to_string(),
+            12 => "Maximum Heating Mode".to_string(),
+            13 => "Economic Heat/Cool Mode".to_string(),
+            14 => "Dehumidification".to_string(),
+            15 => "Calibration Mode".to_string(),
+            16 => "Emergency Cool Mode".to_string(),
+            17 => "Emergency Steam Mode".to_string(),
+            20 => "No Demand".to_string(),
+            _ => format!("HVAC Controller Mode {value}"),
         },
         _ => format!("Enum({value})"),
     }

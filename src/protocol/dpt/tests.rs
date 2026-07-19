@@ -242,36 +242,133 @@ fn test_dpt2_aliases() {
 #[test]
 fn test_dpt2_semantic_labels() {
     let cases = [
-        (DptType::SwitchControl, false, "off"),
-        (DptType::SwitchControl, true, "on"),
-        (DptType::BoolControl, false, "false"),
-        (DptType::BoolControl, true, "true"),
-        (DptType::EnableControl, false, "disable"),
-        (DptType::EnableControl, true, "enable"),
-        (DptType::RampControl, false, "no_ramp"),
-        (DptType::RampControl, true, "ramp"),
-        (DptType::AlarmControl, false, "no_alarm"),
-        (DptType::AlarmControl, true, "alarm"),
-        (DptType::BinaryValueControl, false, "low"),
-        (DptType::BinaryValueControl, true, "high"),
-        (DptType::StepControl, false, "decrease"),
-        (DptType::StepControl, true, "increase"),
-        (DptType::Direction1Control, false, "up"),
-        (DptType::Direction1Control, true, "down"),
-        (DptType::Direction2Control, false, "up"),
-        (DptType::Direction2Control, true, "down"),
-        (DptType::StartControl, false, "stop"),
-        (DptType::StartControl, true, "start"),
-        (DptType::StateControl, false, "inactive"),
-        (DptType::StateControl, true, "active"),
-        (DptType::InvertControl, false, "not_inverted"),
-        (DptType::InvertControl, true, "inverted"),
+        (DptType::SwitchControl, false, "Off"),
+        (DptType::SwitchControl, true, "On"),
+        (DptType::BoolControl, false, "False"),
+        (DptType::BoolControl, true, "True"),
+        (DptType::EnableControl, false, "Disable"),
+        (DptType::EnableControl, true, "Enable"),
+        (DptType::RampControl, false, "No Ramp"),
+        (DptType::RampControl, true, "Ramp"),
+        (DptType::AlarmControl, false, "No Alarm"),
+        (DptType::AlarmControl, true, "Alarm"),
+        (DptType::BinaryValueControl, false, "Low"),
+        (DptType::BinaryValueControl, true, "High"),
+        (DptType::StepControl, false, "Decrease"),
+        (DptType::StepControl, true, "Increase"),
+        (DptType::Direction1Control, false, "Up"),
+        (DptType::Direction1Control, true, "Down"),
+        (DptType::Direction2Control, false, "Up"),
+        (DptType::Direction2Control, true, "Down"),
+        (DptType::StartControl, false, "Stop"),
+        (DptType::StartControl, true, "Start"),
+        (DptType::StateControl, false, "Inactive"),
+        (DptType::StateControl, true, "Active"),
+        (DptType::InvertControl, false, "Not Inverted"),
+        (DptType::InvertControl, true, "Inverted"),
     ];
 
     for (dpt, value, label) in cases {
         let bytes = [u8::from(value)];
         let view = dpt.decode_ref(&bytes).unwrap();
         assert_eq!(view.formatted(dpt), format!("Control(false, {label})"));
+    }
+}
+
+#[test]
+fn test_dpt1_semantic_labels() {
+    use super::dpt1::Switch;
+
+    let cases = [
+        (DptType::Switch, false, "Off"),
+        (DptType::Switch, true, "On"),
+        (DptType::Bool, false, "False"),
+        (DptType::Bool, true, "True"),
+        (DptType::Enable, false, "Disable"),
+        (DptType::Enable, true, "Enable"),
+        (DptType::Ramp, false, "No Ramp"),
+        (DptType::Ramp, true, "Ramp"),
+        (DptType::Alarm, false, "No Alarm"),
+        (DptType::Alarm, true, "Alarm"),
+        (DptType::BinaryValue, false, "Low"),
+        (DptType::BinaryValue, true, "High"),
+        (DptType::Step, false, "Decrease"),
+        (DptType::Step, true, "Increase"),
+        (DptType::UpDown, false, "Up"),
+        (DptType::UpDown, true, "Down"),
+        (DptType::OpenClose, false, "Closed"),
+        (DptType::OpenClose, true, "Open"),
+        (DptType::WindowDoor, false, "Closed"),
+        (DptType::WindowDoor, true, "Open"),
+        (DptType::Start, false, "Stop"),
+        (DptType::Start, true, "Start"),
+        (DptType::State, false, "Inactive"),
+        (DptType::State, true, "Active"),
+        (DptType::Invert, false, "Not Inverted"),
+        (DptType::Invert, true, "Inverted"),
+        (DptType::DimSendStyle, false, "Start/Stop"),
+        (DptType::DimSendStyle, true, "Cyclically"),
+        (DptType::InputSource, false, "Fixed"),
+        (DptType::InputSource, true, "Calculated"),
+        (DptType::Reset, false, "No Action"),
+        (DptType::Reset, true, "Reset"),
+        (DptType::Ack, false, "No Action"),
+        (DptType::Ack, true, "Acknowledge"),
+        (DptType::Trigger, false, "Trigger 0"),
+        (DptType::Trigger, true, "Trigger"),
+        (DptType::Occupancy, false, "Not Occupied"),
+        (DptType::Occupancy, true, "Occupied"),
+        (DptType::LogicalFunction, false, "Or"),
+        (DptType::LogicalFunction, true, "And"),
+        (DptType::SceneAB, false, "Scene A"),
+        (DptType::SceneAB, true, "Scene B"),
+        (DptType::ShutterBlindsMode, false, "Up/Down Mode"),
+        (DptType::ShutterBlindsMode, true, "Step/Stop Mode"),
+        (DptType::DayNight, false, "Day"),
+        (DptType::DayNight, true, "Night"),
+        (DptType::HeatCool, false, "Cool"),
+        (DptType::HeatCool, true, "Heat"),
+        (DptType::ConsumerProducer, false, "Consumer"),
+        (DptType::ConsumerProducer, true, "Producer"),
+        (DptType::EnergyDirection, false, "Positive"),
+        (DptType::EnergyDirection, true, "Negative"),
+    ];
+
+    for (dpt, value, label) in cases {
+        let bytes = Switch::new(value).as_bytes().to_vec();
+        let view = dpt.decode_ref(&bytes).unwrap();
+        assert_eq!(view.formatted(dpt), label);
+    }
+}
+
+#[test]
+fn test_hvac_contr_mode_semantic_labels() {
+    let cases: [(u8, &str); 19] = [
+        (0, "Auto"),
+        (1, "Heat"),
+        (2, "Morning Warmup"),
+        (3, "Cool"),
+        (4, "Night Purge"),
+        (5, "Precool"),
+        (6, "Off"),
+        (7, "Test"),
+        (8, "Emergency Heat"),
+        (9, "Fan Only"),
+        (10, "Free Cool"),
+        (11, "Ice"),
+        (12, "Maximum Heating Mode"),
+        (13, "Economic Heat/Cool Mode"),
+        (14, "Dehumidification"),
+        (15, "Calibration Mode"),
+        (16, "Emergency Cool Mode"),
+        (17, "Emergency Steam Mode"),
+        (20, "No Demand"),
+    ];
+
+    for (raw, label) in cases {
+        let bytes = [raw];
+        let view = DptType::HVACContrMode.decode_ref(&bytes).unwrap();
+        assert_eq!(view.formatted(DptType::HVACContrMode), label);
     }
 }
 
