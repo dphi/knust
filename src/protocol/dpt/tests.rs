@@ -373,6 +373,48 @@ fn test_hvac_contr_mode_semantic_labels() {
 }
 
 #[test]
+fn test_time_weekday_label() {
+    let no_day = [8, 14, 22];
+    let view = DptType::TimeOfDay.decode_ref(&no_day).unwrap();
+    assert_eq!(view.formatted(DptType::TimeOfDay), "08:14:22");
+
+    let thursday = [(4 << 5) | 8, 14, 22];
+    let view = DptType::TimeOfDay.decode_ref(&thursday).unwrap();
+    assert_eq!(view.formatted(DptType::TimeOfDay), "08:14:22 (Thursday)");
+}
+
+#[test]
+fn test_datetime_weekday_label() {
+    // 2026-06-11, Thursday, 08:14:22 (see datetime_view_byte_layout in view.rs)
+    let bytes = [0x7E, 0x06, 0x0B, (4 << 5) | 8, 14, 22, 0x00, 0x00];
+    let view = DptType::DateTime.decode_ref(&bytes).unwrap();
+    assert_eq!(
+        view.formatted(DptType::DateTime),
+        "2026-06-11 08:14:22 (Thursday)"
+    );
+
+    let no_day = [0x7E, 0x06, 0x0B, 8, 14, 22, 0x00, 0x00];
+    let view = DptType::DateTime.decode_ref(&no_day).unwrap();
+    assert_eq!(view.formatted(DptType::DateTime), "2026-06-11 08:14:22");
+}
+
+#[test]
+fn test_scene_control_learn_label() {
+    let bytes = [0x80];
+    let view = DptType::SceneControl.decode_ref(&bytes).unwrap();
+    assert_eq!(view.formatted(DptType::SceneControl), "Scene 1 (learn)");
+
+    let bytes = [0x00];
+    let view = DptType::SceneControl.decode_ref(&bytes).unwrap();
+    assert_eq!(view.formatted(DptType::SceneControl), "Scene 1 (activate)");
+
+    // DPT 17 SceneNumber shares the view type but has no learn bit to show.
+    let bytes = [0x00];
+    let view = DptType::SceneNumber.decode_ref(&bytes).unwrap();
+    assert_eq!(view.formatted(DptType::SceneNumber), "Scene 1");
+}
+
+#[test]
 fn test_scaling_encode_decode() {
     let scaling = Scaling::new(128);
     let bytes = scaling.as_bytes();

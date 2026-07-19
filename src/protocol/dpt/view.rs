@@ -523,18 +523,37 @@ impl DptView<'_> {
             Self::Float4Byte(v) => format_numeric(v.as_f64(), dpt),
             Self::I64(v) => format_numeric(v.as_f64(), dpt),
             Self::Str(v) => v.as_str().to_string(),
-            Self::Time(v) => format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second()),
+            Self::Time(v) => {
+                let base = format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second());
+                match weekday_name(v.day()) {
+                    Some(day) => format!("{base} ({day})"),
+                    None => base,
+                }
+            }
             Self::Date(v) => format!("{:04}-{:02}-{:02}", v.year(), v.month(), v.day()),
-            Self::DateTime(v) => format!(
-                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-                v.year(),
-                v.month(),
-                v.day(),
-                v.hour(),
-                v.minute(),
-                v.second()
-            ),
-            Self::Scene(v) => format!("Scene {}", v.scene_number()),
+            Self::DateTime(v) => {
+                let base = format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                    v.year(),
+                    v.month(),
+                    v.day(),
+                    v.hour(),
+                    v.minute(),
+                    v.second()
+                );
+                match weekday_name(v.day_of_week()) {
+                    Some(day) => format!("{base} ({day})"),
+                    None => base,
+                }
+            }
+            Self::Scene(v) => match dpt {
+                DptType::SceneControl => format!(
+                    "Scene {} ({})",
+                    v.scene_number(),
+                    if v.learn() { "learn" } else { "activate" }
+                ),
+                _ => format!("Scene {}", v.scene_number()),
+            },
             Self::Enum(v) => format_enum(v.value(), dpt),
             Self::Rgb(v) => format!("RGB({}, {}, {})", v.r(), v.g(), v.b()),
             Self::Rgbw(v) => format!("RGBW({}, {}, {}, {})", v.r(), v.g(), v.b(), v.w()),
@@ -774,6 +793,21 @@ fn format_numeric(value: f64, dpt: DptType) -> String {
                 format!("{value:.1}")
             }
         }
+    }
+}
+
+/// Weekday label for the 3-bit day-of-week field in DPT 10 (Time) and
+/// DPT 19 (`DateTime`). `0` means "no day"/"any day" and has no label.
+fn weekday_name(day: u8) -> Option<&'static str> {
+    match day {
+        1 => Some("Monday"),
+        2 => Some("Tuesday"),
+        3 => Some("Wednesday"),
+        4 => Some("Thursday"),
+        5 => Some("Friday"),
+        6 => Some("Saturday"),
+        7 => Some("Sunday"),
+        _ => None,
     }
 }
 
