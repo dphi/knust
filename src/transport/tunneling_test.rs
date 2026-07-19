@@ -65,6 +65,9 @@ mod tests {
     }
 
     #[tokio::test]
+    // `score()` returns the literal 0.0 constant for a failed connection,
+    // not a computed ratio.
+    #[allow(clippy::float_cmp)]
     async fn test_failed_connect_updates_connection_health() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();

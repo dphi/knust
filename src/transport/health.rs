@@ -36,23 +36,23 @@ pub struct ConnectionHealth {
 impl ConnectionHealth {
     /// Build a health snapshot from one connection's state and statistics.
     #[must_use]
-    pub fn from_state_and_stats(state: ConnectionState, stats: ConnectionStats) -> Self {
+    pub fn from_state_and_stats(state: ConnectionState, connection_stats: ConnectionStats) -> Self {
         let observed_at = Instant::now();
         let connected_since = matches!(state, ConnectionState::Connected)
-            .then(|| observed_at.checked_sub(Duration::from_secs(stats.uptime_seconds)))
+            .then(|| observed_at.checked_sub(Duration::from_secs(connection_stats.uptime_seconds)))
             .flatten();
 
         Self {
             state,
-            frames_sent: stats.frames_sent,
-            frames_received: stats.frames_received,
-            connection_errors: stats.connection_errors,
-            send_errors: stats.send_errors,
-            recv_errors: stats.recv_errors,
+            frames_sent: connection_stats.frames_sent,
+            frames_received: connection_stats.frames_received,
+            connection_errors: connection_stats.connection_errors,
+            send_errors: connection_stats.send_errors,
+            recv_errors: connection_stats.recv_errors,
             observed_at,
             connected_since,
-            last_error: stats.last_error,
-            last_error_at: stats.last_error_at,
+            last_error: connection_stats.last_error,
+            last_error_at: connection_stats.last_error_at,
         }
     }
 
@@ -105,6 +105,9 @@ mod tests {
     use super::*;
 
     #[test]
+    // `score()` returns literal 0.0/1.0 constants for these states, not a
+    // computed ratio, so exact comparison is correct here.
+    #[allow(clippy::float_cmp)]
     fn score_reflects_lifecycle_and_connection_local_errors() {
         let disconnected = ConnectionHealth::from_state_and_stats(
             ConnectionState::Disconnected,

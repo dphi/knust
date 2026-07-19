@@ -404,6 +404,9 @@ mod health_tests {
     }
 
     #[tokio::test]
+    // `score()` returns literal 0.0/1.0 constants for the connected-without-
+    // errors and disconnected states asserted here, not a computed ratio.
+    #[allow(clippy::float_cmp)]
     async fn connection_health_tracks_routing_lifecycle_counters_and_errors() {
         let outbound_receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let connection = test_connection(outbound_receiver.local_addr().unwrap()).await;
@@ -467,6 +470,9 @@ mod health_tests {
     }
 
     #[tokio::test]
+    // `score()` returns the literal 1.0 constant for an error-free connected
+    // connection, not a computed ratio.
+    #[allow(clippy::float_cmp)]
     async fn connection_health_is_independent_between_routing_connections() {
         let sink_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let sink_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
