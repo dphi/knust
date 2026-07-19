@@ -209,6 +209,37 @@ fn test_switch_encode_decode_off() {
 }
 
 #[test]
+fn test_binary_control_encode_decode() {
+    let control = BinaryControl::new(true, false);
+    let bytes = control.as_bytes();
+    assert_eq!(bytes, &[0x02]);
+    assert!(control.control());
+    assert!(!control.value());
+
+    let decoded = BinaryControl::from_bytes(bytes).unwrap();
+    assert_eq!(decoded, control);
+
+    assert!(BinaryControl::from_bytes(&[0x04]).is_err());
+}
+
+#[test]
+fn test_dpt2_aliases() {
+    let switch_control = DPTSwitchControl::new((true, true));
+    assert_eq!(switch_control.as_bytes(), &[0x03]);
+    assert_eq!(DPTSwitchControl::DPT_NUMBER, "2.001");
+    assert_eq!(DPTStepControl::DPT_NUMBER, "2.007");
+    assert_eq!(DPTInvertControl::DPT_NUMBER, "2.012");
+
+    let registry = DptRegistry::new();
+    let bytes = registry.encode("2.001", &switch_control).unwrap();
+    let decoded = registry.decode("2.001", &bytes).unwrap();
+    assert_eq!(
+        decoded.downcast_ref::<DPTSwitchControl>().unwrap(),
+        &switch_control
+    );
+}
+
+#[test]
 fn test_scaling_encode_decode() {
     let scaling = Scaling::new(128);
     let bytes = scaling.as_bytes();

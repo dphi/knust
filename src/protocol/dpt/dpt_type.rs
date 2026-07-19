@@ -1,7 +1,7 @@
 use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
-    BoolView, ControlView, DateTimeView, DateView, DptView, EnumView, Float2ByteView,
+    BoolView, Control2View, ControlView, DateTimeView, DateView, DptView, EnumView, Float2ByteView,
     Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView, SceneView, StrView,
     TimeView, U8View, U16View, U32View, XyyView,
 };
@@ -40,6 +40,20 @@ pub enum DptType {
     HeatCool = 100_100,
     ConsumerProducer = 101_200,
     EnergyDirection = 101_201,
+
+    // DPT 2.xxx - 2-bit control (control bit + value bit)
+    SwitchControl = 200_001,
+    BoolControl = 200_002,
+    EnableControl = 200_003,
+    RampControl = 200_004,
+    AlarmControl = 200_005,
+    BinaryValueControl = 200_006,
+    StepControl = 200_007,
+    Direction1Control = 200_008,
+    Direction2Control = 200_009,
+    StartControl = 200_010,
+    StateControl = 200_011,
+    InvertControl = 200_012,
 
     // DPT 3.xxx - Control
     ControlDimming = 300_007,
@@ -438,7 +452,7 @@ impl DptType {
     #[must_use]
     pub fn byte_length(&self) -> usize {
         match self.main() {
-            1 | 3 | 5 | 6 | 17 | 18 | 20 => 1,
+            1 | 2 | 3 | 5 | 6 | 17 | 18 | 20 => 1,
             7..=9 => 2,
             10 | 11 | 232 => 3,
             12..=14 => 4,
@@ -484,6 +498,17 @@ impl DptType {
                     bytes[0]
                 );
                 Ok(DptView::Bool(BoolView(bytes)))
+            }
+            2 => {
+                log_protocol!(
+                    LogLevel::Trace,
+                    "DPT {} decode: control={} value={} raw=[{:02X}]",
+                    self.number_str(),
+                    (bytes[0] & 0x02) != 0,
+                    bytes[0] & 0x01,
+                    bytes[0]
+                );
+                Ok(DptView::Control2(Control2View(bytes)))
             }
             3 => {
                 log_protocol!(
@@ -805,6 +830,9 @@ impl DptType {
     pub fn encode(&self, payload: &DptPayload) -> Result<Vec<u8>> {
         let result: Result<Vec<u8>> = match (self.main(), payload) {
             (1, DptPayload::Bool(v)) => Ok(vec![u8::from(*v)]),
+            (2, DptPayload::BinaryControl { control, value }) => {
+                Ok(vec![(if *control { 0x02 } else { 0 }) | u8::from(*value)])
+            }
             (3, DptPayload::Control { step, step_code }) => {
                 Ok(vec![(if *step { 0x08 } else { 0 }) | (*step_code & 0x07)])
             }

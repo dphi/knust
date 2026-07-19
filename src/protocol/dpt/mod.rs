@@ -21,6 +21,7 @@ pub mod dpt16; // String
 pub mod dpt17; // Scene Number
 pub mod dpt18; // Scene Control
 pub mod dpt19; // Date and Time
+pub mod dpt2; // 2-bit control
 pub mod dpt20; // HVAC
 pub mod dpt232; // RGB Color
 pub mod dpt235; // Tariff Active Energy
@@ -41,6 +42,7 @@ mod tests;
 pub use decode::{DecodedTelegram, decode_telegram};
 pub use dpt_type::DptType;
 pub use dpt1::*;
+pub use dpt2::*;
 pub use dpt3::*;
 pub use dpt5::*;
 pub use dpt6::*;
@@ -65,7 +67,7 @@ pub use dpt251::*;
 pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
-    BoolView, ControlView, DateTimeView, DateView, DptView, EnumView, Float2ByteView,
+    BoolView, Control2View, ControlView, DateTimeView, DateView, DptView, EnumView, Float2ByteView,
     Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView, SceneView, StrView,
     TimeView, U8View, U16View, U32View, XyyView,
 };
@@ -358,6 +360,20 @@ impl DptRegistry {
         registry.register::<DPTHeatCool>();
         registry.register::<DPTConsumerProducer>();
         registry.register::<DPTEnergyDirection>();
+
+        // DPT 2.xxx - 2-bit control
+        registry.register::<DPTSwitchControl>();
+        registry.register::<DPTBoolControl>();
+        registry.register::<DPTEnableControl>();
+        registry.register::<DPTRampControl>();
+        registry.register::<DPTAlarmControl>();
+        registry.register::<DPTBinaryValueControl>();
+        registry.register::<DPTStepControl>();
+        registry.register::<DPTDirection1Control>();
+        registry.register::<DPTDirection2Control>();
+        registry.register::<DPTStartControl>();
+        registry.register::<DPTStateControl>();
+        registry.register::<DPTInvertControl>();
 
         // DPT 3.xxx - Control
         registry.register::<ControlDimming>();

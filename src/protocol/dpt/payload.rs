@@ -5,6 +5,10 @@ use super::view::DptView;
 #[derive(Debug, Clone, PartialEq)]
 pub enum DptPayload {
     Bool(bool),
+    BinaryControl {
+        control: bool,
+        value: bool,
+    },
     Control {
         step: bool,
         step_code: u8,
@@ -112,6 +116,11 @@ impl DptPayload {
                 if *learn { "learn" } else { "activate" }
             ),
             Self::Enum(v) => format!("Enum({v})"),
+            Self::BinaryControl { control, value } => format!(
+                "Control({}, {})",
+                if *control { "active" } else { "inactive" },
+                u8::from(*value)
+            ),
             Self::Control { step, step_code } => format!(
                 "Control({}, {})",
                 if *step { "increase" } else { "decrease" },
@@ -143,6 +152,10 @@ impl<'a> From<DptView<'a>> for DptPayload {
     fn from(view: DptView<'a>) -> Self {
         match view {
             DptView::Bool(v) => Self::Bool(v.value()),
+            DptView::Control2(v) => Self::BinaryControl {
+                control: v.control(),
+                value: v.value(),
+            },
             DptView::Control(v) => Self::Control {
                 step: v.step(),
                 step_code: v.step_code(),

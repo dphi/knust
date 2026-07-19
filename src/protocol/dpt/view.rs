@@ -33,6 +33,23 @@ impl<'a> ControlView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct Control2View<'a>(pub(crate) &'a [u8]);
+impl<'a> Control2View<'a> {
+    #[must_use]
+    pub fn control(&self) -> bool {
+        (self.0[0] & 0x02) != 0
+    }
+    #[must_use]
+    pub fn value(&self) -> bool {
+        (self.0[0] & 0x01) != 0
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct U8View<'a>(pub(crate) &'a [u8]);
 impl<'a> U8View<'a> {
     #[must_use]
@@ -392,6 +409,7 @@ impl<'a> XyyView<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum DptView<'a> {
     Bool(BoolView<'a>),
+    Control2(Control2View<'a>),
     Control(ControlView<'a>),
     U8(U8View<'a>),
     I8(I8View<'a>),
@@ -430,6 +448,7 @@ impl<'a> DptView<'a> {
             Self::Scene(v) => Some(f64::from(v.scene_number())),
             Self::Enum(v) => Some(f64::from(v.value())),
             Self::Control(_)
+            | Self::Control2(_)
             | Self::Str(_)
             | Self::Time(_)
             | Self::Date(_)
@@ -452,6 +471,7 @@ impl<'a> DptView<'a> {
     pub fn raw(&self) -> &'a [u8] {
         match self {
             Self::Bool(v) => v.raw(),
+            Self::Control2(v) => v.raw(),
             Self::Control(v) => v.raw(),
             Self::U8(v) => v.raw(),
             Self::I8(v) => v.raw(),
@@ -481,6 +501,11 @@ impl DptView<'_> {
     pub fn formatted(&self, dpt: DptType) -> String {
         match self {
             Self::Bool(v) => format_bool(v.value(), dpt),
+            Self::Control2(v) => format!(
+                "Control({}, {})",
+                if v.control() { "active" } else { "inactive" },
+                u8::from(v.value())
+            ),
             Self::Control(v) => format!(
                 "Control({}, step={})",
                 if v.step() { "increase" } else { "decrease" },
