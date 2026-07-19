@@ -415,7 +415,6 @@ mod tests {
             priority,
             direction: Direction::Outgoing,
             telegram_type: TelegramType::GroupValueWrite,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         }
     }
@@ -445,7 +444,6 @@ mod tests {
                 priority,
                 direction: Direction::Outgoing,
                 telegram_type: TelegramType::GroupValueWrite,
-                gateway_id: None,
                 timestamp: std::time::SystemTime::now(),
             }
         }

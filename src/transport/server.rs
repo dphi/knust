@@ -9,10 +9,8 @@
 //! heartbeat tracking), mirroring `Tunnel`'s state machine but as the
 //! responder.
 //!
-//! Implements [`GatewayConnection`] so it can be used anywhere a bus
-//! connection is used (e.g. bridged to real buses): `subscribe()` merges
-//! every connected client's outgoing writes into one stream, `send()` fans a
-//! telegram out to every connected client.
+//! `subscribe()` merges every connected client's outgoing writes into one
+//! stream, while `send()` fans a telegram out to every connected client.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -22,7 +20,6 @@ use std::sync::atomic::AtomicU16;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{RwLock, broadcast, oneshot};
 
@@ -44,8 +41,6 @@ use crate::protocol::telegram::{Direction, Priority, Telegram, TelegramType};
 use crate::security::{SecureSession, SessionConfig};
 
 use super::frame_transport::{FrameTransport, TcpFrameTransport};
-use super::gateway_connection::GatewayConnection;
-use super::multi::build_tunnelling_frame_with_code;
 use super::tunnel::SequenceValidationResult;
 
 /// How long a connected client may go without a heartbeat before eviction.
@@ -901,9 +896,14 @@ impl TunnelServer {
     }
 }
 
-#[async_trait]
-impl GatewayConnection for TunnelServer {
-    async fn send(&self, telegram: Telegram) -> Result<()> {
+impl TunnelServer {
+    /// Send a telegram to every currently connected tunnelling client.
+    ///
+    /// # Errors
+    ///
+    /// Per-client send failures are logged and the failed session is removed;
+    /// the broadcast operation otherwise returns `Ok(())`.
+    pub async fn send(&self, telegram: Telegram) -> Result<()> {
         let sessions: Vec<Arc<ClientSession>> =
             self.sessions.read().await.values().cloned().collect();
         for session in &sessions {
@@ -920,19 +920,49 @@ impl GatewayConnection for TunnelServer {
         Ok(())
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<Telegram> {
+    /// Subscribe to telegrams received from connected tunnelling clients.
+    pub fn subscribe(&self) -> broadcast::Receiver<Telegram> {
         self.telegram_tx.subscribe()
     }
 
-    fn shutdown(&self) {
+    /// Signal the server and all of its connection loops to shut down.
+    pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         log_transport!(LogLevel::Info, "TunnelServer shutdown requested");
     }
 
-    fn is_shutdown(&self) -> bool {
+    /// Return whether shutdown has been requested.
+    #[must_use]
+    pub fn is_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::SeqCst)
     }
+}
+
+fn build_tunnelling_frame_with_code(
+    telegram: &Telegram,
+    channel_id: u8,
+    sequence: u8,
+    message_code: MessageCode,
+) -> Vec<u8> {
+    let group_service = if telegram.payload.is_empty() {
+        GroupValueService::Read
+    } else {
+        GroupValueService::Write(telegram.payload.clone())
+    };
+    let cemi = CemiFrame::new(
+        message_code,
+        telegram.source,
+        telegram.destination,
+        group_service.encode(),
+    );
+    let request = TunnellingRequest::new(channel_id, sequence, cemi.serialize());
+    KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize()
+}
+
+#[cfg(test)]
+fn build_tunnelling_frame(telegram: &Telegram, channel_id: u8, sequence: u8) -> Vec<u8> {
+    build_tunnelling_frame_with_code(telegram, channel_id, sequence, MessageCode::LDataReq)
 }
 
 /// Build the Connection Response Data for a tunnel connection CRD:
@@ -970,7 +1000,6 @@ fn parse_cemi_to_telegram(cemi_data: &[u8]) -> Result<Telegram> {
         },
         direction: Direction::Incoming,
         telegram_type,
-        gateway_id: None,
         timestamp: std::time::SystemTime::now(),
     })
 }
@@ -979,7 +1008,6 @@ fn parse_cemi_to_telegram(cemi_data: &[u8]) -> Result<Telegram> {
 mod tests {
     use super::*;
     use crate::protocol::address::{Address, GroupAddress, IndividualAddress as Ia};
-    use crate::transport::multi::build_tunnelling_frame;
     use crate::transport::tunnel::Tunnel;
     use std::time::Duration;
     use tokio::time::timeout;
@@ -994,6 +1022,16 @@ mod tests {
         let mut tunnel = Tunnel::new_udp(server_addr);
         tunnel.connect().await.unwrap();
         tunnel
+    }
+
+    #[tokio::test]
+    async fn inherent_shutdown_state_tracks_lifecycle() {
+        let server = bind_server().await;
+        assert!(!server.is_shutdown());
+
+        server.shutdown();
+
+        assert!(server.is_shutdown());
     }
 
     fn test_telegram(payload: u8) -> Telegram {

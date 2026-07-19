@@ -44,9 +44,6 @@ pub struct Telegram {
     /// APCI service type
     pub telegram_type: TelegramType,
 
-    /// Gateway identifier (populated by `MultiConnection` coordinator)
-    pub gateway_id: Option<u16>,
-
     /// Timestamp when telegram was created/received
     pub timestamp: std::time::SystemTime,
 }
@@ -67,7 +64,6 @@ impl Telegram {
             priority: Priority::Normal,
             direction: Direction::Outgoing,
             telegram_type,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         }
     }
@@ -82,7 +78,6 @@ impl Telegram {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
-            gateway_id: None,
             timestamp: std::time::SystemTime::now(),
         }
     }

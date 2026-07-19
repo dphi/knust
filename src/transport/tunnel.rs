@@ -273,6 +273,9 @@ impl Tunnel {
                 if let Ok(mut s) = self.state.write() {
                     *s = ConnectionState::Failed;
                 }
+                if let Ok(mut stats) = self.stats.write() {
+                    stats.record_connection_error(&e);
+                }
                 Err(e)
             }
         }
@@ -508,6 +511,9 @@ impl Tunnel {
                 if let Ok(mut s) = self.state.write() {
                     *s = ConnectionState::Failed;
                 }
+                if let Ok(mut stats) = self.stats.write() {
+                    stats.record_connection_error(&e);
+                }
                 Err(e)
             }
         }
@@ -614,20 +620,34 @@ impl Tunnel {
     /// never established, a [`crate::error::SecurityError`] if encryption
     /// fails, or the underlying transport's send error.
     pub async fn send_frame(&self, frame: &[u8]) -> Result<()> {
-        let transport = self.transport()?;
-        #[cfg(feature = "secure")]
-        let data = if let Some(ref session) = self.secure_session {
-            session.read().await.encrypt_frame(frame).await?
-        } else {
-            frame.to_vec()
-        };
-        #[cfg(not(feature = "secure"))]
-        let data = frame.to_vec();
-        transport.send_frame(&data).await?;
-        if let Ok(mut stats) = self.stats.write() {
-            stats.frames_sent += 1;
+        let result = async {
+            let transport = self.transport()?;
+            #[cfg(feature = "secure")]
+            let data = if let Some(ref session) = self.secure_session {
+                session.read().await.encrypt_frame(frame).await?
+            } else {
+                frame.to_vec()
+            };
+            #[cfg(not(feature = "secure"))]
+            let data = frame.to_vec();
+            transport.send_frame(&data).await
         }
-        Ok(())
+        .await;
+
+        match result {
+            Ok(()) => {
+                if let Ok(mut stats) = self.stats.write() {
+                    stats.frames_sent += 1;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                if let Ok(mut stats) = self.stats.write() {
+                    stats.record_send_error(&error);
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Receive one complete KNX/IP frame (decrypting if a secure session exists).
@@ -638,20 +658,35 @@ impl Tunnel {
     /// never established, a [`crate::error::SecurityError`] if decryption
     /// fails, or the underlying transport's receive error.
     pub async fn recv_frame(&self) -> Result<Vec<u8>> {
-        let transport = self.transport()?;
-        let raw = transport.recv_frame().await?;
-        #[cfg(feature = "secure")]
-        let data = if let Some(ref session) = self.secure_session {
-            session.read().await.decrypt_frame(&raw).await?
-        } else {
-            raw
-        };
-        #[cfg(not(feature = "secure"))]
-        let data = raw;
-        if let Ok(mut stats) = self.stats.write() {
-            stats.frames_received += 1;
+        let result = async {
+            let transport = self.transport()?;
+            let raw = transport.recv_frame().await?;
+            #[cfg(feature = "secure")]
+            let data = if let Some(ref session) = self.secure_session {
+                session.read().await.decrypt_frame(&raw).await?
+            } else {
+                raw
+            };
+            #[cfg(not(feature = "secure"))]
+            let data = raw;
+            Ok(data)
         }
-        Ok(data)
+        .await;
+
+        match result {
+            Ok(data) => {
+                if let Ok(mut stats) = self.stats.write() {
+                    stats.frames_received += 1;
+                }
+                Ok(data)
+            }
+            Err(error) => {
+                if let Ok(mut stats) = self.stats.write() {
+                    stats.record_receive_error(&error);
+                }
+                Err(error)
+            }
+        }
     }
 
     // --- Heartbeat / router ---
@@ -875,14 +910,22 @@ impl HeartbeatHandle {
 impl Connection for Tunnel {
     async fn send(&self, frame: &[u8]) -> Result<()> {
         if !self.is_connected() {
-            return Err(TransportError::ConnectionClosed.into());
+            let error = TransportError::ConnectionClosed.into();
+            if let Ok(mut stats) = self.stats.write() {
+                stats.record_send_error(&error);
+            }
+            return Err(error);
         }
         Tunnel::send_frame(self, frame).await
     }
 
     async fn recv(&self) -> Result<Vec<u8>> {
         if !self.is_connected() {
-            return Err(TransportError::ConnectionClosed.into());
+            let error = TransportError::ConnectionClosed.into();
+            if let Ok(mut stats) = self.stats.write() {
+                stats.record_receive_error(&error);
+            }
+            return Err(error);
         }
         Tunnel::recv_frame(self).await
     }

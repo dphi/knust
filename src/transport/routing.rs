@@ -170,8 +170,7 @@ impl RoutingConnection {
 
         // Update statistics
         if let Ok(mut stats) = self.stats.write() {
-            stats.recv_errors += 1;
-            stats.last_error = Some("Routing lost message received".to_string());
+            stats.record_receive_error(&"Routing lost message received");
         }
 
         log_transport!(
@@ -202,8 +201,7 @@ impl RoutingConnection {
 
         // Update statistics
         if let Ok(mut stats) = self.stats.write() {
-            stats.recv_errors += 1;
-            stats.last_error = Some(format!(
+            stats.record_receive_error(&format!(
                 "Routing busy: device_state=0x{device_state:04X}, wait_time={wait_time}ms"
             ));
         }
@@ -236,8 +234,7 @@ impl RoutingConnection {
             .await
             .map_err(|e| {
                 if let Ok(mut stats) = self.stats.write() {
-                    stats.send_errors += 1;
-                    stats.last_error = Some(e.to_string());
+                    stats.record_send_error(&e);
                 }
                 TransportError::SocketError {
                     operation: "send_routing_indication".to_string(),
@@ -309,8 +306,7 @@ impl Connection for RoutingConnection {
         let mut buf = vec![0u8; 1024];
         let (len, _addr) = self.socket.recv_from(&mut buf).await.map_err(|e| {
             if let Ok(mut stats) = self.stats.write() {
-                stats.recv_errors += 1;
-                stats.last_error = Some(e.to_string());
+                stats.record_receive_error(&e);
             }
             TransportError::SocketError {
                 operation: "recv_from".to_string(),
@@ -386,4 +382,118 @@ pub struct RoutingStats {
 
     /// Connection uptime
     pub uptime: Option<Duration>,
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::*;
+
+    async fn test_connection(destination: SocketAddr) -> RoutingConnection {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let local_addr = socket.local_addr().unwrap();
+        RoutingConnection {
+            socket: Arc::new(socket),
+            multicast_addr: destination,
+            local_addr,
+            state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
+            stats: Arc::new(std::sync::RwLock::new(ConnectionStats::default())),
+            established_at: Some(Instant::now()),
+            routing_busy_count: Arc::new(std::sync::RwLock::new(0)),
+            lost_message_count: Arc::new(std::sync::RwLock::new(0)),
+        }
+    }
+
+    #[tokio::test]
+    // `score()` returns literal 0.0/1.0 constants for the connected-without-
+    // errors and disconnected states asserted here, not a computed ratio.
+    #[allow(clippy::float_cmp)]
+    async fn connection_health_tracks_routing_lifecycle_counters_and_errors() {
+        let outbound_receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let connection = test_connection(outbound_receiver.local_addr().unwrap()).await;
+
+        let initial = connection.health();
+        assert_eq!(initial.state, ConnectionState::Connected);
+        assert_eq!(initial.score(), 1.0);
+        assert_eq!(initial.total_errors(), 0);
+        assert!(initial.connected_since.is_some());
+
+        connection
+            .send_routing_indication(&[0x11, 0x22])
+            .await
+            .unwrap();
+        let mut outbound = [0_u8; 64];
+        outbound_receiver.recv_from(&mut outbound).await.unwrap();
+
+        let inbound_sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let inbound = KnxIpFrame::new(ServiceType::RoutingIndication, vec![0x33, 0x44]);
+        inbound_sender
+            .send_to(&inbound.serialize(), connection.local_addr())
+            .await
+            .unwrap();
+        assert_eq!(Connection::recv(&connection).await.unwrap(), [0x33, 0x44]);
+
+        let error_window_start = Instant::now();
+        let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, Vec::new());
+        assert!(
+            connection
+                .process_routing_message(&lost.serialize())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let active = connection.health();
+        assert_eq!(active.frames_sent, 1);
+        assert_eq!(active.frames_received, 1);
+        assert_eq!(active.recv_errors, 1);
+        assert_eq!(active.total_errors(), 1);
+        assert_eq!(
+            active.last_error.as_deref(),
+            Some("Routing lost message received")
+        );
+        assert!(
+            active
+                .last_error_at
+                .is_some_and(|at| at >= error_window_start)
+        );
+        assert!(active.score() < 1.0);
+        assert!(active.score() > 0.1);
+
+        let _ = Connection::close(&connection).await;
+        let stopped = connection.health();
+        assert_eq!(stopped.state, ConnectionState::Disconnected);
+        assert_eq!(stopped.score(), 0.0);
+        assert!(stopped.connected_since.is_none());
+        assert_eq!(stopped.frames_sent, 1);
+        assert_eq!(stopped.frames_received, 1);
+        assert_eq!(stopped.recv_errors, 1);
+    }
+
+    #[tokio::test]
+    // `score()` returns the literal 1.0 constant for an error-free connected
+    // connection, not a computed ratio.
+    #[allow(clippy::float_cmp)]
+    async fn connection_health_is_independent_between_routing_connections() {
+        let sink_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let sink_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let connection_a = test_connection(sink_a.local_addr().unwrap()).await;
+        let connection_b = test_connection(sink_b.local_addr().unwrap()).await;
+
+        let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, Vec::new());
+        connection_a
+            .process_routing_message(&lost.serialize())
+            .await
+            .unwrap();
+        connection_a.send_routing_indication(&[0x01]).await.unwrap();
+
+        let health_a = connection_a.health();
+        let health_b = connection_b.health();
+        assert_eq!(health_a.frames_sent, 1);
+        assert_eq!(health_a.recv_errors, 1);
+        assert!(health_a.last_error.is_some());
+        assert_eq!(health_b.frames_sent, 0);
+        assert_eq!(health_b.recv_errors, 0);
+        assert!(health_b.last_error.is_none());
+        assert_eq!(health_b.score(), 1.0);
+    }
 }

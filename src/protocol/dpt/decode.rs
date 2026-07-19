@@ -15,7 +15,6 @@ pub struct DecodedTelegram<'a> {
     pub telegram_type: TelegramType,
     pub dpt: DptType,
     pub view: DptView<'a>,
-    pub gateway_id: Option<u16>,
     pub group_name: Option<&'a str>,
 }
 
@@ -107,7 +106,6 @@ pub fn decode_telegram<'a>(
         telegram_type: telegram.telegram_type,
         dpt,
         view,
-        gateway_id: telegram.gateway_id,
         group_name,
     })
 }

@@ -75,7 +75,6 @@ async fn main() -> Result<(), knust::KnxError> {
         priority: Priority::Normal,
         direction: Direction::Outgoing,
         telegram_type: TelegramType::GroupValueWrite,
-        gateway_id: None,
         timestamp: std::time::SystemTime::now(),
     };
     knx.send_telegram(&switch_on).await?;

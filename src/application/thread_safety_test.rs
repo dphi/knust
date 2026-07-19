@@ -164,7 +164,6 @@ async fn test_concurrent_mixed_operations() {
         priority: Priority::Normal,
         direction: Direction::Incoming,
         telegram_type: TelegramType::GroupValueWrite,
-        gateway_id: None,
         timestamp: std::time::SystemTime::now(),
     };
 
@@ -304,7 +303,6 @@ async fn test_concurrent_filter_operations() {
         priority: Priority::Normal,
         direction: Direction::Incoming,
         telegram_type: TelegramType::GroupValueWrite,
-        gateway_id: None,
         timestamp: std::time::SystemTime::now(),
     };
 

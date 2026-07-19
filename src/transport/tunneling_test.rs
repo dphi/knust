@@ -55,5 +55,37 @@ mod tests {
         // The Connection contract refuses I/O while not connected.
         assert!(Connection::send(&conn, &[0x01, 0x02, 0x03]).await.is_err());
         assert!(Connection::recv(&conn).await.is_err());
+
+        let health = Connection::health(&conn);
+        assert_eq!(health.send_errors, 1);
+        assert_eq!(health.recv_errors, 1);
+        assert_eq!(health.total_errors(), 2);
+        assert!(health.last_error.is_some());
+        assert!(health.last_error_at.is_some());
+    }
+
+    #[tokio::test]
+    // `score()` returns the literal 0.0 constant for a failed connection,
+    // not a computed ratio.
+    #[allow(clippy::float_cmp)]
+    async fn test_failed_connect_updates_connection_health() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+
+        let mut conn = Tunnel::new_tcp_with_timeout(address, std::time::Duration::from_secs(1));
+        let error_window_start = std::time::Instant::now();
+        assert!(conn.connect().await.is_err());
+
+        let health = Connection::health(&conn);
+        assert_eq!(health.state, ConnectionState::Failed);
+        assert_eq!(health.connection_errors, 1);
+        assert!(health.last_error.is_some());
+        assert!(
+            health
+                .last_error_at
+                .is_some_and(|at| at >= error_window_start)
+        );
+        assert_eq!(health.score(), 0.0);
     }
 }
