@@ -240,6 +240,42 @@ fn test_dpt2_aliases() {
 }
 
 #[test]
+fn test_dpt2_semantic_labels() {
+    let cases = [
+        (DptType::SwitchControl, false, "off"),
+        (DptType::SwitchControl, true, "on"),
+        (DptType::BoolControl, false, "false"),
+        (DptType::BoolControl, true, "true"),
+        (DptType::EnableControl, false, "disable"),
+        (DptType::EnableControl, true, "enable"),
+        (DptType::RampControl, false, "no_ramp"),
+        (DptType::RampControl, true, "ramp"),
+        (DptType::AlarmControl, false, "no_alarm"),
+        (DptType::AlarmControl, true, "alarm"),
+        (DptType::BinaryValueControl, false, "low"),
+        (DptType::BinaryValueControl, true, "high"),
+        (DptType::StepControl, false, "decrease"),
+        (DptType::StepControl, true, "increase"),
+        (DptType::Direction1Control, false, "up"),
+        (DptType::Direction1Control, true, "down"),
+        (DptType::Direction2Control, false, "up"),
+        (DptType::Direction2Control, true, "down"),
+        (DptType::StartControl, false, "stop"),
+        (DptType::StartControl, true, "start"),
+        (DptType::StateControl, false, "inactive"),
+        (DptType::StateControl, true, "active"),
+        (DptType::InvertControl, false, "not_inverted"),
+        (DptType::InvertControl, true, "inverted"),
+    ];
+
+    for (dpt, value, label) in cases {
+        let bytes = [u8::from(value)];
+        let view = dpt.decode_ref(&bytes).unwrap();
+        assert_eq!(view.formatted(dpt), format!("Control(false, {label})"));
+    }
+}
+
+#[test]
 fn test_scaling_encode_decode() {
     let scaling = Scaling::new(128);
     let bytes = scaling.as_bytes();

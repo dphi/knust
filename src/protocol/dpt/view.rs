@@ -501,11 +501,13 @@ impl DptView<'_> {
     pub fn formatted(&self, dpt: DptType) -> String {
         match self {
             Self::Bool(v) => format_bool(v.value(), dpt),
-            Self::Control2(v) => format!(
-                "Control({}, {})",
-                if v.control() { "active" } else { "inactive" },
-                u8::from(v.value())
-            ),
+            Self::Control2(v) => {
+                format!(
+                    "Control({}, {})",
+                    v.control(),
+                    format_control2(v.value(), dpt)
+                )
+            }
             Self::Control(v) => format!(
                 "Control({}, step={})",
                 if v.step() { "increase" } else { "decrease" },
@@ -555,6 +557,97 @@ fn format_bool(value: bool, dpt: DptType) -> String {
         DptType::Enable => if value { "Enable" } else { "Disable" }.to_string(),
         DptType::Occupancy => if value { "Occupied" } else { "Not Occupied" }.to_string(),
         _ => if value { "True" } else { "False" }.to_string(),
+    }
+}
+
+/// Semantic label for a DPT 2.xxx control value bit, using the same enum
+/// names as the corresponding DPT 1.xxx type.
+fn format_control2(value: bool, dpt: DptType) -> &'static str {
+    match dpt {
+        DptType::SwitchControl => {
+            if value {
+                "on"
+            } else {
+                "off"
+            }
+        }
+        DptType::BoolControl => {
+            if value {
+                "true"
+            } else {
+                "false"
+            }
+        }
+        DptType::EnableControl => {
+            if value {
+                "enable"
+            } else {
+                "disable"
+            }
+        }
+        DptType::RampControl => {
+            if value {
+                "ramp"
+            } else {
+                "no_ramp"
+            }
+        }
+        DptType::AlarmControl => {
+            if value {
+                "alarm"
+            } else {
+                "no_alarm"
+            }
+        }
+        DptType::BinaryValueControl => {
+            if value {
+                "high"
+            } else {
+                "low"
+            }
+        }
+        DptType::StepControl => {
+            if value {
+                "increase"
+            } else {
+                "decrease"
+            }
+        }
+        DptType::Direction1Control | DptType::Direction2Control => {
+            if value {
+                "down"
+            } else {
+                "up"
+            }
+        }
+        DptType::StartControl => {
+            if value {
+                "start"
+            } else {
+                "stop"
+            }
+        }
+        DptType::StateControl => {
+            if value {
+                "active"
+            } else {
+                "inactive"
+            }
+        }
+        DptType::InvertControl => {
+            if value {
+                "inverted"
+            } else {
+                "not_inverted"
+            }
+        }
+        _ => {
+            if value {
+                "1"
+            } else {
+                "0"
+            }
+        }
     }
 }
 
