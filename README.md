@@ -42,14 +42,17 @@ tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
 
 ### Basic Usage
 
-There's no built-in device abstraction layer — you send telegrams and read
-group values directly. See [`examples/custom_devices.rs`](examples/custom_devices.rs)
-for a pattern to build a device layer on top of these primitives.
+There's no built-in device abstraction layer, but `Knx::group_address` gives
+you a compile-time-typed, DPT-checked handle per group address — register
+an address with its DPT once, then `write`/`read`/`decode` on the handle
+instead of hand-building `Telegram`s. See
+[`examples/custom_devices.rs`](examples/custom_devices.rs) for composing
+handles like this into device structs.
 
 ```rust
 use knust::{Knx, ConnectionConfig, ConnectionType};
-use knust::protocol::{Address, GroupAddress, IndividualAddress};
-use knust::protocol::telegram::{Direction, Priority, Telegram, TelegramType};
+use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::dpt::DPTSwitch;
 
 #[tokio::main]
 async fn main() -> Result<(), knust::KnxError> {
@@ -67,17 +70,14 @@ async fn main() -> Result<(), knust::KnxError> {
     // Connect to KNX network
     knx.connect().await?;
 
-    // Switch a light on (GroupValueWrite to 1/2/3)
-    let switch_on = Telegram {
-        source: IndividualAddress::new(1, 1, 240),
-        destination: Address::Group(GroupAddress::from_parts(1, 2, 3)?),
-        payload: vec![0x01],
-        priority: Priority::Normal,
-        direction: Direction::Outgoing,
-        telegram_type: TelegramType::GroupValueWrite,
-        timestamp: std::time::SystemTime::now(),
-    };
-    knx.send_telegram(&switch_on).await?;
+    // Register 1/2/3 as DPT 1.001 (Switch). Fails if it's already bound
+    // to a *different* DPT elsewhere — every address gets exactly one.
+    let light = knx.group_address::<DPTSwitch>(GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3))?;
+
+    // `write` accepts a bool, `DPTSwitch` itself, or a string like "on" —
+    // all checked against the bound DPT; only the string can fail at
+    // runtime, the others can't resolve to the wrong DPT at all.
+    light.write(true).await?;
 
     // Disconnect
     knx.disconnect().await?;
@@ -85,6 +85,9 @@ async fn main() -> Result<(), knust::KnxError> {
     Ok(())
 }
 ```
+
+For a raw-bytes escape hatch — no DPT binding, you build the `Telegram`
+yourself — see [`examples/send_telegrams.rs`](examples/send_telegrams.rs).
 
 ### Builder Pattern
 
@@ -154,18 +157,134 @@ let config = ConnectionConfig {
 };
 ```
 
-## Reading Group Values
+## Typed Group Addresses
+
+`Knx::group_address::<T>(address)` binds a group address to DPT `T` and
+returns a `GroupAddress<T>` handle. `T` is one of the DPT value types in
+`knust::protocol::dpt` (`DPTSwitch`, `DPTScaling`, `DPTTemperature`, ...);
+the handle can't exist without the bus already agreeing `address` is that
+DPT — registering the same address again with a *different* `T` is an
+error, not a silent overwrite.
 
 ```rust
 use std::time::Duration;
+use knust::protocol::dpt::DPTTemperature;
 
-// Read a temperature sensor (DPT 9.001) and wait for the response
-let payload = knx
-    .read_group_value(GroupAddress::from_parts(2, 1, 1)?, Duration::from_secs(5))
-    .await?;
-let temperature = knust::protocol::dpt::Dpt::<knust::protocol::dpt::Temperature>::decode(&payload)?;
-println!("Temperature: {:.1}°C", temperature.value().value());
+// Register once; reuse the handle for every read/write after that.
+let temp = knx.group_address::<DPTTemperature>(GroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1))?;
+
+// Sends a GroupValueRead and decodes the response as DPT 9.001 directly.
+let value = temp.read(Duration::from_secs(5)).await?;
+println!("Temperature: {:.1}°C", value.value());
 ```
+
+`write` accepts the DPT's own value type, its plain inner value (`bool` for
+switches, `u8` for scaling, ...), or a string — see [Basic
+Usage](#basic-usage). `decode(&telegram)` does the read-side equivalent for
+a telegram you already have (e.g. inside a callback), returning `None` if
+it's addressed elsewhere instead of panicking.
+
+For code that doesn't hold a specific handle — a bus monitor iterating
+telegrams for addresses it discovers at runtime — `Knx::decode_group_value`
+looks the DPT up in the same registry, and fails soft (`None`) for anything
+unregistered instead of panicking:
+
+```rust
+match knx.decode_group_value(&telegram) {
+    Some(Ok(view)) => println!("{}: {:?}", telegram.destination, view.raw()),
+    Some(Err(e)) => println!("{}: decode error: {e}", telegram.destination),
+    None => {} // address not registered — nothing to decode
+}
+```
+
+Bindings can also be registered without a compile-time `T` via
+`Knx::register_group_address_dyn(address, dpt)` — for bulk-loading from an
+ETS export (`parse_ets_csv`, `ets` feature) or other runtime-known DPTs.
+
+### Inspecting the Registry
+
+Every registered address's binding can be read back without touching the
+bus:
+
+```rust
+// Just the DPT it's bound to.
+let dpt = knx.group_address_dpt(address); // Option<DptType>
+
+// DPT, refresh TTL, and the last real value observed (if any) — purely
+// local, doesn't send anything. Compare `read_group_value`/`T::read`,
+// which always round-trips a GroupValueRead.
+if let Some(state) = knx.group_address_state(address) {
+    println!("last value: {:?} (seen {:?} ago)", state.last_seen_value, state.last_seen);
+}
+
+// Every registered (address, dpt) pair, order unspecified.
+for (address, dpt) in knx.registered_group_addresses() {
+    println!("{address}: {}", dpt.number_str());
+}
+```
+
+`Knx::unregister_group_address(address)` removes a binding and frees the
+address to be registered under a different DPT; any `GroupAddress<T>`
+handles obtained before the unregister re-check the registry on their next
+`write`/`read`/`decode` and error rather than keep using their now-stale
+`T`.
+
+### Monitoring and Refresh
+
+To keep an address's value fresh without polling the bus yourself, set a
+refresh TTL — if no real `GroupValueWrite`/`GroupValueResponse` is observed
+for it within that window, a background task sends a `GroupValueRead`:
+
+```rust
+knx.set_group_address_refresh(address, Duration::from_secs(300))?;
+knx.start().await?; // the refresh task only runs once start() has been called
+```
+
+`set_group_address_refresh` can be called before `start()` (it just
+records the TTL and logs a warning), but the task that actually acts on it
+is spawned by `start()`, so call `start()` at some point or the TTL never
+takes effect. `Knx::clear_group_address_refresh(address)` undoes it.
+
+With the TTL in place, `group_address_state(address).last_seen_value` above
+is a cheap way to *pull* the current value on demand. To *push* instead —
+react the moment a new value arrives — register a filtered callback:
+
+```rust
+use knust::application::callbacks::TelegramFilter;
+
+knx.register_telegram_callback_filtered(
+    my_callback,
+    TelegramFilter::GroupAddresses(vec![address]),
+    false, // don't also fire on our own outgoing telegrams
+).await;
+```
+
+`TelegramFilter::GroupAddresses` matches on destination address across
+*every* telegram type, including `GroupValueRead` (which carries no
+value) — check `telegram.telegram_type` yourself if you only care about
+real values. See [`examples/group_monitor.rs`](examples/group_monitor.rs)
+for the full pattern.
+
+### Answering Reads
+
+`Telegram::group_response_value::<T>(address, value)` builds an outgoing
+`GroupValueResponse`, with the same DPT-checked value ergonomics as
+`group_write_value`. Nothing in the library requires this to be sent in
+reply to an actual `GroupValueRead` — `send_telegram` will happily send a
+`GroupValueResponse` at any time, solicited or not:
+
+```rust
+let response = Telegram::group_response_value::<DPTTemperature>(address, 21.5)?;
+knx.send_telegram(&response).await?;
+```
+
+For the common case of only answering real read requests, check
+`telegram.telegram_type == TelegramType::GroupValueRead` in your callback
+before responding — see
+[`examples/read_responder.rs`](examples/read_responder.rs). And only ever
+respond with a value you actually have: a response carrying a stale
+default tells the bus something false, which the library has no way to
+detect on your behalf.
 
 ## Gateway Discovery
 
@@ -204,10 +323,10 @@ let mut keyring = KeyRing::new();
 
 // Add group keys
 let group_key = SecurityKey::from_hex("0123456789ABCDEF0123456789ABCDEF")?;
-keyring.add_group_key(GroupAddress::from_parts(1, 2, 1)?, group_key);
+keyring.add_group_key(GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1), group_key);
 
 // Check if group is secured
-if keyring.is_group_secured(&GroupAddress::from_parts(1, 2, 1)?) {
+if keyring.is_group_secured(&GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1)) {
     println!("Group 1/2/1 is secured");
 }
 ```
@@ -283,9 +402,11 @@ match knx.connect().await {
 The repository includes examples covering common tasks (`cargo run --example <name>`,
 some require the `secure`/`ets` features):
 
-- **custom_devices**: recommended pattern for building a device layer on `send_telegram`/`read_group_value`
-- **send_telegrams**: sending raw telegrams
-- **value_reader**: reading and decoding group values
+- **custom_devices**: building device structs on typed `GroupAddress<T>` handles
+- **send_telegrams**: typed writes, plus the raw `Telegram`/`send_telegram` escape hatch
+- **value_reader**: typed reads across a few different DPTs
+- **read_responder**: answering a `GroupValueRead` with a `GroupValueResponse`
+- **group_monitor**: inspecting the registry, refresh TTLs, and reacting to new values via callback
 - **gateway_discovery**: discovering gateways on the network
 - **secure_connection**: KNX IP Secure / Data Security
 - **configuration_examples**: `ConnectionConfig` variations
