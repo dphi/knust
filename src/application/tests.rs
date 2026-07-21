@@ -379,4 +379,177 @@ mod unit_tests {
         assert_eq!(knx.config().timeout_ms, 10000);
         assert!(knx.config().auto_reconnect);
     }
+
+    #[cfg(feature = "dpt")]
+    #[tokio::test]
+    async fn test_group_address_typed_write_and_decode() {
+        use crate::protocol::address::{GroupAddress, MainGroup, MiddleGroup};
+        use crate::protocol::dpt::{DPTScaling, DPTSwitch, DptType};
+        use crate::protocol::telegram::Telegram;
+
+        let config = ConnectionConfig {
+            connection_type: ConnectionType::Routing,
+            gateway_ip: None,
+            gateway_port: Some(3671),
+            local_ip: None,
+            individual_address: IndividualAddress::new(1, 1, 240),
+            security: None,
+            timeout_ms: 5000,
+            auto_reconnect: false,
+            reconnect_backoff: BackoffConfig::default(),
+            tcp_config: TcpConfig::default(),
+        };
+        let knx = Knx::new(config).await.unwrap();
+
+        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let switch = knx.group_address::<DPTSwitch>(ga).unwrap();
+        assert_eq!(knx.group_address_dpt(ga), Some(DptType::Switch));
+        assert_eq!(switch.dpt(), DptType::Switch);
+
+        // Re-registering with a different DPT is a conflict.
+        assert!(knx.group_address::<DPTScaling>(ga).is_err());
+        // ...but the same DPT again is fine and doesn't disturb the binding.
+        assert!(knx.group_address::<DPTSwitch>(ga).is_ok());
+
+        // Plain bool: passing e.g. a DPTScaling (or a u8) here wouldn't compile.
+        switch.write(true).await.unwrap();
+        assert_eq!(knx.telegram_queue_size().await, 1);
+
+        // The DPT value type itself still works too.
+        switch.write(DPTSwitch::new(false)).await.unwrap();
+        assert_eq!(knx.telegram_queue_size().await, 2);
+
+        // String, checked against the bound DPT at runtime instead of at
+        // compile time — the only shape that can fail on bad input.
+        switch.write("off").await.unwrap();
+        assert_eq!(knx.telegram_queue_size().await, 3);
+        assert!(switch.write("banana").await.is_err());
+
+        // Both the handle-scoped (typed) and the generic (dynamic) decode
+        // path agree, because both read from the same registry binding.
+        let incoming = Telegram::group_write(ga, vec![0x01]);
+        assert!(switch.decode(&incoming).unwrap().unwrap().value());
+        assert_eq!(
+            knx.decode_group_value(&incoming)
+                .unwrap()
+                .unwrap()
+                .formatted(DptType::Switch),
+            "On"
+        );
+
+        // An unregistered address has no binding.
+        let other = GroupAddress::new(MainGroup::new(4), MiddleGroup::new(5), 6);
+        assert!(knx.group_address_dpt(other).is_none());
+        let unbound = Telegram::group_write(other, vec![0x01]);
+        assert!(knx.decode_group_value(&unbound).is_none());
+    }
+
+    #[cfg(feature = "dpt")]
+    #[tokio::test]
+    async fn test_group_address_inspect_and_unregister() {
+        use crate::protocol::address::{GroupAddress, MainGroup, MiddleGroup};
+        use crate::protocol::dpt::{DPTScaling, DPTSwitch, DptType};
+        use crate::protocol::telegram::Telegram;
+
+        let config = ConnectionConfig {
+            connection_type: ConnectionType::Routing,
+            gateway_ip: None,
+            gateway_port: Some(3671),
+            local_ip: None,
+            individual_address: IndividualAddress::new(1, 1, 240),
+            security: None,
+            timeout_ms: 5000,
+            auto_reconnect: false,
+            reconnect_backoff: BackoffConfig::default(),
+            tcp_config: TcpConfig::default(),
+        };
+        let knx = Knx::new(config).await.unwrap();
+
+        let switch_ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let scaling_ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 4);
+        let switch = knx.group_address::<DPTSwitch>(switch_ga).unwrap();
+        knx.group_address::<DPTScaling>(scaling_ga).unwrap();
+
+        // Inspect: both bindings show up, regardless of which entry point
+        // (typed or dynamic) registered them.
+        let mut entries = knx.registered_group_addresses();
+        entries.sort_by_key(|(address, _)| address.raw());
+        assert_eq!(
+            entries,
+            vec![(switch_ga, DptType::Switch), (scaling_ga, DptType::Scaling),]
+        );
+
+        // Unregister: the binding disappears from lookups...
+        assert_eq!(
+            knx.unregister_group_address(switch_ga),
+            Some(DptType::Switch)
+        );
+        assert!(knx.group_address_dpt(switch_ga).is_none());
+        assert_eq!(knx.registered_group_addresses().len(), 1);
+        // ...unregistering again is a harmless no-op.
+        assert!(knx.unregister_group_address(switch_ga).is_none());
+
+        // ...decode_group_value (which relies on the registry) stops
+        // resolving it...
+        let telegram = Telegram::group_write(switch_ga, vec![0x01]);
+        assert!(knx.decode_group_value(&telegram).is_none());
+
+        // ...and the handle obtained *before* unregistering now errors
+        // too — it re-checks the registry on every use, so it can't keep
+        // silently operating under a DPT the registry no longer agrees on.
+        assert!(switch.decode(&telegram).unwrap().is_err());
+        assert!(switch.write(true).await.is_err());
+
+        // The address is free to be bound to a different DPT now.
+        knx.group_address::<DPTScaling>(switch_ga).unwrap();
+        assert_eq!(knx.group_address_dpt(switch_ga), Some(DptType::Scaling));
+
+        // The old handle still carries DPT::Switch, which now disagrees
+        // with the registry's DPT::Scaling — it keeps erroring rather than
+        // silently reading/writing under its stale DPT.
+        assert!(switch.decode(&telegram).unwrap().is_err());
+    }
+
+    #[cfg(feature = "ets")]
+    #[tokio::test]
+    async fn test_register_group_addresses_from_ets() {
+        use crate::config::parse_ets_csv;
+        use crate::protocol::address::GroupAddress;
+        use crate::protocol::dpt::DptType;
+
+        let config = ConnectionConfig {
+            connection_type: ConnectionType::Routing,
+            gateway_ip: None,
+            gateway_port: Some(3671),
+            local_ip: None,
+            individual_address: IndividualAddress::new(1, 1, 240),
+            security: None,
+            timeout_ms: 5000,
+            auto_reconnect: false,
+            reconnect_backoff: BackoffConfig::default(),
+            tcp_config: TcpConfig::default(),
+        };
+        let knx = Knx::new(config).await.unwrap();
+
+        let csv = "\"Group name\";\"Address\";\"DatapointType\"\n\
+                   \"Living Room Temp\";\"1/2/3\";\"DPST-9-1\"\n\
+                   \"Hall Light\";\"1/2/4\";\"DPST-1-1\"\n";
+        let parsed = parse_ets_csv(csv).unwrap();
+
+        knx.register_group_addresses_from_ets(&parsed).unwrap();
+
+        assert_eq!(
+            knx.group_address_dpt(GroupAddress::from_parts(1, 2, 3).unwrap()),
+            Some(DptType::Temperature)
+        );
+        assert_eq!(
+            knx.group_address_dpt(GroupAddress::from_parts(1, 2, 4).unwrap()),
+            Some(DptType::Switch)
+        );
+        assert_eq!(knx.registered_group_addresses().len(), 2);
+
+        // Importing the same file again is a no-op, not a conflict.
+        knx.register_group_addresses_from_ets(&parsed).unwrap();
+        assert_eq!(knx.registered_group_addresses().len(), 2);
+    }
 }

@@ -872,12 +872,51 @@ impl DptType {
                 *second & 0x3F,
             ]),
             (11, DptPayload::Date { day, month, year }) => {
-                let y = if *year >= 2000 {
-                    (*year - 2000) as u8
+                if (1990..=2089).contains(year) {
+                    let y = if *year >= 2000 {
+                        (*year - 2000) as u8
+                    } else {
+                        (*year - 1900) as u8
+                    };
+                    Ok(vec![*day & 0x1F, *month & 0x0F, y & 0x7F])
                 } else {
-                    (*year - 1900) as u8
-                };
-                Ok(vec![*day & 0x1F, *month & 0x0F, y & 0x7F])
+                    Err(ProtocolError::DptError {
+                        dpt_type: self.number_str(),
+                        details: format!("year {year} out of range 1990-2089 for DPT 11"),
+                    }
+                    .into())
+                }
+            }
+            (
+                19,
+                DptPayload::DateTime {
+                    year,
+                    month,
+                    day,
+                    day_of_week,
+                    hour,
+                    minute,
+                    second,
+                },
+            ) => {
+                if (1900..=2155).contains(year) {
+                    Ok(vec![
+                        (*year - 1900) as u8,
+                        *month & 0x0F,
+                        *day & 0x1F,
+                        ((*day_of_week & 0x07) << 5) | (*hour & 0x1F),
+                        *minute & 0x3F,
+                        *second & 0x3F,
+                        0x00,
+                        0x00,
+                    ])
+                } else {
+                    Err(ProtocolError::DptError {
+                        dpt_type: self.number_str(),
+                        details: format!("year {year} out of range 1900-2155 for DPT 19"),
+                    }
+                    .into())
+                }
             }
             (12, DptPayload::UnsignedInt(v)) => Ok((*v as u32).to_be_bytes().to_vec()),
             (13, DptPayload::SignedInt(v)) => Ok((*v as i32).to_be_bytes().to_vec()),

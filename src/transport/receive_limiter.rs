@@ -152,6 +152,7 @@ impl ReceiveRateLimiter {
 mod tests {
     use super::*;
     use crate::protocol::address::IndividualAddress;
+    use crate::protocol::telegram::TelegramType;
 
     #[test]
     fn test_bounded_channel_backpressure() {
@@ -161,8 +162,14 @@ mod tests {
         };
         let (limiter, _rx) = ReceiveRateLimiter::new(config);
         let ga = GroupAddress::from_parts(1, 2, 3).unwrap();
-        let t =
-            || Telegram::new_incoming(IndividualAddress::new(1, 1, 5), Address::Group(ga), vec![1]);
+        let t = || {
+            Telegram::received(
+                IndividualAddress::new(1, 1, 5),
+                ga,
+                TelegramType::GroupValueWrite,
+                vec![1],
+            )
+        };
 
         assert_eq!(limiter.try_send(t()), ReceiveResult::Sent);
         assert_eq!(limiter.try_send(t()), ReceiveResult::Sent);
@@ -177,8 +184,14 @@ mod tests {
         };
         let (limiter, _rx) = ReceiveRateLimiter::new(config);
         let ga = GroupAddress::from_parts(1, 2, 3).unwrap();
-        let t =
-            || Telegram::new_incoming(IndividualAddress::new(1, 1, 5), Address::Group(ga), vec![1]);
+        let t = || {
+            Telegram::received(
+                IndividualAddress::new(1, 1, 5),
+                ga,
+                TelegramType::GroupValueWrite,
+                vec![1],
+            )
+        };
 
         assert_eq!(limiter.try_send(t()), ReceiveResult::Sent);
         assert_eq!(limiter.try_send(t()), ReceiveResult::Sent);

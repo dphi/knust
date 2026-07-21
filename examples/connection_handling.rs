@@ -6,8 +6,8 @@ use std::time::Duration;
 use tokio::signal;
 use tokio::time::sleep;
 
-use knust::protocol::address::{Address, GroupAddress, IndividualAddress};
-use knust::protocol::telegram::{Direction, Priority, Telegram, TelegramType};
+use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::dpt::DPTSwitch;
 use knust::{ConnectionConfig, ConnectionType, Knx};
 
 async fn graceful_shutdown(knx: Knx) -> Result<(), Box<dyn std::error::Error>> {
@@ -77,27 +77,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Perform some operations - toggle a switch's group address directly
-    let source = IndividualAddress::new(1, 1, 240);
-    let switch_address = GroupAddress::from_parts(1, 0, 9).expect("Valid address");
-    let switch_telegram = |on: bool| Telegram {
-        source,
-        destination: Address::Group(switch_address),
-        payload: vec![u8::from(on)],
-        priority: Priority::Normal,
-        direction: Direction::Outgoing,
-        telegram_type: TelegramType::GroupValueWrite,
-        timestamp: std::time::SystemTime::now(),
-    };
+    let switch_address = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(0), 9);
+    let switch = knx.group_address::<DPTSwitch>(switch_address)?;
 
     println!("Performing operations...");
 
     for i in 1..=5 {
         println!("Operation {i}/5: Toggling switch");
 
-        knx.send_telegram(&switch_telegram(true)).await?;
+        switch.write(true).await?;
         sleep(Duration::from_secs(1)).await;
 
-        knx.send_telegram(&switch_telegram(false)).await?;
+        switch.write(false).await?;
         sleep(Duration::from_secs(1)).await;
     }
 

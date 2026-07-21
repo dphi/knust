@@ -14,7 +14,7 @@ use tokio::time::{sleep, timeout};
 
 use knust::application::callbacks::TelegramCallbackFn;
 use knust::protocol::address::IndividualAddress;
-use knust::protocol::telegram::Telegram;
+use knust::protocol::telegram::{Telegram, TelegramType};
 use knust::{ConnectionConfig, ConnectionType, Knx};
 
 /// Test configuration from environment variables
@@ -302,9 +302,14 @@ async fn test_gateway_packet_listener_mock() -> Result<(), Box<dyn std::error::E
     // For external tests, we'll verify the callback works by triggering it
 
     // Create a mock telegram to test the callback
-    let mock_telegram = Telegram::new_incoming(
+    let mock_telegram = Telegram::received(
         IndividualAddress::new(1, 1, 1),
-        knust::protocol::Address::Group(knust::protocol::GroupAddress::new(1, 1, 1)),
+        knust::protocol::GroupAddress::new(
+            knust::protocol::MainGroup::new(1),
+            knust::protocol::MiddleGroup::new(1),
+            1,
+        ),
+        TelegramType::GroupValueWrite,
         vec![0x01, 0x80], // Example: switch on command
     );
 

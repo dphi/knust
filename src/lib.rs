@@ -79,6 +79,8 @@ pub mod transport;
 pub mod test_config;
 
 // Re-export commonly used types
+#[cfg(feature = "dpt")]
+pub use application::GroupAddress;
 pub use application::{Knx, KnxBuilder, KnxState};
 #[cfg(feature = "secure")]
 pub use config::KeyringConfig;

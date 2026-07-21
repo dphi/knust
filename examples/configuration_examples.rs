@@ -3,7 +3,7 @@
 //! This example demonstrates various ways to configure Knx for different
 //! use cases, including connection types, device setup, and advanced options.
 
-use knust::protocol::{GroupAddress, IndividualAddress};
+use knust::protocol::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
 use knust::transport::{BackoffConfig, SecurityConfig, TcpConfig};
 use knust::{Component, ConnectionConfig, ConnectionType, Knx, LogLevel, LoggingConfig};
 
@@ -168,22 +168,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 5: Group Address Layout
     println!("\n💡 Example 5: Group Address Layout Examples");
     println!("--------------------------------------------");
-    println!("There's no built-in device layer - see examples/custom_devices.rs");
-    println!("for the recommended pattern to build one on send_telegram/read_group_value.");
+    println!("There's no built-in device layer, but Knx::group_address gives you a");
+    println!("compile-time-typed, DPT-checked handle per address (write/read/decode) —");
+    println!("see examples/custom_devices.rs for composing those into device structs.");
 
     println!("💡 Living Room Main Light:");
-    println!("   Switch: {}", GroupAddress::from_parts(1, 2, 1)?);
-    println!("   Brightness: {}", GroupAddress::from_parts(1, 2, 2)?);
-    println!("   Color: {}", GroupAddress::from_parts(1, 2, 3)?);
+    println!(
+        "   Switch: {}",
+        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1)
+    );
+    println!(
+        "   Brightness: {}",
+        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 2)
+    );
+    println!(
+        "   Color: {}",
+        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3)
+    );
 
     println!("💡 Hallway Light (switch only):");
-    println!("   Switch: {}", GroupAddress::from_parts(1, 3, 1)?);
+    println!(
+        "   Switch: {}",
+        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(3), 1)
+    );
 
     println!("🌡️  Living Room Temperature (DPT 9.001):");
-    println!("   Address: {}", GroupAddress::from_parts(2, 1, 1)?);
+    println!(
+        "   Address: {}",
+        GroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1)
+    );
 
     println!("💧 Living Room Humidity (DPT 9.007):");
-    println!("   Address: {}", GroupAddress::from_parts(2, 1, 2)?);
+    println!(
+        "   Address: {}",
+        GroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 2)
+    );
 
     // Example 6: Logging Configuration
     println!("\n📝 Example 6: Logging Configuration");

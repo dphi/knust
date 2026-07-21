@@ -1007,7 +1007,7 @@ fn parse_cemi_to_telegram(cemi_data: &[u8]) -> Result<Telegram> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::address::{Address, GroupAddress, IndividualAddress as Ia};
+    use crate::protocol::address::{GroupAddress, IndividualAddress as Ia};
     use crate::transport::tunnel::Tunnel;
     use std::time::Duration;
     use tokio::time::timeout;
@@ -1035,9 +1035,10 @@ mod tests {
     }
 
     fn test_telegram(payload: u8) -> Telegram {
-        Telegram::new_incoming(
+        Telegram::received(
             Ia::new(1, 1, 5),
-            Address::Group(GroupAddress::from_parts(1, 2, 3).unwrap()),
+            GroupAddress::from_parts(1, 2, 3).unwrap(),
+            TelegramType::GroupValueWrite,
             vec![payload],
         )
     }

@@ -57,12 +57,101 @@ impl TryFrom<&str> for Address {
     }
 }
 
+/// The main-group component of a [`GroupAddress`] (4 bits: 0-15).
+///
+/// Holding a `MainGroup` at all is proof the value is in range — there's no
+/// way to construct one otherwise. Use [`Self::new`] for a value you
+/// already trust (a literal, e.g. — invalid input there is a bug and
+/// panics, or fails to compile if used in a `const`). For a genuinely
+/// dynamic value where you want a recoverable [`AddressError`] instead of a
+/// panic, build the whole [`GroupAddress`] via [`GroupAddress::try_new`]
+/// (which takes raw `u8`s) rather than constructing a `MainGroup` directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MainGroup(u8);
+
+impl MainGroup {
+    /// Maximum valid value (4 bits)
+    pub const MAX: u8 = 15;
+
+    /// # Panics
+    ///
+    /// Panics if `value > Self::MAX`. In a `const` context this is a
+    /// compile error instead of a runtime panic.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        assert!(value <= Self::MAX, "main group out of range (0-15)");
+        Self(value)
+    }
+
+    /// The validated value.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<u8> for MainGroup {
+    /// # Panics
+    ///
+    /// Panics if `value > Self::MAX` — same guarantee as [`Self::new`].
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for MainGroup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// The middle-group component of a [`GroupAddress`] (3 bits: 0-7). See
+/// [`MainGroup`] — same guarantee, same two ways to construct one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MiddleGroup(u8);
+
+impl MiddleGroup {
+    /// Maximum valid value (3 bits)
+    pub const MAX: u8 = 7;
+
+    /// # Panics
+    ///
+    /// Panics if `value > Self::MAX`. In a `const` context this is a
+    /// compile error instead of a runtime panic.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        assert!(value <= Self::MAX, "middle group out of range (0-7)");
+        Self(value)
+    }
+
+    /// The validated value.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<u8> for MiddleGroup {
+    /// # Panics
+    ///
+    /// Panics if `value > Self::MAX` — same guarantee as [`Self::new`].
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for MiddleGroup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// KNX group address (logical address) with compile-time validation
 ///
 /// Group addresses are used for logical communication in KNX networks.
 /// They follow the format main/middle/sub where:
 /// - main: 0-15 (4 bits)
-/// - middle: 0-7 (3 bits)  
+/// - middle: 0-7 (3 bits)
 /// - sub: 0-255 (8 bits)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct GroupAddress(u16);
@@ -80,17 +169,18 @@ impl GroupAddress {
     /// Maximum valid raw address value
     pub const MAX_RAW: u16 = 0x7FFF;
 
-    /// Create a group address from main/middle/sub components
+    /// Create a group address from a validated main/middle component pair
+    /// and a sub-group byte.
     ///
-    /// # Panics
-    /// Panics if any component is out of valid range in debug builds.
-    /// In release builds, invalid values are silently wrapped.
+    /// `main`/`middle` are [`MainGroup`]/[`MiddleGroup`] — types that can
+    /// only hold an in-range value — so unlike a raw `u8`-based
+    /// constructor, this can never silently corrupt the packed
+    /// representation on out-of-range input, whether that input came from
+    /// a literal or a dynamic source: `MainGroup`/`MiddleGroup` already
+    /// forced that check when they were constructed.
     #[must_use]
-    pub const fn new(main: u8, middle: u8, sub: u8) -> Self {
-        debug_assert!(main <= Self::MAX_MAIN, "main group out of range");
-        debug_assert!(middle <= Self::MAX_MIDDLE, "middle group out of range");
-
-        let raw = ((main as u16) << 11) | ((middle as u16) << 8) | (sub as u16);
+    pub const fn new(main: MainGroup, middle: MiddleGroup, sub: u8) -> Self {
+        let raw = ((main.0 as u16) << 11) | ((middle.0 as u16) << 8) | (sub as u16);
         Self(raw)
     }
 
@@ -410,6 +500,17 @@ impl fmt::Display for IndividualAddress {
     }
 }
 
+impl Default for IndividualAddress {
+    /// `0.0.0` (see [`Self::broadcast`]) — the placeholder
+    /// [`Telegram::group_read`](crate::protocol::Telegram::group_read) and
+    /// [`Telegram::group_write`](crate::protocol::Telegram::group_write)
+    /// use for `source`, since `Knx::send_telegram` overwrites it with the
+    /// bus's own configured address before sending.
+    fn default() -> Self {
+        Self::broadcast()
+    }
+}
+
 impl FromStr for IndividualAddress {
     type Err = crate::error::KnxError;
 
@@ -549,7 +650,7 @@ mod tests {
             invalid_line in (IndividualAddress::MAX_LINE + 1)..=255u8,
         )| {
             // Test valid GroupAddress creation and parsing
-            let group_addr = GroupAddress::new(main, middle, sub);
+            let group_addr = GroupAddress::new(MainGroup::new(main), MiddleGroup::new(middle), sub);
             prop_assert_eq!(group_addr.main(), main);
             prop_assert_eq!(group_addr.middle(), middle);
             prop_assert_eq!(group_addr.sub(), sub);
@@ -601,7 +702,7 @@ mod tests {
     #[test]
     fn test_group_address_validation() {
         // Test valid group addresses
-        let addr = GroupAddress::new(15, 7, 255);
+        let addr = GroupAddress::new(MainGroup::new(15), MiddleGroup::new(7), 255);
         assert_eq!(addr.main(), 15);
         assert_eq!(addr.middle(), 7);
         assert_eq!(addr.sub(), 255);
@@ -672,7 +773,7 @@ mod tests {
 
     #[test]
     fn test_address_display() {
-        let group_addr = GroupAddress::new(1, 2, 3);
+        let group_addr = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         assert_eq!(group_addr.to_string(), "1/2/3");
 
         let individual_addr = IndividualAddress::new(1, 2, 3);
@@ -688,7 +789,7 @@ mod tests {
     #[test]
     fn test_address_raw_values() {
         // Test GroupAddress raw value calculation
-        let addr = GroupAddress::new(1, 2, 3);
+        let addr = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         let expected_raw = (1u16 << 11) | (2u16 << 8) | 3u16;
         assert_eq!(addr.raw(), expected_raw);
 
@@ -738,7 +839,7 @@ mod tests {
 
     #[test]
     fn test_conversion_traits() {
-        let group_addr = GroupAddress::new(5, 3, 100);
+        let group_addr = GroupAddress::new(MainGroup::new(5), MiddleGroup::new(3), 100);
 
         // Test tuple conversion
         let tuple: (u8, u8, u8) = group_addr.into();
@@ -794,7 +895,8 @@ mod tests {
     #[test]
     fn test_const_functions() {
         // Test const functions work at compile time
-        const GROUP_ADDR: GroupAddress = GroupAddress::new(1, 2, 3);
+        const GROUP_ADDR: GroupAddress =
+            GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         const INDIVIDUAL_ADDR: IndividualAddress = IndividualAddress::new(1, 2, 3);
         // Test const validation with try_new
         const VALID_GROUP: std::result::Result<GroupAddress, AddressError> =

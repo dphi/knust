@@ -1,12 +1,21 @@
-//! Example for sending raw telegrams to KNX bus.
+//! Example for sending values to KNX group addresses.
 //!
-//! Connect to KNX/IP device and send custom telegrams.
+//! Leads with the typed group-address API (`Knx::group_address`) — the
+//! recommended way to send: register an address with its DPT once, and
+//! `write()` then accepts a native value (`bool`, `u8`, ...), that DPT's
+//! own value type, or a human string, all checked against the bound DPT.
+//! The end of this file shows two lower-level escape hatches the typed API
+//! is built on: `Telegram::group_write_value` for callers who want that same
+//! `true`/`1`/`"on"` ergonomics without registering the address first, and
+//! `Telegram::group_write` for callers who already have bytes from
+//! elsewhere and want no DPT involved at all.
 
 use std::time::Duration;
 use tokio::time::sleep;
 
-use knust::protocol::address::{Address, GroupAddress, IndividualAddress};
-use knust::protocol::telegram::{Direction, Priority, Telegram, TelegramType};
+use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::dpt::{DPTScaling, DPTSwitch};
+use knust::protocol::telegram::Telegram;
 use knust::{ConnectionConfig, ConnectionType, Knx};
 
 #[tokio::main]
@@ -28,62 +37,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to KNX network
     knx.connect().await?;
 
-    println!("Sending custom telegrams...");
+    println!("Sending typed values...");
 
-    // Send a switch ON telegram
-    let switch_on_telegram = Telegram {
-        source: IndividualAddress::new(1, 1, 240),
-        destination: Address::Group(GroupAddress::from_parts(1, 2, 3)?),
-        payload: vec![0x01], // ON value
-        priority: Priority::Normal,
-        direction: Direction::Outgoing,
-        telegram_type: TelegramType::GroupValueWrite,
-        timestamp: std::time::SystemTime::now(),
-    };
+    // Register once; `write` is then checked against DPT 1.001 (Switch) —
+    // passing e.g. a percentage here wouldn't compile.
+    let switch = knx.group_address::<DPTSwitch>(GroupAddress::new(
+        MainGroup::new(1),
+        MiddleGroup::new(2),
+        3,
+    ))?;
 
-    println!(
-        "Sending switch ON telegram to {}...",
-        switch_on_telegram.destination
-    );
-    knx.send_telegram(&switch_on_telegram).await?;
+    println!("Switching on ({})...", switch.address());
+    switch.write(true).await?;
 
     sleep(Duration::from_secs(2)).await;
 
-    // Send a switch OFF telegram
-    let switch_off_telegram = Telegram {
-        source: IndividualAddress::new(1, 1, 240),
-        destination: Address::Group(GroupAddress::from_parts(1, 2, 3)?),
-        payload: vec![0x00], // OFF value
-        priority: Priority::Normal,
-        direction: Direction::Outgoing,
-        telegram_type: TelegramType::GroupValueWrite,
-        timestamp: std::time::SystemTime::now(),
-    };
-
-    println!(
-        "Sending switch OFF telegram to {}...",
-        switch_off_telegram.destination
-    );
-    knx.send_telegram(&switch_off_telegram).await?;
+    println!("Switching off ({})...", switch.address());
+    switch.write(false).await?;
 
     sleep(Duration::from_secs(1)).await;
 
-    // Send a brightness value telegram
-    let brightness_telegram = Telegram {
-        source: IndividualAddress::new(1, 1, 240),
-        destination: Address::Group(GroupAddress::from_parts(1, 2, 4)?),
-        payload: vec![128], // 50% brightness
-        priority: Priority::Normal,
-        direction: Direction::Outgoing,
-        telegram_type: TelegramType::GroupValueWrite,
-        timestamp: std::time::SystemTime::now(),
-    };
+    // Same story for DPT 5.001 (Scaling) — `write` also accepts a parsed
+    // string (`switch.write("on")`) for config/CLI-driven callers.
+    let brightness = knx.group_address::<DPTScaling>(GroupAddress::new(
+        MainGroup::new(1),
+        MiddleGroup::new(2),
+        4,
+    ))?;
+
+    println!("Setting brightness ({})...", brightness.address());
+    brightness.write(128u8).await?; // 50% brightness
+
+    // ---- Escape hatch 1: same value ergonomics, no registration -------
+    // `group_write_value` resolves/validates/encodes against DPT 1.001
+    // exactly like `switch.write(true)` above, but builds the `Telegram`
+    // directly — no `Knx::group_address` call needed first.
+    let raw_typed_telegram = Telegram::group_write_value::<DPTSwitch>(
+        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3),
+        true,
+    )?;
 
     println!(
-        "Sending brightness telegram to {}...",
-        brightness_telegram.destination
+        "Sending typed-but-unregistered telegram to {}...",
+        raw_typed_telegram.destination
     );
-    knx.send_telegram(&brightness_telegram).await?;
+    knx.send_telegram(&raw_typed_telegram).await?;
+
+    // ---- Escape hatch 2: raw bytes, no DPT involved at all -------------
+    // For forwarding opaque bytes from elsewhere. No need to fill in
+    // `source`: `send_telegram` stamps it with this bus's own configured
+    // individual address before sending.
+    let raw_telegram = Telegram::group_write(
+        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3),
+        vec![0x01],
+    );
+
+    println!("Sending raw telegram to {}...", raw_telegram.destination);
+    knx.send_telegram(&raw_telegram).await?;
 
     // Disconnect
     knx.disconnect().await?;

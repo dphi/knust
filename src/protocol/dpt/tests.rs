@@ -734,3 +734,92 @@ fn test_datetime_python_parity_24_hour_validation() {
 
     assert!(DateTime::from_bytes(&[24, 1, 1, 24, 1, 0, 0, 0]).is_err());
 }
+
+#[test]
+fn test_parse_bool_synonyms() {
+    for input in ["On", "on", "true", "TRUE", "1", "yes"] {
+        assert_eq!(DptType::Switch.parse(input).unwrap(), vec![0x01], "{input}");
+    }
+    for input in ["Off", "off", "false", "FALSE", "0", "no"] {
+        assert_eq!(DptType::Switch.parse(input).unwrap(), vec![0x00], "{input}");
+    }
+    // Per-subtype semantic label pair.
+    assert_eq!(DptType::OpenClose.parse("Open").unwrap(), vec![0x01]);
+    assert_eq!(DptType::OpenClose.parse("closed").unwrap(), vec![0x00]);
+    assert!(DptType::Switch.parse("banana").is_err());
+}
+
+#[test]
+fn test_parse_control2_reuses_dpt1_labels() {
+    assert_eq!(DptType::SwitchControl.parse("On").unwrap(), vec![0x03]);
+    assert_eq!(DptType::SwitchControl.parse("Off").unwrap(), vec![0x02]);
+}
+
+#[test]
+fn test_parse_numeric_round_trips_formatted() {
+    let bytes = DptType::Temperature.parse("20.0 °C").unwrap();
+    let view = DptType::Temperature.decode_ref(&bytes).unwrap();
+    assert_eq!(view.formatted(DptType::Temperature), "20 °C");
+
+    assert_eq!(DptType::Scaling.parse("100").unwrap(), vec![100]);
+    assert!(DptType::Scaling.parse("999").is_err());
+    assert!(DptType::PercentV8.parse("-999").is_err());
+}
+
+#[test]
+fn test_parse_date_time_datetime_round_trip() {
+    assert_eq!(
+        DptType::TimeOfDay.parse("08:14:22 (Thursday)").unwrap(),
+        vec![(4 << 5) | 8, 14, 22]
+    );
+    assert_eq!(DptType::Date.parse("2026-06-11").unwrap(), vec![11, 6, 26]);
+    assert_eq!(
+        DptType::DateTime
+            .parse("2026-06-11 08:14:22 (Thursday)")
+            .unwrap(),
+        vec![0x7E, 0x06, 0x0B, (4 << 5) | 8, 14, 22, 0x00, 0x00]
+    );
+}
+
+#[test]
+fn test_parse_date_datetime_out_of_range_year_errors_instead_of_panicking_or_truncating() {
+    // DPT 11 (Date) only fits years 1990-2089 in its 2-digit field; out of
+    // range must error, not underflow-panic.
+    assert!(DptType::Date.parse("1800-01-01").is_err());
+    assert!(DptType::Date.parse("2200-01-01").is_err());
+    assert!(DptType::Date.parse("1990-01-01").is_ok());
+    assert!(DptType::Date.parse("2089-01-01").is_ok());
+
+    // DPT 19 (DateTime) only fits years 1900-2155 in its 1-byte field; out
+    // of range must error, not silently wrap to the wrong year.
+    assert!(DptType::DateTime.parse("2300-01-01 00:00:00").is_err());
+    assert!(DptType::DateTime.parse("1899-01-01 00:00:00").is_err());
+    assert!(DptType::DateTime.parse("2155-01-01 00:00:00").is_ok());
+}
+
+#[test]
+fn test_parse_scene_and_enum() {
+    assert_eq!(DptType::SceneNumber.parse("Scene 1").unwrap(), vec![0x00]);
+    assert_eq!(
+        DptType::SceneControl.parse("Scene 1 (learn)").unwrap(),
+        vec![0x80]
+    );
+    assert_eq!(
+        DptType::SceneControl.parse("Scene 1 (activate)").unwrap(),
+        vec![0x00]
+    );
+    assert_eq!(DptType::HVACMode.parse("Comfort").unwrap(), vec![1]);
+    assert_eq!(DptType::HVACMode.parse("4").unwrap(), vec![4]);
+}
+
+#[test]
+fn test_parse_colors() {
+    assert_eq!(
+        DptType::ColorRGB.parse("RGB(255, 128, 0)").unwrap(),
+        vec![255, 128, 0]
+    );
+    assert_eq!(
+        DptType::ColorRGB.parse("#FF8000").unwrap(),
+        vec![255, 128, 0]
+    );
+}

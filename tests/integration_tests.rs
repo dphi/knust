@@ -6,8 +6,8 @@
 //! `examples/custom_devices.rs` for a pattern to build one on top of
 //! `send_telegram`/`read_group_value`.
 
-use knust::protocol::telegram::{Direction, Priority, Telegram, TelegramType};
-use knust::protocol::{Address, GroupAddress, IndividualAddress};
+use knust::protocol::telegram::Telegram;
+use knust::protocol::{GroupAddress, IndividualAddress};
 #[cfg(feature = "secure")]
 use knust::security::SessionConfig;
 #[cfg(feature = "secure")]
@@ -17,20 +17,10 @@ use knust::{ConnectionConfig, ConnectionType, Knx, KnxError};
 use std::time::Duration;
 use tokio::time::timeout;
 
-fn write_telegram(
-    source: IndividualAddress,
-    destination: GroupAddress,
-    payload: Vec<u8>,
-) -> Telegram {
-    Telegram {
-        source,
-        destination: Address::Group(destination),
-        payload,
-        priority: Priority::Normal,
-        direction: Direction::Outgoing,
-        telegram_type: TelegramType::GroupValueWrite,
-        timestamp: std::time::SystemTime::now(),
-    }
+/// `Knx::send_telegram` fills in `source` itself, so callers only need to
+/// say where a write is going and what it carries.
+fn write_telegram(destination: GroupAddress, payload: Vec<u8>) -> Telegram {
+    Telegram::group_write(destination, payload)
 }
 
 /// Test end-to-end group communication scenarios
@@ -50,13 +40,11 @@ async fn test_end_to_end_group_communication() -> Result<(), KnxError> {
     };
 
     let knx = Knx::new(config).await?;
-    let source_addr = IndividualAddress::new(1, 1, 240);
 
     // 1. Switch on the living room light's group address
     let result = timeout(
         Duration::from_secs(5),
         knx.send_telegram(&write_telegram(
-            source_addr,
             GroupAddress::from_parts(1, 2, 1)?,
             vec![0x01],
         )),
@@ -72,7 +60,6 @@ async fn test_end_to_end_group_communication() -> Result<(), KnxError> {
     let result = timeout(
         Duration::from_secs(5),
         knx.send_telegram(&write_telegram(
-            source_addr,
             GroupAddress::from_parts(1, 2, 2)?,
             vec![128],
         )),
@@ -90,7 +77,6 @@ async fn test_end_to_end_group_communication() -> Result<(), KnxError> {
     let result = timeout(
         Duration::from_secs(5),
         knx.send_telegram(&write_telegram(
-            source_addr,
             GroupAddress::from_parts(1, 3, 1)?,
             vec![0x01],
         )),
@@ -128,7 +114,6 @@ async fn test_multi_target_coordination() -> Result<(), KnxError> {
     };
 
     let knx = Knx::new(config).await?;
-    let source_addr = IndividualAddress::new(1, 1, 240);
 
     let addresses = vec![
         GroupAddress::from_parts(1, 1, 1)?,
@@ -144,7 +129,7 @@ async fn test_multi_target_coordination() -> Result<(), KnxError> {
         tasks.push(tokio::spawn(async move {
             timeout(
                 Duration::from_secs(5),
-                knx_clone.send_telegram(&write_telegram(source_addr, addr, vec![0x01])),
+                knx_clone.send_telegram(&write_telegram(addr, vec![0x01])),
             )
             .await
         }));
@@ -168,7 +153,7 @@ async fn test_multi_target_coordination() -> Result<(), KnxError> {
         brightness_tasks.push(tokio::spawn(async move {
             timeout(
                 Duration::from_secs(5),
-                knx_clone.send_telegram(&write_telegram(source_addr, addr, vec![brightness])),
+                knx_clone.send_telegram(&write_telegram(addr, vec![brightness])),
             )
             .await
         }));
@@ -228,15 +213,14 @@ async fn test_secure_communication_workflow() -> Result<(), KnxError> {
 
     // Create Knx instance with security
     let knx = Knx::new(config).await?;
-    let source_addr = IndividualAddress::new(1, 1, 240);
     let secure_addr = GroupAddress::from_parts(1, 5, 1)?;
 
     // Test secure operations
     let result = timeout(Duration::from_secs(10), async {
-        knx.send_telegram(&write_telegram(source_addr, secure_addr, vec![0x01]))
+        knx.send_telegram(&write_telegram(secure_addr, vec![0x01]))
             .await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        knx.send_telegram(&write_telegram(source_addr, secure_addr, vec![0x00]))
+        knx.send_telegram(&write_telegram(secure_addr, vec![0x00]))
             .await?;
         Ok::<(), KnxError>(())
     })
@@ -294,12 +278,11 @@ async fn test_error_handling_and_recovery() -> Result<(), KnxError> {
         ..Default::default()
     };
     let knx = Knx::new(config).await?;
-    let source_addr = IndividualAddress::new(1, 1, 240);
     let addr = GroupAddress::from_parts(1, 1, 1)?;
 
     let result = timeout(
         Duration::from_secs(2),
-        knx.send_telegram(&write_telegram(source_addr, addr, vec![0x01])),
+        knx.send_telegram(&write_telegram(addr, vec![0x01])),
     )
     .await;
     match result {
@@ -360,13 +343,12 @@ async fn test_resource_cleanup() -> Result<(), KnxError> {
     // Create and destroy multiple Knx instances
     for i in 0u8..5 {
         let knx = Knx::new(config.clone()).await?;
-        let source_addr = IndividualAddress::new(1, 1, 240);
         let addr = GroupAddress::from_parts(1, 1, i + 1)?;
 
         // Simulate some operations
         let _ = timeout(
             Duration::from_millis(100),
-            knx.send_telegram(&write_telegram(source_addr, addr, vec![0x01])),
+            knx.send_telegram(&write_telegram(addr, vec![0x01])),
         )
         .await;
 

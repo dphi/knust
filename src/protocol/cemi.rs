@@ -8,6 +8,8 @@ use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
 use crate::logging::{Component, LogLevel, Timer};
 use crate::protocol::address::{Address, GroupAddress, IndividualAddress};
+#[cfg(test)]
+use crate::protocol::address::{MainGroup, MiddleGroup};
 
 /// CEMI frame structure with all required fields
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -878,7 +880,9 @@ mod tests {
             0u8..=GroupAddress::MAX_MIDDLE,
             0u8..=GroupAddress::MAX_SUB,
         )
-            .prop_map(|(main, middle, sub)| GroupAddress::new(main, middle, sub))
+            .prop_map(|(main, middle, sub)| {
+                GroupAddress::new(MainGroup::new(main), MiddleGroup::new(middle), sub)
+            })
     }
 
     /// Generate a valid Address for property testing

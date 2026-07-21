@@ -6,7 +6,7 @@ use chrono::{Datelike, Timelike};
 use std::time::Duration;
 use tokio::time::sleep;
 
-use knust::protocol::address::{GroupAddress, IndividualAddress};
+use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
 use knust::{ConnectionConfig, ConnectionType, Knx};
 
 // DPT 10/11 pack calendar fields (0..=59, 1..=31, ...) into single bytes;
@@ -32,8 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     knx.connect().await?;
 
     // Define group addresses for date/time
-    let time_address = GroupAddress::from_parts(1, 4, 1)?;
-    let date_address = GroupAddress::from_parts(1, 4, 2)?;
+    let time_address = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(4), 1);
+    let date_address = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(4), 2);
 
     println!("Sending current date and time to KNX bus...");
 

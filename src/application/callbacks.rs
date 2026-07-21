@@ -4,6 +4,8 @@
 //! event handlers for telegram reception and connection state changes.
 //! The system is designed to be thread-safe, async-compatible, and memory-efficient.
 
+#[cfg(test)]
+use crate::protocol::address::{MainGroup, MiddleGroup};
 use crate::protocol::{Telegram, address::GroupAddress};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -1577,7 +1579,7 @@ mod tests {
 
                         let telegram = Telegram {
                             source: IndividualAddress::from_raw(0x1234),
-                            destination: Address::Group(GroupAddress::new(0, 1, 1)),
+                            destination: Address::Group(GroupAddress::new(MainGroup::new(0), MiddleGroup::new(1), 1)),
                             payload: vec![0x01],
                             priority: crate::protocol::telegram::Priority::Normal,
                             direction: Direction::Incoming,
@@ -1787,7 +1789,7 @@ mod tests {
                 // Create test telegram
                 let telegram = Telegram {
                     source: IndividualAddress::from_raw(0x1234),
-                    destination: Address::Group(GroupAddress::new(0, 1, 1)),
+                    destination: Address::Group(GroupAddress::new(MainGroup::new(0), MiddleGroup::new(1), 1)),
                     payload: vec![0x01],
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,

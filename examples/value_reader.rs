@@ -1,11 +1,15 @@
 //! Example for reading values from KNX group addresses.
 //!
-//! Connect to KNX/IP device and read values from specific group addresses.
+//! Uses the typed group-address API (`Knx::group_address`): register each
+//! address with its DPT once, then `.read()` sends a `GroupValueRead` and
+//! decodes the response straight into that DPT's value type — no manual
+//! byte parsing, and no way to accidentally decode one address's bytes as
+//! another address's DPT.
 
 use std::time::Duration;
-use tokio::time::sleep;
 
-use knust::protocol::address::{GroupAddress, IndividualAddress};
+use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::dpt::{DPTOccupancy, DPTSwitch, DPTTemperature};
 use knust::{ConnectionConfig, ConnectionType, Knx};
 
 #[tokio::main]
@@ -27,26 +31,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to KNX network
     knx.connect().await?;
 
-    // Define group addresses to read from
-    let addresses = vec![
-        GroupAddress::from_parts(1, 2, 3)?, // Light switch
-        GroupAddress::from_parts(2, 1, 1)?, // Temperature sensor
-        GroupAddress::from_parts(3, 0, 5)?, // Motion sensor
-    ];
+    // Start telegram processing — `.read()` below sends a `GroupValueRead`
+    // and waits for the matching response, which requires the outgoing-send
+    // and incoming-dispatch tasks `start()` spawns.
+    knx.start().await?;
+
+    // Register each address once, with its DPT. `group_address` fails if
+    // the address was already bound to a *different* DPT elsewhere.
+    let light_switch = knx.group_address::<DPTSwitch>(GroupAddress::new(
+        MainGroup::new(1),
+        MiddleGroup::new(2),
+        3,
+    ))?;
+    let temperature = knx.group_address::<DPTTemperature>(GroupAddress::new(
+        MainGroup::new(2),
+        MiddleGroup::new(1),
+        1,
+    ))?;
+    let motion = knx.group_address::<DPTOccupancy>(GroupAddress::new(
+        MainGroup::new(3),
+        MiddleGroup::new(0),
+        5,
+    ))?;
+
+    let timeout = Duration::from_secs(5);
 
     println!("Reading values from group addresses...");
 
-    for address in addresses {
-        println!("Reading from {address}...");
+    println!("Reading light switch ({})...", light_switch.address());
+    match light_switch.read(timeout).await {
+        Ok(value) => println!("  -> {}", if value.value() { "on" } else { "off" }),
+        Err(e) => println!("  -> read failed (expected without a real bus): {e}"),
+    }
 
-        // TODO: Implement group read functionality in Knx
-        // This would send a GroupValueRead telegram and wait for response
-        // For now, we'll just demonstrate the structure
+    println!("Reading temperature sensor ({})...", temperature.address());
+    match temperature.read(timeout).await {
+        Ok(value) => println!("  -> {:.1}°C", value.value()),
+        Err(e) => println!("  -> read failed (expected without a real bus): {e}"),
+    }
 
-        // Simulate reading delay
-        sleep(Duration::from_millis(500)).await;
-
-        println!("  Address {address}: Value read (implementation pending)");
+    println!("Reading motion sensor ({})...", motion.address());
+    match motion.read(timeout).await {
+        Ok(value) => println!("  -> {}", if value.value() { "occupied" } else { "clear" }),
+        Err(e) => println!("  -> read failed (expected without a real bus): {e}"),
     }
 
     // Disconnect

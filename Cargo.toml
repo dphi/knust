@@ -112,3 +112,28 @@ required-features = ["dpt"]
 name = "custom_devices"
 path = "examples/custom_devices.rs"
 required-features = ["dpt"]
+
+[[example]]
+name = "send_telegrams"
+path = "examples/send_telegrams.rs"
+required-features = ["dpt"]
+
+[[example]]
+name = "value_reader"
+path = "examples/value_reader.rs"
+required-features = ["dpt"]
+
+[[example]]
+name = "read_responder"
+path = "examples/read_responder.rs"
+required-features = ["dpt"]
+
+[[example]]
+name = "group_monitor"
+path = "examples/group_monitor.rs"
+required-features = ["dpt"]
+
+[[example]]
+name = "connection_handling"
+path = "examples/connection_handling.rs"
+required-features = ["dpt"]

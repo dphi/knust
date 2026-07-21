@@ -3,9 +3,8 @@
 //! This example shows how to establish secure connections using KNX IP Secure
 //! with proper authentication, encryption, and key management.
 
-use knust::protocol::address::Address;
-use knust::protocol::telegram::{Direction, Priority, Telegram, TelegramType};
-use knust::protocol::{GroupAddress, IndividualAddress};
+use knust::protocol::dpt::DPTSwitch;
+use knust::protocol::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
 use knust::security::{KeyRing, SecurityCredentials, SecurityKey};
 use knust::transport::{BackoffConfig, SecurityConfig};
 use knust::{Component, ConnectionType, Knx, LogLevel, LoggingConfig};
@@ -69,22 +68,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(()) => {
             println!("✅ Secure connection established!");
 
-            // Send a telegram over the secure tunnel directly.
-            let source_addr = IndividualAddress::new(1, 1, 240);
-            let switch_telegram = Telegram {
-                source: source_addr,
-                destination: Address::Group(GroupAddress::from_parts(1, 2, 1)?),
-                payload: vec![0x01],
-                priority: Priority::Normal,
-                direction: Direction::Outgoing,
-                telegram_type: TelegramType::GroupValueWrite,
-                timestamp: std::time::SystemTime::now(),
-            };
+            // Send a value over the secure tunnel via a typed group
+            // address — same DPT-checked `write` as an unsecured tunnel,
+            // just routed over the encrypted connection.
+            let switch = secure_knx.group_address::<DPTSwitch>(GroupAddress::new(
+                MainGroup::new(1),
+                MiddleGroup::new(2),
+                1,
+            ))?;
 
             println!("\n🔒 Testing secure telegram send...");
             // Note: This will likely fail without a real secure gateway
             // but demonstrates the API usage
-            match secure_knx.send_telegram(&switch_telegram).await {
+            match switch.write(true).await {
                 Ok(()) => println!("✅ Telegram sent over the secure tunnel"),
                 Err(e) => println!("❌ Send failed (expected without real gateway): {e}"),
             }
@@ -111,8 +107,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let group_key_1 = SecurityKey::from_hex("0123456789ABCDEF0123456789ABCDEF")?;
     let group_key_2 = SecurityKey::from_hex("FEDCBA9876543210FEDCBA9876543210")?;
 
-    keyring.add_group_key(GroupAddress::from_parts(1, 2, 1)?, group_key_1);
-    keyring.add_group_key(GroupAddress::from_parts(1, 2, 2)?, group_key_2);
+    keyring.add_group_key(
+        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1),
+        group_key_1,
+    );
+    keyring.add_group_key(
+        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 2),
+        group_key_2,
+    );
 
     println!(
         "🔑 Created keyring with {} group keys",
@@ -121,8 +123,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Secured groups: 1/2/1, 1/2/2");
 
     // Check which groups are secured
-    let test_addr_1 = GroupAddress::from_parts(1, 2, 1)?;
-    let test_addr_2 = GroupAddress::from_parts(1, 3, 1)?;
+    let test_addr_1 = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1);
+    let test_addr_2 = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(3), 1);
 
     println!(
         "   Group 1/2/1 secured: {}",
