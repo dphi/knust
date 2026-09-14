@@ -55,9 +55,9 @@ mod unit_tests {
     #[test]
     fn test_derive_device_authentication_password() {
         // Test that derivation produces consistent results
-        let password = "test_password";
-        let derived1 = derive_device_authentication_password(password);
-        let derived2 = derive_device_authentication_password(password);
+        let password = crate::security::generate_password();
+        let derived1 = derive_device_authentication_password(&password);
+        let derived2 = derive_device_authentication_password(&password);
         assert_eq!(derived1, derived2);
         assert_eq!(derived1.len(), 16);
     }
@@ -65,9 +65,9 @@ mod unit_tests {
     #[test]
     fn test_derive_user_password() {
         // Test that derivation produces consistent results
-        let password = "user_password";
-        let derived1 = derive_user_password(password);
-        let derived2 = derive_user_password(password);
+        let password = crate::security::generate_password();
+        let derived1 = derive_user_password(&password);
+        let derived2 = derive_user_password(&password);
         assert_eq!(derived1, derived2);
         assert_eq!(derived1.len(), 16);
     }
@@ -113,8 +113,8 @@ mod session_tests {
     async fn test_secure_session_creation() {
         let config = SessionConfig {
             user_id: 1,
-            user_password: "test_password".to_string(),
-            device_auth_password: Some("device_auth".to_string()),
+            user_password: crate::security::generate_password(),
+            device_auth_password: Some(crate::security::generate_password()),
             keepalive_interval: 60,
         };
 
@@ -153,8 +153,8 @@ mod session_tests {
     // sockets involved.
     #[tokio::test]
     async fn secure_handshake_and_frame_round_trip_between_two_sessions() {
-        let device_auth_password = "device-secret".to_string();
-        let user_password = "user-secret".to_string();
+        let device_auth_password = crate::security::generate_password();
+        let user_password = crate::security::generate_password();
 
         let client_config = SessionConfig {
             user_id: 1,
@@ -215,17 +215,17 @@ mod session_tests {
 
     #[tokio::test]
     async fn secure_handshake_rejects_wrong_user_password() {
-        let device_auth_password = "device-secret".to_string();
+        let device_auth_password = crate::security::generate_password();
 
         let client_config = SessionConfig {
             user_id: 1,
-            user_password: "correct-password".to_string(),
+            user_password: crate::security::generate_password(),
             device_auth_password: Some(device_auth_password.clone()),
             keepalive_interval: 60,
         };
         let server_config = SessionConfig {
             user_id: 1,
-            user_password: "different-password".to_string(),
+            user_password: crate::security::generate_password(),
             device_auth_password: Some(device_auth_password),
             keepalive_interval: 60,
         };
@@ -259,14 +259,14 @@ mod session_tests {
     async fn secure_handshake_rejects_wrong_device_auth_password() {
         let client_config = SessionConfig {
             user_id: 1,
-            user_password: "user-secret".to_string(),
-            device_auth_password: Some("client-side-secret".to_string()),
+            user_password: crate::security::generate_password(),
+            device_auth_password: Some(crate::security::generate_password()),
             keepalive_interval: 60,
         };
         let server_config = SessionConfig {
             user_id: 1,
-            user_password: "user-secret".to_string(),
-            device_auth_password: Some("server-side-secret".to_string()),
+            user_password: crate::security::generate_password(),
+            device_auth_password: Some(crate::security::generate_password()),
             keepalive_interval: 60,
         };
 

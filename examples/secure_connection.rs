@@ -149,7 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_backbone_key(backbone_key);
 
     println!("👤 Created security credentials:");
-    println!("   User ID: {}", credentials.user_id);
+    println!("   User ID: [redacted]");
     println!("   User password: [32 bytes]");
     println!("   Device auth: [32 bytes]");
     println!("   Backbone key: [32 bytes]");
