@@ -1293,8 +1293,8 @@ mod tests {
     #[tokio::test]
     async fn secure_client_connects_and_exchanges_telegrams_both_ways() {
         let (server_config, client_security) = matching_security_configs(
-            "device-auth-raw-bytes".to_string(),
-            "user-secret".to_string(),
+            crate::security::generate_password(),
+            crate::security::generate_password(),
         );
 
         let server = TunnelServer::bind_secure(
@@ -1344,10 +1344,10 @@ mod tests {
     #[tokio::test]
     async fn secure_connect_rejects_wrong_user_password() {
         let (server_config, mut client_security) = matching_security_configs(
-            "device-auth-raw-bytes".to_string(),
-            "correct-password".to_string(),
+            crate::security::generate_password(),
+            crate::security::generate_password(),
         );
-        client_security.user_password = Some("wrong-password".to_string());
+        client_security.user_password = Some(crate::security::generate_password());
 
         let server = TunnelServer::bind_secure(
             "127.0.0.1:0".parse().unwrap(),
@@ -1369,8 +1369,8 @@ mod tests {
     #[tokio::test]
     async fn plaintext_connect_rejected_when_secure_required() {
         let (server_config, _) = matching_security_configs(
-            "device-auth-raw-bytes".to_string(),
-            "user-secret".to_string(),
+            crate::security::generate_password(),
+            crate::security::generate_password(),
         );
         let server = TunnelServer::bind_secure(
             "127.0.0.1:0".parse().unwrap(),
@@ -1406,8 +1406,8 @@ mod tests {
     #[tokio::test]
     async fn secure_wrapper_rejected_before_authentication_completes() {
         let (server_config, _) = matching_security_configs(
-            "device-auth-raw-bytes".to_string(),
-            "user-secret".to_string(),
+            crate::security::generate_password(),
+            crate::security::generate_password(),
         );
         let server = TunnelServer::bind_secure(
             "127.0.0.1:0".parse().unwrap(),
@@ -1425,7 +1425,7 @@ mod tests {
         // the session key.
         let attacker_config = SessionConfig {
             user_id: 1,
-            user_password: "irrelevant-never-sent".to_string(),
+            user_password: crate::security::generate_password(),
             device_auth_password: None,
             keepalive_interval: 60,
         };

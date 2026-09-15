@@ -30,8 +30,8 @@ async fn main() -> Result<(), knust::KnxError> {
         println!("  Address: {}", gateway.addr);
         println!("  Serial: {}", gateway.device_serial);
 
-        if let Some(mac) = &gateway.mac_address {
-            println!("  MAC Address: {mac}");
+        if gateway.mac_address.is_some() {
+            println!("  MAC Address: [redacted]");
         }
 
         println!("  Capabilities:");
