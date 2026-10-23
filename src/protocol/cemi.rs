@@ -1111,7 +1111,7 @@ mod tests {
         assert_eq!(frame.source_addr.raw(), 0x1234);
         assert_eq!(frame.data_length, 0);
         assert_eq!(frame.tpci, 0x00);
-        assert!(frame.apci_data.is_empty());
+        assert_eq!(frame.apci_data, [] as [u8; 0]);
         assert_eq!(frame.control_field.frame_type, FrameType::Standard);
         // Standard frames don't have extended control field in the new parsing
         // The destination address type comes from the 2-byte control field
