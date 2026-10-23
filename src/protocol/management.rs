@@ -203,7 +203,7 @@ mod tests {
         // Second byte 0x42 -> response bits 0x40 + descriptor 0x02.
         let decoded = DeviceDescriptorResponse::decode(&[0x03, 0x42]).unwrap();
         assert_eq!(decoded.descriptor, 0x02);
-        assert!(decoded.data.is_empty());
+        assert_eq!(decoded.data, [] as [u8; 0]);
     }
 
     #[test]

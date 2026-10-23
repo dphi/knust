@@ -434,12 +434,12 @@ mod health_tests {
 
         let error_window_start = Instant::now();
         let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, Vec::new());
-        assert!(
+        assert_eq!(
             connection
                 .process_routing_message(&lost.serialize())
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            []
         );
 
         let active = connection.health();

@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(first, a);
         let second = try_extract_frame(&mut buf).unwrap().expect("second frame");
         assert_eq!(second, b);
-        assert!(buf.is_empty());
+        assert_eq!(buf, [] as [u8; 0]);
         assert!(try_extract_frame(&mut buf).unwrap().is_none());
     }
 
