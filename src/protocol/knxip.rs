@@ -992,6 +992,7 @@ pub struct DisconnectResponse {
 impl DisconnectResponse {
     pub const LENGTH: usize = 2;
     pub const STATUS_OK: u8 = 0x00;
+    pub const STATUS_ERROR_CONNECTION_ID: u8 = 0x21;
 
     #[must_use]
     pub fn new(communication_channel_id: u8, status: u8) -> Self {

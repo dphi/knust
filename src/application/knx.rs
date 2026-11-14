@@ -2304,7 +2304,13 @@ impl Knx {
 
             // Control frames (no CEMI data)
             ServiceType::DisconnectRequest => {
-                Self::handle_disconnect_request(&knx_frame, control_tx, current_channel_id).await?;
+                Self::handle_disconnect_request(
+                    &knx_frame,
+                    control_tx,
+                    current_channel_id,
+                    connection,
+                )
+                .await?;
                 Ok(true)
             }
             ServiceType::DisconnectResponse => {
@@ -2360,6 +2366,14 @@ impl Knx {
             tunnelling_request.sequence_counter,
             tunnelling_request.raw_cemi.len()
         );
+
+        // Foreign-channel traffic must not ACK, consume sequence numbers or deliver.
+        if let Some(tunnel) = connection.as_any().downcast_ref::<Tunnel>()
+            && (tunnel.channel_id() == 0
+                || tunnelling_request.communication_channel_id != tunnel.channel_id())
+        {
+            return Ok(());
+        }
 
         // Validate sequence number if this is a tunneling connection
         let sequence_result =
@@ -2515,13 +2529,16 @@ impl Knx {
     }
 
     /// Handle `DisconnectRequest` frame (control frame)
-    /// Following Python implementation: send `DisconnectResponse`, then trigger `tunnel_lost`
+    /// Reply with a channel error for foreign requests; disconnect only our channel.
     async fn handle_disconnect_request(
         knx_frame: &crate::protocol::knxip::KnxIpFrame,
         control_tx: &mpsc::Sender<ConnectionControlEvent>,
         current_channel_id: Option<u8>,
+        connection: &Arc<dyn Connection>,
     ) -> Result<()> {
-        use crate::protocol::knxip::DisconnectRequest;
+        use crate::protocol::knxip::{
+            DisconnectRequest, DisconnectResponse, KnxIpFrame, ServiceType,
+        };
 
         log_application!(
             LogLevel::Warn,
@@ -2547,9 +2564,8 @@ impl Knx {
             disconnect_request.control_endpoint
         );
 
-        // Check if this disconnect is for our channel (following Python pattern)
         let is_our_channel =
-            current_channel_id.is_none_or(|id| id == disconnect_request.communication_channel_id); // If we don't know our channel, assume it's ours
+            current_channel_id == Some(disconnect_request.communication_channel_id);
 
         if is_our_channel {
             // Send event to send DisconnectResponse
@@ -2583,6 +2599,16 @@ impl Knx {
                 disconnect_request.communication_channel_id,
                 current_channel_id
             );
+            let response = DisconnectResponse::new(
+                disconnect_request.communication_channel_id,
+                DisconnectResponse::STATUS_ERROR_CONNECTION_ID,
+            );
+            connection
+                .send(
+                    &KnxIpFrame::new(ServiceType::DisconnectResponse, response.serialize())
+                        .serialize(),
+                )
+                .await?;
         }
 
         Ok(())
@@ -2808,6 +2834,10 @@ impl std::fmt::Display for KnxState {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "channel_tests.rs"]
+mod channel_tests;
 
 impl From<KnxState> for crate::application::callbacks::ConnectionState {
     fn from(s: KnxState) -> Self {
