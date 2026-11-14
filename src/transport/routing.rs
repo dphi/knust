@@ -158,6 +158,12 @@ impl RoutingConnection {
             }
             ServiceType::RoutingLostMessage => {
                 // Handle lost message indication
+                if frame.body.len() != 4 || frame.body[0] != 4 {
+                    return Err(TransportError::InvalidConfiguration {
+                        details: "Invalid routing lost message body".to_string(),
+                    }
+                    .into());
+                }
                 self.handle_routing_lost_message(&frame.body);
                 // Return empty vec as this is a control message
                 Ok(Vec::new())
@@ -176,7 +182,7 @@ impl RoutingConnection {
     }
 
     /// Handle routing lost message indication
-    fn handle_routing_lost_message(&self, _body: &[u8]) {
+    fn handle_routing_lost_message(&self, body: &[u8]) {
         // Increment lost message counter
         if let Ok(mut count) = self.lost_message_count.write() {
             *count += 1;
@@ -189,7 +195,9 @@ impl RoutingConnection {
 
         log_transport!(
             LogLevel::Warn,
-            "KNX/IP routing lost message indication received"
+            "KNX/IP routing lost message indication: {} messages lost (device state {})",
+            u16::from_be_bytes([body[2], body[3]]),
+            body[1]
         );
     }
 
@@ -476,7 +484,7 @@ mod health_tests {
     async fn routing_receive_preserves_header_and_consumes_control_messages() {
         let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let connection = test_connection(peer.local_addr().unwrap()).await;
-        let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, vec![]).serialize();
+        let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, vec![4, 0, 0, 1]).serialize();
         let indication =
             KnxIpFrame::new(ServiceType::RoutingIndication, vec![0x33, 0x44]).serialize();
         peer.send_to(&lost, connection.local_addr()).await.unwrap();
@@ -550,6 +558,37 @@ mod health_tests {
         );
     }
 
+    #[tokio::test]
+    async fn lost_message_validates_wire_structure_before_counting() {
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let connection = test_connection(peer.local_addr().unwrap()).await;
+        for body in [
+            &[][..],
+            &[4, 0, 0][..],
+            &[3, 0, 0, 1][..],
+            &[4, 0, 0, 1, 0][..],
+        ] {
+            let frame = KnxIpFrame::new(ServiceType::RoutingLostMessage, body.to_vec());
+            assert!(
+                connection
+                    .process_routing_message(&frame.serialize())
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(connection.routing_stats().lost_message_count, 0);
+        assert_eq!(connection.health().recv_errors, 0);
+        let frame = KnxIpFrame::new(ServiceType::RoutingLostMessage, vec![4, 2, 1, 2]);
+        assert!(
+            connection
+                .process_routing_message(&frame.serialize())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(connection.routing_stats().lost_message_count, 1);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn busy_handling_is_nonblocking_and_validates_the_entire_body() {
         let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -609,7 +648,7 @@ mod health_tests {
         );
 
         let error_window_start = Instant::now();
-        let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, Vec::new());
+        let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, vec![4, 0, 0, 1]);
         assert_eq!(
             connection
                 .process_routing_message(&lost.serialize())
@@ -655,7 +694,7 @@ mod health_tests {
         let connection_a = test_connection(sink_a.local_addr().unwrap()).await;
         let connection_b = test_connection(sink_b.local_addr().unwrap()).await;
 
-        let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, Vec::new());
+        let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, vec![4, 0, 0, 1]);
         connection_a
             .process_routing_message(&lost.serialize())
             .await
