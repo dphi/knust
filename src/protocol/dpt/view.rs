@@ -351,6 +351,26 @@ impl<'a> ForecastView<'a> {
     }
 }
 
+macro_rules! status_view {
+    ($view:ident,$value:ident) => {
+        #[derive(Debug, Clone, Copy)]
+        pub struct $view<'a>(pub(crate) &'a [u8]);
+        impl<'a> $view<'a> {
+            #[must_use]
+            pub fn value(&self) -> super::dpt_hvac_status::$value {
+                super::dpt_hvac_status::$value::decode(self.0)
+            }
+            #[must_use]
+            pub fn raw(&self) -> &'a [u8] {
+                self.0
+            }
+        }
+    };
+}
+status_view!(StatusRTSMView, CombinedStatusRTSM);
+status_view!(StatusHVAView, CombinedStatusHVA);
+status_view!(StatusRTCView, CombinedStatusRTC);
+
 #[derive(Debug, Clone, Copy)]
 pub struct ScalingTimeView<'a>(pub(crate) &'a [u8], pub(crate) u16);
 impl<'a> ScalingTimeView<'a> {
@@ -746,6 +766,9 @@ pub enum DptView<'a> {
     AccessData(AccessDataView<'a>),
     ModeNext(ModeNextView<'a>),
     ScalingTime(ScalingTimeView<'a>),
+    StatusRTSM(StatusRTSMView<'a>),
+    StatusHVA(StatusHVAView<'a>),
+    StatusRTC(StatusRTCView<'a>),
     Forecast(ForecastView<'a>),
     Setpoints3(Setpoints3View<'a>),
     Setpoints4(Setpoints4View<'a>),
@@ -796,6 +819,9 @@ impl<'a> DptView<'a> {
             | Self::AccessData(_)
             | Self::ModeNext(_)
             | Self::ScalingTime(_)
+            | Self::StatusRTSM(_)
+            | Self::StatusHVA(_)
+            | Self::StatusRTC(_)
             | Self::Forecast(_)
             | Self::Setpoints3(_)
             | Self::Setpoints4(_)
@@ -850,6 +876,9 @@ impl<'a> DptView<'a> {
             Self::AccessData(v) => v.raw(),
             Self::ModeNext(v) => v.raw(),
             Self::ScalingTime(v) => v.raw(),
+            Self::StatusRTSM(v) => v.raw(),
+            Self::StatusHVA(v) => v.raw(),
+            Self::StatusRTC(v) => v.raw(),
             Self::Forecast(v) => v.raw(),
             Self::Setpoints3(v) => v.raw(),
             Self::Setpoints4(v) => v.raw(),
@@ -911,6 +940,9 @@ impl DptView<'_> {
             Self::AccessData(v) => v.value().to_string(),
             Self::ModeNext(v) => v.value().to_string(),
             Self::ScalingTime(v) => v.value().to_string(),
+            Self::StatusRTSM(v) => v.value().to_string(),
+            Self::StatusHVA(v) => v.value().to_string(),
+            Self::StatusRTC(v) => v.value().to_string(),
             Self::Forecast(v) => v.value().to_string(),
             Self::Setpoints3(v) => v.value().to_string(),
             Self::Setpoints4(v) => v.value().to_string(),
@@ -1361,6 +1393,9 @@ impl DptType {
             15 => s.parse().map(DptPayload::AccessData),
             206 => s.parse().map(DptPayload::ModeNext),
             225 => s.parse().map(DptPayload::ScalingTime),
+            21 => s.parse().map(DptPayload::StatusRTSM),
+            22 if self.sub() == 102 => s.parse().map(DptPayload::StatusHVA),
+            22 => s.parse().map(DptPayload::StatusRTC),
             273 => s.parse().map(DptPayload::Forecast),
             222 => s.parse().map(DptPayload::Setpoints3),
             275 => s.parse().map(DptPayload::Setpoints4),

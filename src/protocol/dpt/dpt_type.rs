@@ -7,8 +7,8 @@ use super::view::{
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, MBusAddressView, ModeNextView, PrioritisedModeControlView,
     RgbView, RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View,
-    Setpoints4View, StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView,
-    XyyView,
+    Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView,
+    U8View, U16View, U32View, VersionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -266,6 +266,9 @@ pub enum DptType {
     BuildingModeNext = 20_600_105,
     ScalingSpeed = 22_500_001,
     ScalingStepTime = 22_500_002,
+    CombinedStatusRTSM = 2_100_107,
+    CombinedStatusHVA = 2_200_102,
+    CombinedStatusRTC = 2_200_103,
     ForecastTemperature = 27_300_001,
     ForecastWindSpeed = 27_300_002,
     ForecastRelativeHumidity = 27_300_003,
@@ -499,8 +502,8 @@ impl DptType {
     #[must_use]
     pub fn byte_length(&self) -> usize {
         match self.main() {
-            1..=6 | 17 | 18 | 20 | 25 | 26 | 236 | 238 => 1,
-            7..=9 | 217 | 234 | 237 => 2,
+            1..=6 | 17 | 18 | 20 | 21 | 25 | 26 | 236 | 238 => 1,
+            7..=9 | 22 | 217 | 234 | 237 => 2,
             10 | 11 | 30 | 206 | 225 | 232 | 240 => 3,
             12..=15 | 27 | 241 => 4,
             16 => 14,
@@ -732,6 +735,9 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            21 => Ok(DptView::StatusRTSM(StatusRTSMView(bytes))),
+            22 if self.sub() == 102 => Ok(DptView::StatusHVA(StatusHVAView(bytes))),
+            22 => Ok(DptView::StatusRTC(StatusRTCView(bytes))),
             225 => Ok(DptView::ScalingTime(ScalingTimeView(bytes, self.sub()))),
             206 => {
                 super::dpt206::ModeNext::decode([bytes[0], bytes[1], bytes[2]], self.sub())?;
@@ -1066,6 +1072,9 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (21, DptPayload::StatusRTSM(value)) => Ok(value.encode().to_vec()),
+            (22, DptPayload::StatusHVA(value)) if self.sub() == 102 => Ok(value.encode().to_vec()),
+            (22, DptPayload::StatusRTC(value)) if self.sub() == 103 => Ok(value.encode().to_vec()),
             (225, DptPayload::ScalingTime(value)) => Ok(value.encode(self.sub())?.to_vec()),
             (206, DptPayload::ModeNext(value)) => Ok(value.encode(self.sub())?.to_vec()),
             (240, DptPayload::CombinedPosition(value)) => Ok(value.encode()?.to_vec()),
