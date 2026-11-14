@@ -17,7 +17,8 @@ pub mod dpt10; // Time
 pub mod dpt11; // Date
 pub mod dpt12; // Unsigned 32-bit
 pub mod dpt13; // Signed 32-bit
-pub mod dpt14; // 4-byte float
+pub mod dpt14;
+pub mod dpt15; // 4-byte float
 pub mod dpt16; // String
 pub mod dpt17; // Scene Number
 pub mod dpt18; // Scene Control
@@ -74,6 +75,7 @@ pub use dpt11::*;
 pub use dpt12::*;
 pub use dpt13::*;
 pub use dpt14::*;
+pub use dpt15::*;
 pub use dpt16::*;
 pub use dpt17::*;
 pub use dpt18::*;
@@ -103,13 +105,13 @@ pub use group_registry::{GroupAddressRegistry, GroupAddressState};
 pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
-    BoolView, ChannelActivation24View, CharacterView, CodeView, CombinedInfoOnOffView,
-    CombinedPositionView, Control2View, ControlView, DALIControlGearDiagnosticView,
-    DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView, DptView, EnumView,
-    Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView, I8View, I16View,
-    I32View, I64View, MBusAddressView, PrioritisedModeControlView, RgbView, RgbwView,
-    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View, StatusSABView,
-    StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
+    AccessDataView, BoolView, ChannelActivation24View, CharacterView, CodeView,
+    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
+    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
+    DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
+    I8View, I16View, I32View, I64View, MBusAddressView, PrioritisedModeControlView, RgbView,
+    RgbwView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
+    StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -673,6 +675,7 @@ impl DptRegistry {
         registry.register::<DPTGeographicalLocation>();
         registry.register::<DPTCombinedPosition>();
         registry.register::<DPTStatusSAB>();
+        registry.register::<DPTAccessData>();
         registry.register::<DPTForecastTemperature>();
         registry.register::<DPTForecastWindSpeed>();
         registry.register::<DPTForecastRelativeHumidity>();

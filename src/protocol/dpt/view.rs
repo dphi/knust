@@ -351,6 +351,25 @@ impl<'a> ForecastView<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct AccessDataView<'a>(pub(crate) &'a [u8]);
+impl std::fmt::Debug for AccessDataView<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value().fmt(f)
+    }
+}
+impl<'a> AccessDataView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt15::AccessData {
+        super::dpt15::AccessData::decode(self.0.try_into().expect("validated length"))
+            .expect("validated access data")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct StatusSABView<'a>(pub(crate) &'a [u8]);
 impl<'a> StatusSABView<'a> {
@@ -697,6 +716,7 @@ pub enum DptView<'a> {
     GeographicalLocation(GeographicalLocationView<'a>),
     CombinedPosition(CombinedPositionView<'a>),
     StatusSAB(StatusSABView<'a>),
+    AccessData(AccessDataView<'a>),
     Forecast(ForecastView<'a>),
     Setpoints3(Setpoints3View<'a>),
     Setpoints4(Setpoints4View<'a>),
@@ -744,6 +764,7 @@ impl<'a> DptView<'a> {
             | Self::GeographicalLocation(_)
             | Self::CombinedPosition(_)
             | Self::StatusSAB(_)
+            | Self::AccessData(_)
             | Self::Forecast(_)
             | Self::Setpoints3(_)
             | Self::Setpoints4(_)
@@ -795,6 +816,7 @@ impl<'a> DptView<'a> {
             Self::GeographicalLocation(v) => v.raw(),
             Self::CombinedPosition(v) => v.raw(),
             Self::StatusSAB(v) => v.raw(),
+            Self::AccessData(v) => v.raw(),
             Self::Forecast(v) => v.raw(),
             Self::Setpoints3(v) => v.raw(),
             Self::Setpoints4(v) => v.raw(),
@@ -853,6 +875,7 @@ impl DptView<'_> {
             Self::GeographicalLocation(v) => v.value().to_string(),
             Self::CombinedPosition(v) => v.value().to_string(),
             Self::StatusSAB(v) => v.value().to_string(),
+            Self::AccessData(v) => v.value().to_string(),
             Self::Forecast(v) => v.value().to_string(),
             Self::Setpoints3(v) => v.value().to_string(),
             Self::Setpoints4(v) => v.value().to_string(),
@@ -1300,6 +1323,7 @@ impl DptType {
             255 => s.parse().map(DptPayload::GeographicalLocation),
             240 => s.parse().map(DptPayload::CombinedPosition),
             241 => s.parse().map(DptPayload::StatusSAB),
+            15 => s.parse().map(DptPayload::AccessData),
             273 => s.parse().map(DptPayload::Forecast),
             222 => s.parse().map(DptPayload::Setpoints3),
             275 => s.parse().map(DptPayload::Setpoints4),
