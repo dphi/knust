@@ -23,6 +23,8 @@ pub use cemi::{
 pub use dpt::{
     ActiveEnergy,
     Brightness,
+    CharacterAscii,
+    CharacterLatin1,
     ControlBlinds,
 
     // DPT 3.xxx - Control
@@ -35,6 +37,8 @@ pub use dpt::{
     DPTBool,
     DPTBrightness,
 
+    DPTCharacter,
+    DPTCharacterLatin1,
     DPTEnable,
 
     DPTPercentV8,

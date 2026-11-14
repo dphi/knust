@@ -172,6 +172,7 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::Float4Byte(v) => Self::Float(v.as_f64()),
             DptView::I64(v) => Self::SignedInt(v.value()),
             DptView::Str(v) => Self::String(v.as_str().to_string()),
+            DptView::Character(v) => Self::String(v.as_string()),
             DptView::Time(v) => Self::Time {
                 day: v.day(),
                 hour: v.hour(),

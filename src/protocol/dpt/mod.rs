@@ -30,6 +30,7 @@ pub mod dpt242; // XYY Color
 pub mod dpt251;
 pub mod dpt29; // Signed 64-bit
 pub mod dpt3; // Control
+pub mod dpt4; // Character
 pub mod dpt5; // Unsigned 8-bit
 pub mod dpt6; // Signed 8-bit
 pub mod dpt7; // Unsigned 16-bit
@@ -45,6 +46,7 @@ pub use dpt_type::DptType;
 pub use dpt1::*;
 pub use dpt2::*;
 pub use dpt3::*;
+pub use dpt4::*;
 pub use dpt5::*;
 pub use dpt6::*;
 pub use dpt7::*;
@@ -69,9 +71,9 @@ pub use group_registry::{GroupAddressRegistry, GroupAddressState};
 pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
-    BoolView, Control2View, ControlView, DateTimeView, DateView, DptView, EnumView, Float2ByteView,
-    Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView, SceneView, StrView,
-    TimeView, U8View, U16View, U32View, XyyView,
+    BoolView, CharacterView, Control2View, ControlView, DateTimeView, DateView, DptView, EnumView,
+    Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView,
+    SceneView, StrView, TimeView, U8View, U16View, U32View, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -439,6 +441,10 @@ impl DptRegistry {
         // DPT 3.xxx - Control
         registry.register::<ControlDimming>();
         registry.register::<ControlBlinds>();
+
+        // DPT 4.xxx - Character
+        registry.register::<CharacterAscii>();
+        registry.register::<CharacterLatin1>();
 
         // DPT 5.xxx - Unsigned 8-bit
         registry.register::<DPTScaling>();

@@ -1,9 +1,9 @@
 use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
-    BoolView, Control2View, ControlView, DateTimeView, DateView, DptView, EnumView, Float2ByteView,
-    Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView, SceneView, StrView,
-    TimeView, U8View, U16View, U32View, XyyView,
+    BoolView, CharacterView, Control2View, ControlView, DateTimeView, DateView, DptView, EnumView,
+    Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView,
+    SceneView, StrView, TimeView, U8View, U16View, U32View, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -58,6 +58,10 @@ pub enum DptType {
     // DPT 3.xxx - Control
     ControlDimming = 300_007,
     ControlBlinds = 300_008,
+
+    // DPT 4.xxx - Character
+    Character = 400_001,
+    CharacterLatin1 = 400_002,
 
     // DPT 5.xxx - Unsigned 8-bit
     Scaling = 500_001,
@@ -452,7 +456,7 @@ impl DptType {
     #[must_use]
     pub fn byte_length(&self) -> usize {
         match self.main() {
-            1 | 2 | 3 | 5 | 6 | 17 | 18 | 20 => 1,
+            1..=6 | 17 | 18 | 20 => 1,
             7..=9 => 2,
             10 | 11 | 232 => 3,
             12..=14 => 4,
@@ -521,6 +525,7 @@ impl DptType {
                 );
                 Ok(DptView::Control(ControlView(bytes)))
             }
+            4 => Ok(DptView::Character(CharacterView(bytes, self.sub() == 2))),
             5 => {
                 log_protocol!(
                     LogLevel::Trace,
@@ -842,6 +847,9 @@ impl DptType {
             }
             (3, DptPayload::Control { step, step_code }) => {
                 Ok(vec![(if *step { 0x08 } else { 0 }) | (*step_code & 0x07)])
+            }
+            (4, DptPayload::String(value)) => {
+                Ok(super::dpt4::encode_character(value, self.sub() == 2)?.to_vec())
             }
             (5, DptPayload::UnsignedInt(v)) => Ok(vec![*v as u8]),
             (6, DptPayload::SignedInt(v)) => Ok(vec![*v as u8]),

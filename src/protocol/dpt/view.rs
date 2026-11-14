@@ -226,6 +226,27 @@ impl<'a> StrView<'a> {
     }
 }
 
+/// Zero-copy view of a DPT 4 ASCII or Latin-1 character.
+#[derive(Debug, Clone, Copy)]
+pub struct CharacterView<'a>(pub(crate) &'a [u8], pub(crate) bool);
+
+impl<'a> CharacterView<'a> {
+    /// Decode the character; NUL yields an empty string.
+    #[must_use]
+    pub fn as_string(&self) -> String {
+        match self.0[0] {
+            0 => String::new(),
+            byte if self.1 || byte.is_ascii() => char::from(byte).to_string(),
+            _ => "�".to_string(),
+        }
+    }
+
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TimeView<'a>(pub(crate) &'a [u8]);
 impl<'a> TimeView<'a> {
@@ -423,6 +444,7 @@ pub enum DptView<'a> {
     Float4Byte(Float4ByteView<'a>),
     I64(I64View<'a>),
     Str(StrView<'a>),
+    Character(CharacterView<'a>),
     Time(TimeView<'a>),
     Date(DateView<'a>),
     DateTime(DateTimeView<'a>),
@@ -452,6 +474,7 @@ impl<'a> DptView<'a> {
             Self::Control(_)
             | Self::Control2(_)
             | Self::Str(_)
+            | Self::Character(_)
             | Self::Time(_)
             | Self::Date(_)
             | Self::DateTime(_)
@@ -485,6 +508,7 @@ impl<'a> DptView<'a> {
             Self::Float4Byte(v) => v.raw(),
             Self::I64(v) => v.raw(),
             Self::Str(v) => v.raw(),
+            Self::Character(v) => v.raw(),
             Self::Time(v) => v.raw(),
             Self::Date(v) => v.raw(),
             Self::DateTime(v) => v.raw(),
@@ -525,6 +549,7 @@ impl DptView<'_> {
             Self::Float4Byte(v) => format_numeric(v.as_f64(), dpt),
             Self::I64(v) => format_numeric(v.as_f64(), dpt),
             Self::Str(v) => v.as_str().to_string(),
+            Self::Character(v) => v.as_string(),
             Self::Time(v) => {
                 let base = format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second());
                 match weekday_name(v.day()) {
@@ -859,7 +884,12 @@ impl DptType {
     /// Returns [`ProtocolError::DptError`] if `input` doesn't parse into a
     /// value this DPT can encode, or if the parsed value is out of range.
     pub fn parse(&self, input: &str) -> Result<Vec<u8>> {
-        let payload = (*self).parse_payload(input.trim())?;
+        let input = if self.main() == 4 {
+            input
+        } else {
+            input.trim()
+        };
+        let payload = (*self).parse_payload(input)?;
         self.encode(&payload)
     }
 
@@ -934,6 +964,7 @@ impl DptType {
                     "cannot parse {s:?} as a date/time (expected \"YYYY-MM-DD HH:MM:SS\")"
                 ))
             }),
+            4 => Ok(DptPayload::String(s.to_string())),
             16 => {
                 if s.len() > 14 {
                     return Err(bad(format!(
