@@ -26,6 +26,7 @@ pub mod dpt19; // Date and Time
 pub mod dpt2; // 2-bit control
 pub mod dpt20; // HVAC
 pub mod dpt206;
+pub mod dpt207;
 mod dpt20_modes;
 pub mod dpt217; // Version
 pub mod dpt225;
@@ -93,6 +94,7 @@ pub use dpt27::*;
 pub use dpt29::*;
 pub use dpt30::*;
 pub use dpt206::*;
+pub use dpt207::*;
 pub use dpt217::*;
 pub use dpt225::*;
 pub use dpt229::*;
@@ -113,7 +115,7 @@ pub use group_registry::{GroupAddressRegistry, GroupAddressState};
 pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
-    AccessDataView, BoolView, ChannelActivation24View, CharacterView, CodeView,
+    AccessDataView, ActuatorView, BoolView, ChannelActivation24View, CharacterView, CodeView,
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
@@ -689,6 +691,12 @@ impl DptRegistry {
         registry.register::<DPTDHWModeNext>();
         registry.register::<DPTOccModeNext>();
         registry.register::<DPTBuildingModeNext>();
+        registry.register::<DPTStatusBUC>();
+        registry.register::<DPTLockSign>();
+        registry.register::<DPTValueDemBOC>();
+        registry.register::<DPTActPosDemAbs>();
+        registry.register::<DPTStatusAct>();
+        registry.register::<DPTStatusLightingActuator>();
         registry.register::<DPTScalingSpeed>();
         registry.register::<DPTScalingStepTime>();
         registry.register::<DPTMeteringValue>();

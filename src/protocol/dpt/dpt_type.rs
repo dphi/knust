@@ -1,7 +1,7 @@
 use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
-    AccessDataView, BoolView, ChannelActivation24View, CharacterView, CodeView,
+    AccessDataView, ActuatorView, BoolView, ChannelActivation24View, CharacterView, CodeView,
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
@@ -264,6 +264,12 @@ pub enum DptType {
     DHWModeNext = 20_600_102,
     OccupancyModeNext = 20_600_104,
     BuildingModeNext = 20_600_105,
+    BurnerControllerStatus = 20_700_100,
+    LockingSignal = 20_700_101,
+    BoilerControllerDemand = 20_700_102,
+    ActuatorPositionDemand = 20_700_104,
+    ActuatorPositionStatus = 20_700_105,
+    LightingActuatorStatus = 20_700_600,
     ScalingSpeed = 22_500_001,
     ScalingStepTime = 22_500_002,
     MeteringValue = 22_900_001,
@@ -504,7 +510,7 @@ impl DptType {
     pub fn byte_length(&self) -> usize {
         match self.main() {
             1..=6 | 17 | 18 | 20 | 21 | 25 | 26 | 236 | 238 => 1,
-            7..=9 | 22 | 217 | 234 | 237 => 2,
+            7..=9 | 22 | 207 | 217 | 234 | 237 => 2,
             10 | 11 | 30 | 206 | 225 | 232 | 240 => 3,
             12..=15 | 27 | 241 => 4,
             16 => 14,
@@ -736,6 +742,10 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            207 => {
+                super::dpt207::decode_payload([bytes[0], bytes[1]], self.sub())?;
+                Ok(DptView::Actuator(ActuatorView(bytes, self.sub())))
+            }
             229 => {
                 super::dpt229::MeteringValue::decode(bytes.try_into().expect("validated length"))?;
                 Ok(DptView::MeteringValue(MeteringValueView(bytes)))
@@ -1077,6 +1087,24 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (207, DptPayload::BurnerControllerStatus(value)) if self.sub() == 100 => {
+                Ok(value.encode()?.to_vec())
+            }
+            (207, DptPayload::LockingSignal(value)) if self.sub() == 101 => {
+                Ok(value.encode()?.to_vec())
+            }
+            (207, DptPayload::BoilerControllerDemand(value)) if self.sub() == 102 => {
+                Ok(value.encode()?.to_vec())
+            }
+            (207, DptPayload::ActuatorPositionDemand(value)) if self.sub() == 104 => {
+                Ok(value.encode()?.to_vec())
+            }
+            (207, DptPayload::ActuatorPositionStatus(value)) if self.sub() == 105 => {
+                Ok(value.encode()?.to_vec())
+            }
+            (207, DptPayload::LightingActuatorStatus(value)) if self.sub() == 600 => {
+                Ok(value.encode()?.to_vec())
+            }
             (229, DptPayload::MeteringValue(value)) => Ok(value.encode()?.to_vec()),
             (21, DptPayload::StatusRTSM(value)) => Ok(value.encode().to_vec()),
             (22, DptPayload::StatusHVA(value)) if self.sub() == 102 => Ok(value.encode().to_vec()),
