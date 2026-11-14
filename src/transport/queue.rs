@@ -54,7 +54,10 @@ struct PriorityTelegram {
     telegram: Telegram,
     sequence: u64,
     enqueued_at: Instant,
+    receipt: Option<SendReceipt>,
 }
+
+pub(crate) type SendReceipt = tokio::sync::oneshot::Sender<Result<()>>;
 
 impl PartialEq for PriorityTelegram {
     fn eq(&self, other: &Self) -> bool {
@@ -165,6 +168,23 @@ impl TelegramQueue {
     /// Returns [`TransportError::QueueClosed`] if the queue has been closed,
     /// or [`TransportError::QueueFull`] if it is at capacity.
     pub async fn enqueue_outgoing(&self, telegram: Telegram) -> Result<()> {
+        self.enqueue_outgoing_inner(telegram, None).await
+    }
+
+    pub(crate) async fn enqueue_outgoing_tracked(
+        &self,
+        telegram: Telegram,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<()>>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.enqueue_outgoing_inner(telegram, Some(tx)).await?;
+        Ok(rx)
+    }
+
+    async fn enqueue_outgoing_inner(
+        &self,
+        telegram: Telegram,
+        receipt: Option<SendReceipt>,
+    ) -> Result<()> {
         let mut state = self.state.lock().await;
 
         if state.closed {
@@ -191,6 +211,7 @@ impl TelegramQueue {
             telegram,
             sequence: state.stats.sequence_counter,
             enqueued_at: Instant::now(),
+            receipt,
         };
 
         state.stats.sequence_counter += 1;
@@ -276,6 +297,12 @@ impl TelegramQueue {
     ///
     /// Returns `None` once the queue is closed and drained.
     pub async fn dequeue_outgoing(&self) -> Option<Telegram> {
+        self.dequeue_outgoing_job()
+            .await
+            .map(|(telegram, _)| telegram)
+    }
+
+    pub(crate) async fn dequeue_outgoing_job(&self) -> Option<(Telegram, Option<SendReceipt>)> {
         loop {
             let mut state = self.state.lock().await;
             if let Some(priority_telegram) = state.outgoing.pop() {
@@ -292,7 +319,7 @@ impl TelegramQueue {
                     processing_time,
                     state.outgoing.len()
                 );
-                return Some(priority_telegram.telegram);
+                return Some((priority_telegram.telegram, priority_telegram.receipt));
             }
 
             if state.closed {

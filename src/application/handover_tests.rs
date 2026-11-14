@@ -294,3 +294,103 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
     server.abort();
     let _ = server.await;
 }
+
+#[tokio::test(start_paused = true)]
+async fn read_deadline_starts_after_transmission_not_enqueue() {
+    let knx = knx().await;
+    let address = GroupAddress::try_from_raw(1).unwrap();
+    let reading = tokio::spawn({
+        let knx = knx.clone();
+        async move {
+            knx.read_group_value(address, Duration::from_millis(100))
+                .await
+        }
+    });
+    tokio::task::yield_now().await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(
+        !reading.is_finished(),
+        "response deadline ran while request was queued"
+    );
+    let (connection, _incoming, mut sent) = peer();
+    knx.connection.send_replace(Some(connection));
+    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    timeout(Duration::from_secs(1), sent.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    knx.test_notify_telegram_received(&Telegram::received(
+        IndividualAddress::new(1, 1, 2),
+        address,
+        crate::protocol::TelegramType::GroupValueResponse,
+        vec![42],
+    ))
+    .await;
+    assert_eq!(reading.await.unwrap().unwrap(), [42]);
+    assert_eq!(knx.total_callback_count().await, 0);
+    knx.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn unsent_or_cancelled_reads_do_not_transmit_later_or_leak_callbacks() {
+    let knx = knx().await;
+    let address = GroupAddress::try_from_raw(1).unwrap();
+    let reading = tokio::spawn({
+        let knx = knx.clone();
+        async move { knx.read_group_value(address, Duration::from_secs(1)).await }
+    });
+    tokio::task::yield_now().await;
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    assert!(reading.await.unwrap().is_err());
+    let cancelled = tokio::spawn({
+        let knx = knx.clone();
+        async move { knx.read_group_value(address, Duration::from_secs(1)).await }
+    });
+    tokio::task::yield_now().await;
+    cancelled.abort();
+    let _ = cancelled.await;
+    tokio::task::yield_now().await;
+    assert_eq!(
+        knx.total_callback_count().await,
+        0,
+        "cancelled read leaked callback"
+    );
+    let (connection, _incoming, mut sent) = peer();
+    knx.connection.send_replace(Some(connection));
+    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    assert!(
+        timeout(Duration::from_millis(100), sent.recv())
+            .await
+            .is_err(),
+        "expired read sent after its deadline"
+    );
+    knx.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_fails_unsent_reads_promptly() {
+    let knx = knx().await;
+    let reading = tokio::spawn({
+        let knx = knx.clone();
+        async move {
+            knx.read_group_value(
+                GroupAddress::try_from_raw(1).unwrap(),
+                Duration::from_secs(60),
+            )
+            .await
+        }
+    });
+    tokio::task::yield_now().await;
+    knx.stop().await;
+    let result = timeout(Duration::from_millis(100), reading)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        result,
+        Err(KnxError::Transport(
+            crate::error::TransportError::QueueClosed
+        ))
+    ));
+    assert_eq!(knx.total_callback_count().await, 0);
+}

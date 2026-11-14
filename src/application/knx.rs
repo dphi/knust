@@ -44,6 +44,24 @@ struct ConnectionControlMessage {
     connection: Arc<dyn Connection>,
 }
 
+// A cancelled read must unregister its callback even though Drop cannot await.
+struct ReadCallbackGuard {
+    handler: Arc<EventHandler>,
+    handle: Option<CallbackHandle>,
+}
+impl Drop for ReadCallbackGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            let handler = self.handler.clone();
+            runtime.spawn(async move {
+                handler.unregister_callback(handle).await;
+            });
+        }
+    }
+}
+
 type ActiveConnection = tokio::sync::watch::Sender<Option<Arc<dyn Connection>>>;
 
 /// Main Knx library interface
@@ -1168,14 +1186,12 @@ impl Knx {
         Ok(())
     }
 
-    /// Read a group value and wait for the matching `GroupValueResponse` payload.
+    /// Read a group value, starting the response deadline after transmission.
     ///
     /// # Errors
     ///
-    /// Returns the same errors as [`Self::send_telegram`] if sending the
-    /// `GroupValueRead` fails, or
-    /// [`DeviceError::CommunicationTimeout`] if no response arrives within
-    /// `timeout_duration`.
+    /// Returns queue/transport errors, a send timeout if the read cannot be sent
+    /// within ten seconds, or a response timeout after `timeout_duration`.
     pub async fn read_group_value(
         &self,
         address: GroupAddress,
@@ -1185,25 +1201,31 @@ impl Knx {
         let handle = self
             .register_telegram_callback(GroupValueReadCallback { address, tx })
             .await;
-
-        let read_telegram = Telegram::group_read(address);
-
-        if let Err(err) = self.send_telegram(&read_telegram).await {
-            self.unregister_callback(handle).await;
-            return Err(err);
-        }
-
-        let result = tokio::time::timeout(timeout_duration, rx.recv()).await;
-        self.unregister_callback(handle).await;
-
-        match result {
-            Ok(Some(payload)) => Ok(payload),
-            Ok(None) | Err(_) => Err(DeviceError::CommunicationTimeout {
-                device: format!("group address {address}"),
-                timeout_ms: timeout_duration.as_millis() as u64,
+        let mut guard = ReadCallbackGuard {
+            handler: self.event_handler.clone(),
+            handle: Some(handle),
+        };
+        let result = async {
+            let mut read = Telegram::group_read(address);
+            read.source = self.config.individual_address;
+            let sent = self.telegram_queue.enqueue_outgoing_tracked(read).await?;
+            tokio::time::timeout(std::time::Duration::from_secs(10), sent)
+                .await
+                .map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })?
+                .map_err(|_| crate::error::TransportError::QueueClosed)??;
+            match tokio::time::timeout(timeout_duration, rx.recv()).await {
+                Ok(Some(payload)) => Ok(payload),
+                _ => Err(DeviceError::CommunicationTimeout {
+                    device: format!("group address {address}"),
+                    timeout_ms: timeout_duration.as_millis() as u64,
+                }
+                .into()),
             }
-            .into()),
         }
+        .await;
+        self.unregister_callback(handle).await;
+        guard.handle = None;
+        result
     }
 
     /// Bind `address` to DPT `T` and return a handle for typed reads/writes.
@@ -1614,7 +1636,10 @@ impl Knx {
                 }
 
                 // Dequeue outgoing telegram for sending
-                if let Some(telegram) = telegram_queue.dequeue_outgoing().await {
+                if let Some((telegram, mut receipt)) = telegram_queue.dequeue_outgoing_job().await {
+                    if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
+                        continue;
+                    }
                     // Acquire rate limiter token before sending
                     telegram_queue.acquire_send_token().await;
 
@@ -1646,10 +1671,21 @@ impl Knx {
                             _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                         }
                     };
+                    if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
+                        continue;
+                    }
                     let frame_data =
                         Self::build_outgoing_frame_for_connection(&telegram, &connection);
 
-                    match connection.send(&frame_data).await {
+                    let result = if let Some(receipt) = receipt.as_mut() {
+                        tokio::select! {
+                            result = connection.send(&frame_data) => result,
+                            _ = receipt.closed() => continue,
+                        }
+                    } else {
+                        connection.send(&frame_data).await
+                    };
+                    match &result {
                         Ok(()) => {
                             let send_duration = send_timer.elapsed();
                             performance_optimizer
@@ -1669,6 +1705,9 @@ impl Knx {
                                 e
                             );
                         }
+                    }
+                    if let Some(receipt) = receipt {
+                        let _ = receipt.send(result);
                     }
                 } else {
                     // Queue is closed and empty, exit
@@ -1709,6 +1748,8 @@ impl Knx {
         #[cfg(feature = "dpt")]
         Self::finish_task(&self.refresh_task, Duration::from_secs(2)).await;
 
+        // Release queued read receipts after the sender has finished or been cancelled.
+        self.telegram_queue.clear().await;
         self.shutdown_flag.store(false, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         log_application!(LogLevel::Info, "Knx telegram processing stopped");
