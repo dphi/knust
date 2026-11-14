@@ -23,12 +23,22 @@ pub enum GroupValueService {
 
 impl GroupValueService {
     /// Encode this group service into CEMI APCI/data bytes.
+    ///
+    /// Single-byte payloads use compact encoding. For octet DPTs, call
+    /// [`Self::encode_with_compact_payload`] with `false`.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
+        self.encode_with_compact_payload(true)
+    }
+
+    /// Encode with a separate payload octet when `compact` is false.
+    /// Compact encoding is only appropriate for DPT 1–3.
+    #[must_use]
+    pub fn encode_with_compact_payload(&self, compact: bool) -> Vec<u8> {
         let result = match self {
             Self::Read => vec![0x00],
-            Self::Response(payload) => encode_payload(0x40, payload),
-            Self::Write(payload) => encode_payload(0x80, payload),
+            Self::Response(payload) => encode_payload(0x40, payload, compact),
+            Self::Write(payload) => encode_payload(0x80, payload, compact),
         };
         log_protocol!(
             LogLevel::Trace,
@@ -90,8 +100,8 @@ impl GroupValueService {
     }
 }
 
-fn encode_payload(service_bits: u8, payload: &[u8]) -> Vec<u8> {
-    if payload.len() <= 1 {
+fn encode_payload(service_bits: u8, payload: &[u8], compact: bool) -> Vec<u8> {
+    if compact && payload.len() <= 1 {
         vec![service_bits | (payload.first().copied().unwrap_or(0) & 0x3F)]
     } else {
         let mut apci_data = Vec::with_capacity(payload.len() + 1);

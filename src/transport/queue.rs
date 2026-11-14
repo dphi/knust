@@ -462,6 +462,7 @@ mod tests {
             priority,
             direction: Direction::Outgoing,
             telegram_type: TelegramType::GroupValueWrite,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         }
     }
@@ -491,6 +492,7 @@ mod tests {
                 priority,
                 direction: Direction::Outgoing,
                 telegram_type: TelegramType::GroupValueWrite,
+                compact_payload: true,
                 timestamp: std::time::SystemTime::now(),
             }
         }

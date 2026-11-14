@@ -2673,6 +2673,7 @@ impl Knx {
             },
             direction: Direction::Incoming,
             telegram_type,
+            compact_payload: cemi_frame.apci_data.len() == 1,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -2687,12 +2688,7 @@ impl Knx {
         use crate::protocol::knxip::{KnxIpFrame, ServiceType, TunnellingRequest};
         use crate::transport::Tunnel;
 
-        let group_service = if telegram.payload.is_empty() {
-            crate::protocol::GroupValueService::Read
-        } else {
-            crate::protocol::GroupValueService::Write(telegram.payload.clone())
-        };
-        let apci_data = group_service.encode();
+        let apci_data = telegram.encode_group_service();
         let cemi = CemiFrame::new(
             MessageCode::LDataReq,
             telegram.source,
@@ -2857,6 +2853,43 @@ mod integration_tests {
         assert_ne!(telegram.telegram_type, TelegramType::GroupValueResponse);
     }
 
+    #[cfg(feature = "dpt")]
+    #[test]
+    fn octet_telegrams_preserve_full_octets_and_service_on_wire() {
+        use crate::protocol::dpt::{DPTSwitch, DptValue, Scaling};
+        use crate::protocol::knxip::{KnxIpFrame, TunnellingRequest};
+        let address = GroupAddress::try_from_raw(0x1234).unwrap();
+        let connection: Arc<dyn Connection> =
+            Arc::new(Tunnel::new_udp("127.0.0.1:3671".parse().unwrap()));
+        for byte in 0..=u8::MAX {
+            let value = Scaling::from_bytes(&[byte]).unwrap();
+            for (telegram, service_bits) in [
+                (
+                    Telegram::group_write_value(address, value.clone()).unwrap(),
+                    0x80,
+                ),
+                (
+                    Telegram::group_response_value(address, value).unwrap(),
+                    0x40,
+                ),
+            ] {
+                let wire = Knx::build_outgoing_frame_for_connection(&telegram, &connection);
+                let frame = KnxIpFrame::parse(&wire).unwrap();
+                let request = TunnellingRequest::parse(&frame.body).unwrap();
+                let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
+                assert_eq!(cemi.apci_data, [service_bits, byte]);
+                let received = Knx::parse_cemi_to_telegram(&request.raw_cemi).unwrap();
+                assert_eq!(received.payload, [byte]);
+                assert!(!received.compact_payload);
+                assert_eq!(received.telegram_type, telegram.telegram_type);
+            }
+        }
+        let switch = Telegram::group_write_value::<DPTSwitch>(address, true).unwrap();
+        assert!(switch.compact_payload);
+        assert_eq!(switch.encode_group_service(), [0x81]);
+        assert_eq!(Telegram::group_read(address).encode_group_service(), [0]);
+    }
+
     #[tokio::test]
     async fn test_knx_telegram_callback_integration() {
         // Create Knx instance with telegram callback
@@ -2902,6 +2935,7 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -2960,6 +2994,7 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -2987,6 +3022,7 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         };
         assert!(
@@ -3324,6 +3360,7 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -3373,6 +3410,7 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -3387,6 +3425,7 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -3434,6 +3473,7 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -3497,6 +3537,7 @@ mod integration_tests {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         };
 

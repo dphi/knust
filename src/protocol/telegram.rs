@@ -36,6 +36,10 @@ pub struct Telegram {
     /// Telegram payload data
     pub payload: Vec<u8>,
 
+    /// Whether a one-byte payload uses the six APCI data bits (DPT 1–3).
+    /// Set to false for octet payloads, including DPT 4 and DPT 5.
+    pub compact_payload: bool,
+
     /// Message priority
     pub priority: Priority,
 
@@ -66,12 +70,17 @@ impl Telegram {
             priority: Priority::Normal,
             direction: Direction::Outgoing,
             telegram_type: TelegramType::GroupValueRead,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         }
     }
 
     /// Build an outgoing `GroupValueWrite` for `destination` carrying
     /// `payload`. `source` is filled in the same way as [`Self::group_read`].
+    ///
+    /// Raw writes retain compact encoding for single-byte payloads. Set
+    /// [`Self::compact_payload`] to false for an octet DPT, or use
+    /// [`Self::group_write_value`] with the `dpt` feature for automatic selection.
     #[must_use]
     pub fn group_write(destination: GroupAddress, payload: Vec<u8>) -> Self {
         Self {
@@ -81,8 +90,20 @@ impl Telegram {
             priority: Priority::Normal,
             direction: Direction::Outgoing,
             telegram_type: TelegramType::GroupValueWrite,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         }
+    }
+
+    /// Encode the service and the payload's compact/octet wire format together.
+    pub(crate) fn encode_group_service(&self) -> Vec<u8> {
+        use super::GroupValueService;
+        let service = match self.telegram_type {
+            TelegramType::GroupValueRead => GroupValueService::Read,
+            TelegramType::GroupValueResponse => GroupValueService::Response(self.payload.clone()),
+            TelegramType::GroupValueWrite => GroupValueService::Write(self.payload.clone()),
+        };
+        service.encode_with_compact_payload(self.compact_payload)
     }
 
     /// Build a telegram as if it arrived from `source` on the bus — for
@@ -105,6 +126,7 @@ impl Telegram {
             priority: Priority::Normal,
             direction: Direction::Incoming,
             telegram_type,
+            compact_payload: true,
             timestamp: std::time::SystemTime::now(),
         }
     }
@@ -177,7 +199,9 @@ impl Telegram {
         let dpt = T::dpt_type()?;
         let value: T = value.resolve(dpt)?;
         value.validate()?;
-        Ok(Self::group_write(destination, value.encode()?))
+        let mut telegram = Self::group_write(destination, value.encode()?);
+        telegram.compact_payload = matches!(dpt.main(), 1..=3);
+        Ok(telegram)
     }
 
     /// Build an outgoing `GroupValueResponse` for `destination` from a

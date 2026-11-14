@@ -945,16 +945,11 @@ fn build_tunnelling_frame_with_code(
     sequence: u8,
     message_code: MessageCode,
 ) -> Vec<u8> {
-    let group_service = if telegram.payload.is_empty() {
-        GroupValueService::Read
-    } else {
-        GroupValueService::Write(telegram.payload.clone())
-    };
     let cemi = CemiFrame::new(
         message_code,
         telegram.source,
         telegram.destination,
-        group_service.encode(),
+        telegram.encode_group_service(),
     );
     let request = TunnellingRequest::new(channel_id, sequence, cemi.serialize());
     KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize()
@@ -1000,6 +995,7 @@ fn parse_cemi_to_telegram(cemi_data: &[u8]) -> Result<Telegram> {
         },
         direction: Direction::Incoming,
         telegram_type,
+        compact_payload: cemi_frame.apci_data.len() == 1,
         timestamp: std::time::SystemTime::now(),
     })
 }
@@ -1041,6 +1037,28 @@ mod tests {
             TelegramType::GroupValueWrite,
             vec![payload],
         )
+    }
+
+    #[cfg(feature = "dpt")]
+    #[test]
+    fn octet_server_frames_preserve_full_octets_and_service() {
+        use crate::protocol::dpt::{DptValue, Scaling};
+        let address = crate::protocol::address::GroupAddress::try_from_raw(0x1234).unwrap();
+        for byte in 0..=u8::MAX {
+            let value = Scaling::from_bytes(&[byte]).unwrap();
+            for telegram in [
+                Telegram::group_write_value(address, value.clone()).unwrap(),
+                Telegram::group_response_value(address, value).unwrap(),
+            ] {
+                let wire = build_tunnelling_frame_with_code(&telegram, 1, 0, MessageCode::LDataInd);
+                let frame = KnxIpFrame::parse(&wire).unwrap();
+                let request = TunnellingRequest::parse(&frame.body).unwrap();
+                let received = parse_cemi_to_telegram(&request.raw_cemi).unwrap();
+                assert_eq!(received.payload, [byte]);
+                assert!(!received.compact_payload);
+                assert_eq!(received.telegram_type, telegram.telegram_type);
+            }
+        }
     }
 
     /// The client acks the next `TunnellingRequest` it receives (mirrors what a

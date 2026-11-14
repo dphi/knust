@@ -940,6 +940,7 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction,
                     telegram_type: TelegramType::GroupValueWrite,
+                    compact_payload: true,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1042,6 +1043,7 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
+                    compact_payload: true,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1143,6 +1145,7 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
+                    compact_payload: true,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1218,6 +1221,7 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
+                    compact_payload: true,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1414,6 +1418,7 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
+                    compact_payload: true,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1584,6 +1589,7 @@ mod tests {
                             priority: crate::protocol::telegram::Priority::Normal,
                             direction: Direction::Incoming,
                             telegram_type: TelegramType::GroupValueWrite,
+                            compact_payload: true,
                             timestamp: std::time::SystemTime::now(),
                         };
 
@@ -1794,6 +1800,7 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
+                    compact_payload: true,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1954,6 +1961,7 @@ mod tests {
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
+                    compact_payload: true,
                     timestamp: std::time::SystemTime::now(),
                 };
 
