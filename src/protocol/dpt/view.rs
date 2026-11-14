@@ -352,6 +352,19 @@ impl<'a> ForecastView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct ScalingTimeView<'a>(pub(crate) &'a [u8], pub(crate) u16);
+impl<'a> ScalingTimeView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt225::ScalingTime {
+        super::dpt225::ScalingTime::decode([self.0[0], self.0[1], self.0[2]], self.1)
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct ModeNextView<'a>(pub(crate) &'a [u8], pub(crate) u16);
 impl<'a> ModeNextView<'a> {
     #[must_use]
@@ -732,6 +745,7 @@ pub enum DptView<'a> {
     StatusSAB(StatusSABView<'a>),
     AccessData(AccessDataView<'a>),
     ModeNext(ModeNextView<'a>),
+    ScalingTime(ScalingTimeView<'a>),
     Forecast(ForecastView<'a>),
     Setpoints3(Setpoints3View<'a>),
     Setpoints4(Setpoints4View<'a>),
@@ -781,6 +795,7 @@ impl<'a> DptView<'a> {
             | Self::StatusSAB(_)
             | Self::AccessData(_)
             | Self::ModeNext(_)
+            | Self::ScalingTime(_)
             | Self::Forecast(_)
             | Self::Setpoints3(_)
             | Self::Setpoints4(_)
@@ -834,6 +849,7 @@ impl<'a> DptView<'a> {
             Self::StatusSAB(v) => v.raw(),
             Self::AccessData(v) => v.raw(),
             Self::ModeNext(v) => v.raw(),
+            Self::ScalingTime(v) => v.raw(),
             Self::Forecast(v) => v.raw(),
             Self::Setpoints3(v) => v.raw(),
             Self::Setpoints4(v) => v.raw(),
@@ -894,6 +910,7 @@ impl DptView<'_> {
             Self::StatusSAB(v) => v.value().to_string(),
             Self::AccessData(v) => v.value().to_string(),
             Self::ModeNext(v) => v.value().to_string(),
+            Self::ScalingTime(v) => v.value().to_string(),
             Self::Forecast(v) => v.value().to_string(),
             Self::Setpoints3(v) => v.value().to_string(),
             Self::Setpoints4(v) => v.value().to_string(),
@@ -1343,6 +1360,7 @@ impl DptType {
             241 => s.parse().map(DptPayload::StatusSAB),
             15 => s.parse().map(DptPayload::AccessData),
             206 => s.parse().map(DptPayload::ModeNext),
+            225 => s.parse().map(DptPayload::ScalingTime),
             273 => s.parse().map(DptPayload::Forecast),
             222 => s.parse().map(DptPayload::Setpoints3),
             275 => s.parse().map(DptPayload::Setpoints4),

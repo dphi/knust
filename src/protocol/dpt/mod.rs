@@ -28,6 +28,7 @@ pub mod dpt20; // HVAC
 pub mod dpt206;
 mod dpt20_modes;
 pub mod dpt217; // Version
+pub mod dpt225;
 pub mod dpt230;
 pub mod dpt232; // RGB Color
 pub mod dpt234;
@@ -90,6 +91,7 @@ pub use dpt29::*;
 pub use dpt30::*;
 pub use dpt206::*;
 pub use dpt217::*;
+pub use dpt225::*;
 pub use dpt230::*;
 pub use dpt232::*;
 pub use dpt234::*;
@@ -112,8 +114,9 @@ pub use view::{
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, MBusAddressView, ModeNextView, PrioritisedModeControlView,
-    RgbView, RgbwView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
-    StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
+    RgbView, RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View,
+    Setpoints4View, StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView,
+    XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -682,6 +685,8 @@ impl DptRegistry {
         registry.register::<DPTDHWModeNext>();
         registry.register::<DPTOccModeNext>();
         registry.register::<DPTBuildingModeNext>();
+        registry.register::<DPTScalingSpeed>();
+        registry.register::<DPTScalingStepTime>();
         registry.register::<DPTForecastTemperature>();
         registry.register::<DPTForecastWindSpeed>();
         registry.register::<DPTForecastRelativeHumidity>();
