@@ -10,10 +10,10 @@ use super::health::ConnectionHealth;
 /// Trait for KNX/IP connections
 #[async_trait]
 pub trait Connection: Send + Sync {
-    /// Send raw frame data
+    /// Send one complete serialized KNX/IP frame.
     async fn send(&self, frame: &[u8]) -> Result<()>;
 
-    /// Receive raw frame data
+    /// Receive one complete serialized KNX/IP frame, including its header.
     async fn recv(&self) -> Result<Vec<u8>>;
 
     /// Close the connection

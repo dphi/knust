@@ -219,34 +219,14 @@ impl RoutingConnection {
         Ok(())
     }
 
-    /// Send a routing indication message
+    /// Send cEMI data in one KNX/IP routing indication.
     ///
     /// # Errors
     ///
-    /// Returns [`TransportError::SocketError`] if sending the multicast
-    /// datagram fails.
+    /// Returns an error if the connection is closed or sending the datagram fails.
     pub async fn send_routing_indication(&self, cemi_data: &[u8]) -> Result<()> {
         let frame = KnxIpFrame::new(ServiceType::RoutingIndication, cemi_data.to_vec());
-        let frame_data = frame.serialize();
-
-        self.socket
-            .send_to(&frame_data, self.multicast_addr)
-            .await
-            .map_err(|e| {
-                if let Ok(mut stats) = self.stats.write() {
-                    stats.record_send_error(&e);
-                }
-                TransportError::SocketError {
-                    operation: "send_routing_indication".to_string(),
-                    source: e,
-                }
-            })?;
-
-        if let Ok(mut stats) = self.stats.write() {
-            stats.frames_sent += 1;
-        }
-
-        Ok(())
+        Connection::send(self, &frame.serialize()).await
     }
 
     /// Get routing-specific statistics
@@ -294,8 +274,23 @@ impl Connection for RoutingConnection {
             return Err(TransportError::ConnectionClosed.into());
         }
 
-        // For routing connections, we need to wrap the CEMI data in a RoutingIndication frame
-        self.send_routing_indication(frame).await
+        self.socket
+            .send_to(frame, self.multicast_addr)
+            .await
+            .map_err(|e| {
+                if let Ok(mut stats) = self.stats.write() {
+                    stats.record_send_error(&e);
+                }
+                TransportError::SocketError {
+                    operation: "send_to".to_string(),
+                    source: e,
+                }
+            })?;
+
+        if let Ok(mut stats) = self.stats.write() {
+            stats.frames_sent += 1;
+        }
+        Ok(())
     }
 
     async fn recv(&self) -> Result<Vec<u8>> {
@@ -303,30 +298,28 @@ impl Connection for RoutingConnection {
             return Err(TransportError::ConnectionClosed.into());
         }
 
-        let mut buf = vec![0u8; 1024];
-        let (len, _addr) = self.socket.recv_from(&mut buf).await.map_err(|e| {
+        loop {
+            let mut buf = vec![0u8; 1024];
+            let (len, _addr) = self.socket.recv_from(&mut buf).await.map_err(|e| {
+                if let Ok(mut stats) = self.stats.write() {
+                    stats.record_receive_error(&e);
+                }
+                TransportError::SocketError {
+                    operation: "recv_from".to_string(),
+                    source: e,
+                }
+            })?;
+            buf.truncate(len);
+
+            // Consume routing control messages; the application expects full KNX/IP frames.
+            if self.process_routing_message(&buf).await?.is_empty() {
+                continue;
+            }
             if let Ok(mut stats) = self.stats.write() {
-                stats.record_receive_error(&e);
+                stats.frames_received += 1;
             }
-            TransportError::SocketError {
-                operation: "recv_from".to_string(),
-                source: e,
-            }
-        })?;
-
-        buf.truncate(len);
-
-        // Process the routing message and extract CEMI data
-        let cemi_data = self.process_routing_message(&buf).await?;
-
-        // Only update stats and return data if we got actual CEMI data
-        if !cemi_data.is_empty()
-            && let Ok(mut stats) = self.stats.write()
-        {
-            stats.frames_received += 1;
+            return Ok(buf);
         }
-
-        Ok(cemi_data)
     }
 
     async fn close(&self) -> Result<()> {
@@ -404,6 +397,68 @@ mod health_tests {
     }
 
     #[tokio::test]
+    async fn routing_send_preserves_frames_and_wraps_cemi_only_once() {
+        use crate::protocol::{
+            CemiFrame, GroupValueService,
+            address::{Address, GroupAddress, IndividualAddress},
+            cemi::MessageCode,
+        };
+        let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let connection = test_connection(receiver.local_addr().unwrap()).await;
+        let cemi = CemiFrame::new(
+            MessageCode::LDataReq,
+            IndividualAddress::new(1, 1, 1),
+            Address::Group(GroupAddress::try_from_raw(1).unwrap()),
+            GroupValueService::Write(vec![1]).encode(),
+        )
+        .serialize();
+        let expected = KnxIpFrame::new(ServiceType::RoutingIndication, cemi.clone()).serialize();
+        let mut bytes = [0; 1024];
+
+        Connection::send(&connection, &expected).await.unwrap();
+        let len = tokio::time::timeout(Duration::from_secs(1), receiver.recv(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&bytes[..len], expected);
+        assert_eq!(KnxIpFrame::parse(&bytes[..len]).unwrap().body, cemi);
+
+        connection.send_routing_indication(&cemi).await.unwrap();
+        let len = tokio::time::timeout(Duration::from_secs(1), receiver.recv(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&bytes[..len], expected);
+        assert_eq!(connection.stats().frames_sent, 2);
+
+        *connection.state.write().unwrap() = ConnectionState::Disconnected;
+        assert!(Connection::send(&connection, &expected).await.is_err());
+        assert!(connection.send_routing_indication(&cemi).await.is_err());
+        assert_eq!(connection.stats().frames_sent, 2);
+    }
+
+    #[tokio::test]
+    async fn routing_receive_preserves_header_and_consumes_control_messages() {
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let connection = test_connection(peer.local_addr().unwrap()).await;
+        let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, vec![]).serialize();
+        let indication =
+            KnxIpFrame::new(ServiceType::RoutingIndication, vec![0x33, 0x44]).serialize();
+        peer.send_to(&lost, connection.local_addr()).await.unwrap();
+        peer.send_to(&indication, connection.local_addr())
+            .await
+            .unwrap();
+        let received = tokio::time::timeout(Duration::from_secs(1), Connection::recv(&connection))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received, indication);
+        assert_eq!(KnxIpFrame::parse(&received).unwrap().body, [0x33, 0x44]);
+        assert_eq!(connection.stats().frames_received, 1);
+        assert_eq!(connection.routing_stats().lost_message_count, 1);
+    }
+
+    #[tokio::test]
     // `score()` returns literal 0.0/1.0 constants for the connected-without-
     // errors and disconnected states asserted here, not a computed ratio.
     #[allow(clippy::float_cmp)]
@@ -430,7 +485,10 @@ mod health_tests {
             .send_to(&inbound.serialize(), connection.local_addr())
             .await
             .unwrap();
-        assert_eq!(Connection::recv(&connection).await.unwrap(), [0x33, 0x44]);
+        assert_eq!(
+            Connection::recv(&connection).await.unwrap(),
+            inbound.serialize()
+        );
 
         let error_window_start = Instant::now();
         let lost = KnxIpFrame::new(ServiceType::RoutingLostMessage, Vec::new());
