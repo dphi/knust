@@ -18,6 +18,7 @@ pub enum DptPayload {
     Float(f64),
     String(String),
     Version(super::dpt217::KnxVersion),
+    DoubleNibble(super::dpt25::DoubleNibble),
     Time {
         day: u8,
         hour: u8,
@@ -112,6 +113,7 @@ impl DptPayload {
             }
             Self::String(s) => s.clone(),
             Self::Version(v) => v.to_string(),
+            Self::DoubleNibble(v) => v.to_string(),
             Self::Scene(n) => format!("Scene {n}"),
             Self::SceneControl { scene, learn } => format!(
                 "Scene {} ({})",
@@ -176,6 +178,7 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::Str(v) => Self::String(v.as_string()),
             DptView::Character(v) => Self::String(v.as_string()),
             DptView::Version(v) => Self::Version(v.value()),
+            DptView::DoubleNibble(v) => Self::DoubleNibble(v.value()),
             DptView::Time(v) => Self::Time {
                 day: v.day(),
                 hour: v.hour(),

@@ -1,9 +1,9 @@
 use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
-    BoolView, CharacterView, Control2View, ControlView, DateTimeView, DateView, DptView, EnumView,
-    Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView,
-    SceneView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
+    BoolView, CharacterView, Control2View, ControlView, DateTimeView, DateView, DoubleNibbleView,
+    DptView, EnumView, Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, RgbView,
+    RgbwView, SceneView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -242,6 +242,7 @@ pub enum DptType {
 
     // DPT 217.001 - Version
     Version = 21_700_001,
+    DoubleNibble = 2_501_000,
 
     // DPT 16.xxx - String
     StringAscii = 1_600_000,
@@ -462,7 +463,7 @@ impl DptType {
     #[must_use]
     pub fn byte_length(&self) -> usize {
         match self.main() {
-            1..=6 | 17 | 18 | 20 => 1,
+            1..=6 | 17 | 18 | 20 | 25 => 1,
             7..=9 | 217 => 2,
             10 | 11 | 232 => 3,
             12..=14 => 4,
@@ -690,6 +691,10 @@ impl DptType {
                 Ok(DptView::Float4Byte(view))
             }
             217 => Ok(DptView::Version(VersionView(bytes))),
+            25 => {
+                super::dpt25::DoubleNibble::decode(bytes[0])?;
+                Ok(DptView::DoubleNibble(DoubleNibbleView(bytes)))
+            }
             16 => {
                 let view = StrView(bytes, self.sub() == 1);
                 log_protocol!(
@@ -965,6 +970,7 @@ impl DptType {
             }
             (29, DptPayload::SignedInt(v)) => Ok(v.to_be_bytes().to_vec()),
             (217, DptPayload::Version(value)) => Ok(value.encode()?.to_vec()),
+            (25, DptPayload::DoubleNibble(value)) => Ok(vec![value.encode()?]),
             (232, DptPayload::ColorRGB { r, g, b }) => Ok(vec![*r, *g, *b]),
             (242, DptPayload::ColorXYY { x, y, brightness }) => {
                 let xr = (*x * 65535.0) as u16;

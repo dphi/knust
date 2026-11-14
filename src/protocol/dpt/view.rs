@@ -274,6 +274,22 @@ impl<'a> VersionView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct DoubleNibbleView<'a>(pub(crate) &'a [u8]);
+impl<'a> DoubleNibbleView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt25::DoubleNibble {
+        super::dpt25::DoubleNibble {
+            busy: self.0[0] >> 4,
+            nak: self.0[0] & 15,
+        }
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct TimeView<'a>(pub(crate) &'a [u8]);
 impl<'a> TimeView<'a> {
     #[must_use]
@@ -472,6 +488,7 @@ pub enum DptView<'a> {
     Str(StrView<'a>),
     Character(CharacterView<'a>),
     Version(VersionView<'a>),
+    DoubleNibble(DoubleNibbleView<'a>),
     Time(TimeView<'a>),
     Date(DateView<'a>),
     DateTime(DateTimeView<'a>),
@@ -503,6 +520,7 @@ impl<'a> DptView<'a> {
             | Self::Str(_)
             | Self::Character(_)
             | Self::Version(_)
+            | Self::DoubleNibble(_)
             | Self::Time(_)
             | Self::Date(_)
             | Self::DateTime(_)
@@ -538,6 +556,7 @@ impl<'a> DptView<'a> {
             Self::Str(v) => v.raw(),
             Self::Character(v) => v.raw(),
             Self::Version(v) => v.raw(),
+            Self::DoubleNibble(v) => v.raw(),
             Self::Time(v) => v.raw(),
             Self::Date(v) => v.raw(),
             Self::DateTime(v) => v.raw(),
@@ -580,6 +599,7 @@ impl DptView<'_> {
             Self::Str(v) => v.as_string(),
             Self::Character(v) => v.as_string(),
             Self::Version(v) => v.value().to_string(),
+            Self::DoubleNibble(v) => v.value().to_string(),
             Self::Time(v) => {
                 let base = format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second());
                 match weekday_name(v.day()) {
@@ -1013,6 +1033,7 @@ impl DptType {
                 .map(DptPayload::Enum)
                 .ok_or_else(|| bad(format!("cannot parse {s:?} as an enum value"))),
             217 => s.parse().map(DptPayload::Version),
+            25 => s.parse().map(DptPayload::DoubleNibble),
             232 => parse_rgb(s).ok_or_else(|| {
                 bad(format!(
                     "cannot parse {s:?} as RGB (try \"RGB(r, g, b)\" or \"#RRGGBB\")"
