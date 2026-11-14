@@ -107,6 +107,10 @@ pub struct Knx {
     /// Handle to the telegram receiving task
     receiving_task: TaskSlot,
 
+    /// Outgoing sender and receive-limiter drain tasks.
+    sending_task: TaskSlot,
+    receive_drain_task: TaskSlot,
+
     /// Handle to the connection control task
     control_task: TaskSlot,
 
@@ -633,7 +637,7 @@ impl Knx {
         // into the telegram queue by the receive path directly; this drain just
         // prevents the internal channel from filling up.
         let tq_for_drain = telegram_queue.clone();
-        tokio::spawn(async move {
+        let receive_drain_handle = tokio::spawn(async move {
             while let Some(telegram) = receive_limiter_rx.recv().await {
                 let _ = tq_for_drain.enqueue_incoming(telegram).await;
             }
@@ -647,6 +651,8 @@ impl Knx {
             shutdown_notify: Arc::new(Notify::new()),
             processing_task: Arc::new(RwLock::new(None)),
             receiving_task: Arc::new(RwLock::new(None)),
+            sending_task: Arc::new(RwLock::new(None)),
+            receive_drain_task: Arc::new(RwLock::new(Some(receive_drain_handle))),
             control_task: Arc::new(RwLock::new(None)),
             reconnect_task: Arc::new(RwLock::new(None)),
             memory_monitor,
@@ -1612,7 +1618,7 @@ impl Knx {
         self.start_telegram_processing_task().await?;
 
         // Start the outgoing telegram sending task
-        self.start_telegram_sending_task(connection);
+        *self.sending_task.write().await = Some(self.start_telegram_sending_task(connection));
 
         // Start the group-address refresh task
         #[cfg(feature = "dpt")]
@@ -1830,7 +1836,7 @@ impl Knx {
     }
 
     /// Start the telegram sending task that sends outgoing telegrams
-    fn start_telegram_sending_task(&self, connection: Arc<dyn Connection>) {
+    fn start_telegram_sending_task(&self, connection: Arc<dyn Connection>) -> JoinHandle<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let telegram_queue = self.telegram_queue.clone();
         let performance_optimizer = self.performance_optimizer.clone();
@@ -1911,63 +1917,43 @@ impl Knx {
                 "Telegram sending task stopped (total sent: {})",
                 send_count
             );
-        });
+        })
     }
 
-    /// Stop the telegram processing loop
+    /// Stop processing, allowing queued work to finish within bounded deadlines.
+    ///
+    /// Tasks still blocked at their deadline are cancelled and joined before returning.
     pub async fn stop(&self) {
+        use std::time::Duration;
         log_application!(LogLevel::Info, "Stopping Knx telegram processing");
-
-        // Set shutdown flag
         self.shutdown_flag.store(true, Ordering::SeqCst);
 
-        // Close the telegram queue to signal tasks to stop
+        // Control must stop first so it cannot create another reconnect task.
+        Self::finish_task(&self.control_task, Duration::ZERO).await;
+        Self::finish_task(&self.reconnect_task, Duration::ZERO).await;
         self.telegram_queue.close().await;
 
-        // Wait for receiving task to complete
-        if let Some(handle) = self.receiving_task.write().await.take() {
-            log_application!(LogLevel::Debug, "Waiting for receiving task to complete");
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
-        }
-
-        // Wait for processing task to complete
-        if let Some(handle) = self.processing_task.write().await.take() {
-            log_application!(LogLevel::Debug, "Waiting for processing task to complete");
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
-        }
-
-        // Wait for control task to complete
-        if let Some(handle) = self.control_task.write().await.take() {
-            log_application!(LogLevel::Debug, "Waiting for control task to complete");
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
-        }
-
-        // Wait for reconnect task to complete (if running)
-        if let Some(handle) = self.reconnect_task.write().await.take() {
-            log_application!(LogLevel::Debug, "Waiting for reconnect task to complete");
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
-        }
-
-        // Wait for cleanup task to complete
-        if let Some(handle) = self.cleanup_task.write().await.take() {
-            log_application!(LogLevel::Debug, "Waiting for cleanup task to complete");
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
-        }
-
-        // Wait for group-address refresh task to complete
+        Self::finish_task(&self.receiving_task, Duration::from_secs(5)).await;
+        Self::finish_task(&self.processing_task, Duration::from_secs(5)).await;
+        Self::finish_task(&self.sending_task, Duration::from_secs(5)).await;
+        Self::finish_task(&self.receive_drain_task, Duration::ZERO).await;
+        Self::finish_task(&self.cleanup_task, Duration::from_secs(2)).await;
         #[cfg(feature = "dpt")]
-        if let Some(handle) = self.refresh_task.write().await.take() {
-            log_application!(LogLevel::Debug, "Waiting for refresh task to complete");
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
-        }
+        Self::finish_task(&self.refresh_task, Duration::from_secs(2)).await;
 
-        // Reset shutdown flag for potential restart
         self.shutdown_flag.store(false, Ordering::SeqCst);
-
-        // Wake any run() waiter
         self.shutdown_notify.notify_waiters();
-
         log_application!(LogLevel::Info, "Knx telegram processing stopped");
+    }
+
+    async fn finish_task(task: &TaskSlot, grace: std::time::Duration) {
+        let handle = task.write().await.take();
+        if let Some(mut handle) = handle
+            && tokio::time::timeout(grace, &mut handle).await.is_err()
+        {
+            handle.abort();
+            let _ = handle.await;
+        }
     }
 
     /// Shutdown the library completely (disconnect and cleanup)
@@ -2834,6 +2820,10 @@ impl std::fmt::Display for KnxState {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "shutdown_tests.rs"]
+mod shutdown_tests;
 
 #[cfg(test)]
 #[path = "channel_tests.rs"]
