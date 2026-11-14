@@ -192,3 +192,27 @@ async fn stop_cancels_reconnect_before_waiting_for_sender_and_joins_receive_drai
     assert!(knx.sending_task.read().await.is_none());
     assert!(knx.receive_drain_task.read().await.is_none());
 }
+
+#[tokio::test(start_paused = true)]
+async fn concurrent_stops_wait_for_the_same_in_flight_work() {
+    let knx = knx_without_cleanup().await;
+    let connection = sending(&knx).await;
+    let first = tokio::spawn({
+        let knx = knx.clone();
+        async move { knx.stop().await }
+    });
+    tokio::task::yield_now().await;
+    let second = tokio::spawn({
+        let knx = knx.clone();
+        async move { knx.stop().await }
+    });
+    tokio::task::yield_now().await;
+    assert!(
+        !second.is_finished(),
+        "second stop returned while first still owned running tasks"
+    );
+    connection.release.add_permits(1);
+    first.await.unwrap();
+    second.await.unwrap();
+    assert_eq!(connection.active.load(Ordering::SeqCst), 0);
+}

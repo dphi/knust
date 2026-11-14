@@ -125,6 +125,9 @@ pub struct Knx {
 
     /// Notified when the library shuts down (for `run()` to wake from)
     shutdown_notify: Arc<Notify>,
+    shutdown_started: Arc<Notify>,
+    receiving_stop: Arc<AtomicBool>,
+    lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
 
     /// Handle to the telegram processing task
     processing_task: TaskSlot,
@@ -674,6 +677,9 @@ impl Knx {
             state: Arc::new(RwLock::new(KnxState::Disconnected)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
+            shutdown_started: Arc::new(Notify::new()),
+            receiving_stop: Arc::new(AtomicBool::new(false)),
+            lifecycle_lock: Arc::new(tokio::sync::Mutex::new(())),
             processing_task: Arc::new(RwLock::new(None)),
             receiving_task: Arc::new(RwLock::new(None)),
             sending_task: Arc::new(RwLock::new(None)),
@@ -1197,6 +1203,12 @@ impl Knx {
         address: GroupAddress,
         timeout_duration: std::time::Duration,
     ) -> Result<Vec<u8>> {
+        let stopping = self.shutdown_started.notified();
+        tokio::pin!(stopping);
+        stopping.as_mut().enable();
+        if self.shutdown_flag.load(Ordering::SeqCst) {
+            return Err(crate::error::TransportError::QueueClosed.into());
+        }
         let (tx, mut rx) = mpsc::channel(1);
         let handle = self
             .register_telegram_callback(GroupValueReadCallback { address, tx })
@@ -1205,7 +1217,7 @@ impl Knx {
             handler: self.event_handler.clone(),
             handle: Some(handle),
         };
-        let result = async {
+        let operation = async {
             let mut read = Telegram::group_read(address);
             read.source = self.config.individual_address;
             let (sent, completed) = self.telegram_queue.enqueue_outgoing_tracked(read).await?;
@@ -1223,8 +1235,11 @@ impl Knx {
                 }
                 .into()),
             }
-        }
-        .await;
+        };
+        let result = tokio::select! {
+            result = operation => result,
+            _ = &mut stopping => Err(crate::error::TransportError::QueueClosed.into()),
+        };
         self.unregister_callback(handle).await;
         guard.handle = None;
         result
@@ -1410,6 +1425,8 @@ impl Knx {
     /// Returns [`ConfigurationError::ValidationError`] if [`Self::connect`]
     /// hasn't been called yet.
     pub async fn start(&self) -> Result<()> {
+        let _lifecycle = self.lifecycle_lock.lock().await;
+        self.receiving_stop.store(false, Ordering::SeqCst);
         let timer = Timer::start(Component::Application, "knx_start");
         log_application!(
             LogLevel::Info,
@@ -1450,7 +1467,7 @@ impl Knx {
 
     async fn start_telegram_receiving_task(&self) -> Result<()> {
         let mut active = self.connection.subscribe();
-        let shutdown_flag = self.shutdown_flag.clone();
+        let shutdown_flag = self.receiving_stop.clone();
         let telegram_queue = self.telegram_queue.clone();
         let control_tx = self.control_tx.clone();
         let receive_limiter = self.receive_limiter.clone();
@@ -1825,17 +1842,20 @@ impl Knx {
     /// Tasks still blocked at their deadline are cancelled and joined before returning.
     pub async fn stop(&self) {
         use std::time::Duration;
+        let _lifecycle = self.lifecycle_lock.lock().await;
         log_application!(LogLevel::Info, "Stopping Knx telegram processing");
         self.shutdown_flag.store(true, Ordering::SeqCst);
+        self.shutdown_started.notify_waiters();
 
         // Control must stop first so it cannot create another reconnect task.
         Self::finish_task(&self.control_task, Duration::ZERO).await;
         Self::finish_task(&self.reconnect_task, Duration::ZERO).await;
         self.telegram_queue.close().await;
 
+        Self::finish_task(&self.sending_task, Duration::from_secs(5)).await;
+        self.receiving_stop.store(true, Ordering::SeqCst);
         Self::finish_task(&self.receiving_task, Duration::from_secs(5)).await;
         Self::finish_task(&self.processing_task, Duration::from_secs(5)).await;
-        Self::finish_task(&self.sending_task, Duration::from_secs(5)).await;
         Self::finish_task(&self.receive_drain_task, Duration::ZERO).await;
         Self::finish_task(&self.cleanup_task, Duration::from_secs(2)).await;
         #[cfg(feature = "dpt")]

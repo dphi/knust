@@ -418,3 +418,34 @@ async fn shutdown_fails_unsent_reads_promptly() {
     ));
     assert_eq!(knx.total_callback_count().await, 0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_cancels_reads_already_waiting_for_a_bus_response() {
+    let knx = knx().await;
+    let (connection, _incoming, mut sent) = peer();
+    knx.connection.send_replace(Some(connection));
+    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    let reading = tokio::spawn({
+        let knx = knx.clone();
+        async move {
+            knx.read_group_value(
+                GroupAddress::try_from_raw(1).unwrap(),
+                Duration::from_secs(60),
+            )
+            .await
+        }
+    });
+    timeout(Duration::from_secs(1), sent.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    knx.stop().await;
+    assert!(
+        timeout(Duration::from_millis(100), reading)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    assert_eq!(knx.total_callback_count().await, 0);
+}

@@ -393,3 +393,49 @@ async fn read_response_can_arrive_before_tunnelling_ack() {
     .unwrap();
     knx.stop().await;
 }
+
+#[tokio::test]
+async fn shutdown_keeps_receiver_alive_until_queued_send_is_acknowledged() {
+    let (connection, peer) = connected_tunnel().await;
+    let destination = connection
+        .as_any()
+        .downcast_ref::<Tunnel>()
+        .unwrap()
+        .local_addr();
+    let knx = Knx::new(ConnectionConfig {
+        connection_type: ConnectionType::Routing,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let cleanup = knx.cleanup_task.write().await.take().unwrap();
+    cleanup.abort();
+    let _ = cleanup.await;
+    knx.connection.send_replace(Some(connection.clone()));
+    knx.start_telegram_receiving_task().await.unwrap();
+    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.send_telegram(&Telegram::group_write(
+        GroupAddress::try_from_raw(1).unwrap(),
+        vec![1],
+    ))
+    .await
+    .unwrap();
+    let request = TunnellingRequest::parse(&receive(&peer).await.body).unwrap();
+    let stopping = tokio::spawn({
+        let knx = knx.clone();
+        async move { knx.stop().await }
+    });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let ack = TunnellingAck::new_ok(7, request.sequence_counter);
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+    timeout(Duration::from_millis(500), stopping)
+        .await
+        .expect("receiver exited before ACK was delivered")
+        .unwrap();
+    assert_no_reply(&peer).await;
+}
