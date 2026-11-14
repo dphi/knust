@@ -372,6 +372,20 @@ status_view!(StatusHVAView, CombinedStatusHVA);
 status_view!(StatusRTCView, CombinedStatusRTC);
 
 #[derive(Debug, Clone, Copy)]
+pub struct MeteringValueView<'a>(pub(crate) &'a [u8]);
+impl<'a> MeteringValueView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt229::MeteringValue {
+        super::dpt229::MeteringValue::decode(self.0.try_into().expect("validated length"))
+            .expect("validated unit")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct ScalingTimeView<'a>(pub(crate) &'a [u8], pub(crate) u16);
 impl<'a> ScalingTimeView<'a> {
     #[must_use]
@@ -766,6 +780,7 @@ pub enum DptView<'a> {
     AccessData(AccessDataView<'a>),
     ModeNext(ModeNextView<'a>),
     ScalingTime(ScalingTimeView<'a>),
+    MeteringValue(MeteringValueView<'a>),
     StatusRTSM(StatusRTSMView<'a>),
     StatusHVA(StatusHVAView<'a>),
     StatusRTC(StatusRTCView<'a>),
@@ -819,6 +834,7 @@ impl<'a> DptView<'a> {
             | Self::AccessData(_)
             | Self::ModeNext(_)
             | Self::ScalingTime(_)
+            | Self::MeteringValue(_)
             | Self::StatusRTSM(_)
             | Self::StatusHVA(_)
             | Self::StatusRTC(_)
@@ -876,6 +892,7 @@ impl<'a> DptView<'a> {
             Self::AccessData(v) => v.raw(),
             Self::ModeNext(v) => v.raw(),
             Self::ScalingTime(v) => v.raw(),
+            Self::MeteringValue(v) => v.raw(),
             Self::StatusRTSM(v) => v.raw(),
             Self::StatusHVA(v) => v.raw(),
             Self::StatusRTC(v) => v.raw(),
@@ -940,6 +957,7 @@ impl DptView<'_> {
             Self::AccessData(v) => v.value().to_string(),
             Self::ModeNext(v) => v.value().to_string(),
             Self::ScalingTime(v) => v.value().to_string(),
+            Self::MeteringValue(v) => v.value().to_string(),
             Self::StatusRTSM(v) => v.value().to_string(),
             Self::StatusHVA(v) => v.value().to_string(),
             Self::StatusRTC(v) => v.value().to_string(),
@@ -1393,6 +1411,7 @@ impl DptType {
             15 => s.parse().map(DptPayload::AccessData),
             206 => s.parse().map(DptPayload::ModeNext),
             225 => s.parse().map(DptPayload::ScalingTime),
+            229 => s.parse().map(DptPayload::MeteringValue),
             21 => s.parse().map(DptPayload::StatusRTSM),
             22 if self.sub() == 102 => s.parse().map(DptPayload::StatusHVA),
             22 => s.parse().map(DptPayload::StatusRTC),

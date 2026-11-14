@@ -5,10 +5,10 @@ use super::view::{
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, MBusAddressView, ModeNextView, PrioritisedModeControlView,
-    RgbView, RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View,
-    Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView,
-    U8View, U16View, U32View, VersionView, XyyView,
+    I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
+    PrioritisedModeControlView, RgbView, RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView,
+    SceneView, Setpoints3View, Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView,
+    StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -266,6 +266,7 @@ pub enum DptType {
     BuildingModeNext = 20_600_105,
     ScalingSpeed = 22_500_001,
     ScalingStepTime = 22_500_002,
+    MeteringValue = 22_900_001,
     CombinedStatusRTSM = 2_100_107,
     CombinedStatusHVA = 2_200_102,
     CombinedStatusRTC = 2_200_103,
@@ -508,7 +509,7 @@ impl DptType {
             12..=15 | 27 | 241 => 4,
             16 => 14,
             19 | 29 | 230 | 255 | 273 | 275 => 8,
-            222 | 235 | 242 | 251 => 6,
+            222 | 229 | 235 | 242 | 251 => 6,
             _ => 0,
         }
     }
@@ -735,6 +736,10 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            229 => {
+                super::dpt229::MeteringValue::decode(bytes.try_into().expect("validated length"))?;
+                Ok(DptView::MeteringValue(MeteringValueView(bytes)))
+            }
             21 => Ok(DptView::StatusRTSM(StatusRTSMView(bytes))),
             22 if self.sub() == 102 => Ok(DptView::StatusHVA(StatusHVAView(bytes))),
             22 => Ok(DptView::StatusRTC(StatusRTCView(bytes))),
@@ -1072,6 +1077,7 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (229, DptPayload::MeteringValue(value)) => Ok(value.encode()?.to_vec()),
             (21, DptPayload::StatusRTSM(value)) => Ok(value.encode().to_vec()),
             (22, DptPayload::StatusHVA(value)) if self.sub() == 102 => Ok(value.encode().to_vec()),
             (22, DptPayload::StatusRTC(value)) if self.sub() == 103 => Ok(value.encode().to_vec()),
