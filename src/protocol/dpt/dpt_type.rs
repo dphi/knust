@@ -5,8 +5,8 @@ use super::view::{
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, MBusAddressView, PrioritisedModeControlView, RgbView,
-    RgbwView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
+    I8View, I16View, I32View, I64View, MBusAddressView, ModeNextView, PrioritisedModeControlView,
+    RgbView, RgbwView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
     StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
@@ -259,6 +259,10 @@ pub enum DptType {
     CombinedPosition = 24_000_800,
     StatusSAB = 24_100_800,
     AccessData = 1_500_000,
+    HVACModeNext = 20_600_100,
+    DHWModeNext = 20_600_102,
+    OccupancyModeNext = 20_600_104,
+    BuildingModeNext = 20_600_105,
     ForecastTemperature = 27_300_001,
     ForecastWindSpeed = 27_300_002,
     ForecastRelativeHumidity = 27_300_003,
@@ -494,7 +498,7 @@ impl DptType {
         match self.main() {
             1..=6 | 17 | 18 | 20 | 25 | 26 | 236 | 238 => 1,
             7..=9 | 217 | 234 | 237 => 2,
-            10 | 11 | 30 | 232 | 240 => 3,
+            10 | 11 | 30 | 206 | 232 | 240 => 3,
             12..=15 | 27 | 241 => 4,
             16 => 14,
             19 | 29 | 230 | 255 | 273 | 275 => 8,
@@ -725,6 +729,10 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            206 => {
+                super::dpt206::ModeNext::decode([bytes[0], bytes[1], bytes[2]], self.sub())?;
+                Ok(DptView::ModeNext(ModeNextView(bytes, self.sub())))
+            }
             240 => Ok(DptView::CombinedPosition(CombinedPositionView(bytes))),
             241 => Ok(DptView::StatusSAB(StatusSABView(bytes))),
             15 => {
@@ -1054,6 +1062,7 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (206, DptPayload::ModeNext(value)) => Ok(value.encode(self.sub())?.to_vec()),
             (240, DptPayload::CombinedPosition(value)) => Ok(value.encode()?.to_vec()),
             (241, DptPayload::StatusSAB(value)) => Ok(value.encode()?.to_vec()),
             (15, DptPayload::AccessData(value)) => Ok(value.encode()?.to_vec()),

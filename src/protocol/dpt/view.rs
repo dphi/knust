@@ -351,6 +351,20 @@ impl<'a> ForecastView<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ModeNextView<'a>(pub(crate) &'a [u8], pub(crate) u16);
+impl<'a> ModeNextView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt206::ModeNext {
+        super::dpt206::ModeNext::decode([self.0[0], self.0[1], self.0[2]], self.1)
+            .expect("validated mode")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct AccessDataView<'a>(pub(crate) &'a [u8]);
 impl std::fmt::Debug for AccessDataView<'_> {
@@ -717,6 +731,7 @@ pub enum DptView<'a> {
     CombinedPosition(CombinedPositionView<'a>),
     StatusSAB(StatusSABView<'a>),
     AccessData(AccessDataView<'a>),
+    ModeNext(ModeNextView<'a>),
     Forecast(ForecastView<'a>),
     Setpoints3(Setpoints3View<'a>),
     Setpoints4(Setpoints4View<'a>),
@@ -765,6 +780,7 @@ impl<'a> DptView<'a> {
             | Self::CombinedPosition(_)
             | Self::StatusSAB(_)
             | Self::AccessData(_)
+            | Self::ModeNext(_)
             | Self::Forecast(_)
             | Self::Setpoints3(_)
             | Self::Setpoints4(_)
@@ -817,6 +833,7 @@ impl<'a> DptView<'a> {
             Self::CombinedPosition(v) => v.raw(),
             Self::StatusSAB(v) => v.raw(),
             Self::AccessData(v) => v.raw(),
+            Self::ModeNext(v) => v.raw(),
             Self::Forecast(v) => v.raw(),
             Self::Setpoints3(v) => v.raw(),
             Self::Setpoints4(v) => v.raw(),
@@ -876,6 +893,7 @@ impl DptView<'_> {
             Self::CombinedPosition(v) => v.value().to_string(),
             Self::StatusSAB(v) => v.value().to_string(),
             Self::AccessData(v) => v.value().to_string(),
+            Self::ModeNext(v) => v.value().to_string(),
             Self::Forecast(v) => v.value().to_string(),
             Self::Setpoints3(v) => v.value().to_string(),
             Self::Setpoints4(v) => v.value().to_string(),
@@ -1324,6 +1342,7 @@ impl DptType {
             240 => s.parse().map(DptPayload::CombinedPosition),
             241 => s.parse().map(DptPayload::StatusSAB),
             15 => s.parse().map(DptPayload::AccessData),
+            206 => s.parse().map(DptPayload::ModeNext),
             273 => s.parse().map(DptPayload::Forecast),
             222 => s.parse().map(DptPayload::Setpoints3),
             275 => s.parse().map(DptPayload::Setpoints4),

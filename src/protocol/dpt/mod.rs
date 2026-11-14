@@ -25,6 +25,7 @@ pub mod dpt18; // Scene Control
 pub mod dpt19; // Date and Time
 pub mod dpt2; // 2-bit control
 pub mod dpt20; // HVAC
+pub mod dpt206;
 mod dpt20_modes;
 pub mod dpt217; // Version
 pub mod dpt230;
@@ -87,6 +88,7 @@ pub use dpt26::*;
 pub use dpt27::*;
 pub use dpt29::*;
 pub use dpt30::*;
+pub use dpt206::*;
 pub use dpt217::*;
 pub use dpt230::*;
 pub use dpt232::*;
@@ -109,8 +111,8 @@ pub use view::{
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, MBusAddressView, PrioritisedModeControlView, RgbView,
-    RgbwView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
+    I8View, I16View, I32View, I64View, MBusAddressView, ModeNextView, PrioritisedModeControlView,
+    RgbView, RgbwView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
     StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 
@@ -676,6 +678,10 @@ impl DptRegistry {
         registry.register::<DPTCombinedPosition>();
         registry.register::<DPTStatusSAB>();
         registry.register::<DPTAccessData>();
+        registry.register::<DPTHVACModeNext>();
+        registry.register::<DPTDHWModeNext>();
+        registry.register::<DPTOccModeNext>();
+        registry.register::<DPTBuildingModeNext>();
         registry.register::<DPTForecastTemperature>();
         registry.register::<DPTForecastWindSpeed>();
         registry.register::<DPTForecastRelativeHumidity>();
