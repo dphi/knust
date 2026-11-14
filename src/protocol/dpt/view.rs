@@ -903,7 +903,7 @@ impl DptType {
             }
             9 => {
                 const MIN: f64 = -671_088.64;
-                const MAX: f64 = 670_760.96;
+                const MAX: f64 = 670_433.28;
                 let value = parse_number(s, self)
                     .ok_or_else(|| bad(format!("cannot parse {s:?} as a number")))?;
                 if !(MIN..=MAX).contains(&value) {

@@ -823,3 +823,31 @@ fn test_parse_colors() {
         vec![255, 128, 0]
     );
 }
+
+#[test]
+fn dpt9_invalid_data_and_wire_boundaries() {
+    let dpt = DptType::TemperatureDifference2Byte;
+    assert!(dpt.decode_ref(&[0x7f, 0xff]).is_err());
+    assert!(Temperature::from_bytes(&[0x7f, 0xff]).is_err());
+    for (value, expected) in [
+        (-671_088.64, [0xf8, 0x00]),
+        (670_433.28, [0x7f, 0xfe]),
+        (-0.005, [0, 0]),
+        (0.005, [0, 0]),
+        (20.0, [0x07, 0xd0]),
+    ] {
+        assert_eq!(dpt.encode(&DptPayload::Float(value)).unwrap(), expected);
+        assert_eq!(dpt.parse(&value.to_string()).unwrap(), expected);
+        assert_eq!(Temperature::new(value as f32).unwrap().as_bytes(), expected);
+    }
+    for value in [
+        670_760.96,
+        -671_089.0,
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    ] {
+        assert!(dpt.encode(&DptPayload::Float(value)).is_err());
+        assert!(Temperature::new(value as f32).is_err());
+    }
+}

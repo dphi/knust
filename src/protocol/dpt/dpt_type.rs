@@ -566,6 +566,13 @@ impl DptType {
                 Ok(DptView::I16(I16View(bytes)))
             }
             9 => {
+                if bytes == [0x7F, 0xFF] {
+                    return Err(ProtocolError::DptError {
+                        dpt_type: self.number_str(),
+                        details: "Reserved invalid-data value 0x7FFF".to_string(),
+                    }
+                    .into());
+                }
                 let raw = (u16::from(bytes[0]) << 8) | u16::from(bytes[1]);
                 let m = raw & 0x07FF;
                 let sign = raw & 0x8000 != 0;
@@ -841,22 +848,9 @@ impl DptType {
             (7, DptPayload::UnsignedInt(v)) => Ok((*v as u16).to_be_bytes().to_vec()),
             (8, DptPayload::SignedInt(v)) => Ok((*v as i16).to_be_bytes().to_vec()),
             (9, DptPayload::Float(v)) => {
-                // KNX 2-byte float encoding
-                let v = *v;
-                let mut e: i32 = 0;
-                let mut m = (v * 100.0) as i32;
-                while m.abs() > 2047 {
-                    m >>= 1;
-                    e += 1;
-                }
-                let sign = if m < 0 { 0x8000u16 } else { 0 };
-                let m = if m < 0 {
-                    ((m + 2048) & 0x07FF) as u16 | 0x8000
-                } else {
-                    (m & 0x07FF) as u16
-                };
-                let raw = sign | ((e as u16 & 0x0F) << 11) | (m & 0x07FF);
-                Ok(raw.to_be_bytes().to_vec())
+                let mut bytes = [0; 2];
+                super::dpt9::encode_2byte_float_to_bytes(*v, &mut bytes)?;
+                Ok(bytes.to_vec())
             }
             (
                 10,

@@ -10,9 +10,16 @@ pub struct Temperature([u8; 2]);
 impl Temperature {
     /// # Errors
     ///
-    /// Returns [`ProtocolError::DptError`] if `value` is not finite (NaN or infinite).
+    /// Returns [`ProtocolError::DptError`] if `value` is not finite or outside the DPT 9 wire range.
     pub fn new(value: f32) -> Result<Self> {
         let mut temp = Temperature([0, 0]);
+        let value = if value == 670_433.28_f32 {
+            670_433.28
+        } else if value == -671_088.64_f32 {
+            -671_088.64
+        } else {
+            f64::from(value)
+        };
         encode_2byte_float_to_bytes(value, &mut temp.0)?;
         Ok(temp)
     }
@@ -42,6 +49,13 @@ impl DptValue for Temperature {
             }
             .into());
         }
+        if bytes == [0x7F, 0xFF] {
+            return Err(ProtocolError::DptError {
+                dpt_type: Self::DPT_NUMBER.to_string(),
+                details: "Reserved invalid-data value 0x7FFF".to_string(),
+            }
+            .into());
+        }
         Ok(Temperature([bytes[0], bytes[1]]))
     }
 
@@ -51,10 +65,10 @@ impl DptValue for Temperature {
 
     fn validate(&self) -> Result<()> {
         let value = self.value();
-        if !(-273.0..=670_760.0).contains(&value) {
+        if !(-273.0..=670_433.28).contains(&value) {
             return Err(ProtocolError::DptError {
                 dpt_type: Self::DPT_NUMBER.to_string(),
-                details: format!("Temperature {value} out of range [-273.0, 670760.0]"),
+                details: format!("Temperature {value} out of range [-273.0, 670433.28]"),
             }
             .into());
         }
@@ -62,54 +76,28 @@ impl DptValue for Temperature {
     }
 
     fn value_range() -> (f64, f64) {
-        (-273.0, 670_760.0)
+        (-273.0, 670_433.28)
     }
 }
 
 /// Encode a float as 2-byte KNX format directly to byte array
-fn encode_2byte_float_to_bytes(value: f32, bytes: &mut [u8; 2]) -> Result<()> {
-    if !value.is_finite() {
+pub(super) fn encode_2byte_float_to_bytes(value: f64, bytes: &mut [u8; 2]) -> Result<()> {
+    if !(-671_088.64..=670_433.28).contains(&value) {
         return Err(ProtocolError::DptError {
             dpt_type: "9.xxx".to_string(),
-            details: "Value must be finite".to_string(),
+            details: "Value outside finite DPT 9 range [-671088.64, 670433.28]".to_string(),
         }
         .into());
     }
-
-    let mut knx_value = value * 100.0;
-    if knx_value.round() == 0.0 {
-        *bytes = [0, 0];
-        return Ok(());
-    }
-
+    let mut mantissa = value * 100.0;
     let mut exponent = 0u16;
-    while !(-2048.0..=2047.0).contains(&knx_value) && exponent < 15 {
-        knx_value /= 2.0;
+    while !(-2048.0..=2047.0).contains(&mantissa) {
+        mantissa /= 2.0;
         exponent += 1;
     }
-
-    if !(-2048.0..=2047.0).contains(&knx_value) {
-        return Err(ProtocolError::DptError {
-            dpt_type: "9.xxx".to_string(),
-            details: "Value too large to encode".to_string(),
-        }
-        .into());
-    }
-
-    let mantissa = knx_value.round() as i16;
-    if !(-2048..=2047).contains(&mantissa) {
-        return Err(ProtocolError::DptError {
-            dpt_type: "9.xxx".to_string(),
-            details: "Value too large to encode".to_string(),
-        }
-        .into());
-    }
-
-    let sign = u16::from(mantissa < 0);
-    let encoded = (sign << 15) | (exponent << 11) | ((mantissa as u16) & 0x07FF);
-    let encoded_bytes = encoded.to_be_bytes();
-    bytes[0] = encoded_bytes[0];
-    bytes[1] = encoded_bytes[1];
+    let mantissa = mantissa.round_ties_even() as i16;
+    let encoded = (u16::from(mantissa < 0) << 15) | (exponent << 11) | ((mantissa as u16) & 0x07FF);
+    *bytes = encoded.to_be_bytes();
     Ok(())
 }
 
