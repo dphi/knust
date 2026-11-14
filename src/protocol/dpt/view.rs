@@ -274,6 +274,19 @@ impl<'a> VersionView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct SceneInfoView<'a>(pub(crate) &'a [u8]);
+impl<'a> SceneInfoView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt26::SceneInfo {
+        super::dpt26::SceneInfo::decode(self.0[0])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct DoubleNibbleView<'a>(pub(crate) &'a [u8]);
 impl<'a> DoubleNibbleView<'a> {
     #[must_use]
@@ -489,6 +502,7 @@ pub enum DptView<'a> {
     Character(CharacterView<'a>),
     Version(VersionView<'a>),
     DoubleNibble(DoubleNibbleView<'a>),
+    SceneInfo(SceneInfoView<'a>),
     Time(TimeView<'a>),
     Date(DateView<'a>),
     DateTime(DateTimeView<'a>),
@@ -521,6 +535,7 @@ impl<'a> DptView<'a> {
             | Self::Character(_)
             | Self::Version(_)
             | Self::DoubleNibble(_)
+            | Self::SceneInfo(_)
             | Self::Time(_)
             | Self::Date(_)
             | Self::DateTime(_)
@@ -557,6 +572,7 @@ impl<'a> DptView<'a> {
             Self::Character(v) => v.raw(),
             Self::Version(v) => v.raw(),
             Self::DoubleNibble(v) => v.raw(),
+            Self::SceneInfo(v) => v.raw(),
             Self::Time(v) => v.raw(),
             Self::Date(v) => v.raw(),
             Self::DateTime(v) => v.raw(),
@@ -600,6 +616,7 @@ impl DptView<'_> {
             Self::Character(v) => v.as_string(),
             Self::Version(v) => v.value().to_string(),
             Self::DoubleNibble(v) => v.value().to_string(),
+            Self::SceneInfo(v) => v.value().to_string(),
             Self::Time(v) => {
                 let base = format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second());
                 match weekday_name(v.day()) {
@@ -1034,6 +1051,7 @@ impl DptType {
                 .ok_or_else(|| bad(format!("cannot parse {s:?} as an enum value"))),
             217 => s.parse().map(DptPayload::Version),
             25 => s.parse().map(DptPayload::DoubleNibble),
+            26 => s.parse().map(DptPayload::SceneInfo),
             232 => parse_rgb(s).ok_or_else(|| {
                 bad(format!(
                     "cannot parse {s:?} as RGB (try \"RGB(r, g, b)\" or \"#RRGGBB\")"
