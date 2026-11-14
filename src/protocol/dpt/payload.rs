@@ -28,6 +28,7 @@ pub enum DptPayload {
     DALIDiagnostics(super::dpt238::DALIDiagnostics),
     DALIControlGearDiagnostic(super::dpt237::DALIControlGearDiagnostic),
     GeographicalLocation(super::dpt255::GeographicalLocation),
+    Forecast(super::dpt273::Forecast),
     Setpoints3(super::dpt_setpoints::RoomTemperatureSetpoints3),
     Setpoints4(super::dpt_setpoints::RoomTemperatureSetpoints4),
     Time {
@@ -134,6 +135,7 @@ impl DptPayload {
             Self::DALIDiagnostics(v) => v.to_string(),
             Self::DALIControlGearDiagnostic(v) => v.to_string(),
             Self::GeographicalLocation(v) => v.to_string(),
+            Self::Forecast(v) => v.to_string(),
             Self::Setpoints3(v) => v.to_string(),
             Self::Setpoints4(v) => v.to_string(),
             Self::Scene(n) => format!("Scene {n}"),
@@ -210,6 +212,7 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::DALIDiagnostics(v) => Self::DALIDiagnostics(v.value()),
             DptView::DALIControlGearDiagnostic(v) => Self::DALIControlGearDiagnostic(v.value()),
             DptView::GeographicalLocation(v) => Self::GeographicalLocation(v.value()),
+            DptView::Forecast(v) => Self::Forecast(v.value()),
             DptView::Setpoints3(v) => Self::Setpoints3(v.value()),
             DptView::Setpoints4(v) => Self::Setpoints4(v.value()),
             DptView::Code(v) => Self::String(v.value()),

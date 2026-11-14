@@ -39,6 +39,7 @@ pub mod dpt251;
 pub mod dpt255;
 pub mod dpt26;
 pub mod dpt27;
+pub mod dpt273;
 pub mod dpt29; // Signed 64-bit
 pub mod dpt3; // Control
 pub mod dpt30;
@@ -93,13 +94,14 @@ pub use dpt238::*;
 pub use dpt242::*;
 pub use dpt251::*;
 pub use dpt255::*;
+pub use dpt273::*;
 pub use group_registry::{GroupAddressRegistry, GroupAddressState};
 pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
     BoolView, ChannelActivation24View, CharacterView, CodeView, CombinedInfoOnOffView,
     Control2View, ControlView, DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView,
-    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView,
+    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
     GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
     PrioritisedModeControlView, RgbView, RgbwView, SceneConfigView, SceneInfoView, SceneView,
     Setpoints3View, Setpoints4View, StrView, TimeView, U8View, U16View, U32View, VersionView,
@@ -665,6 +667,13 @@ impl DptRegistry {
         registry.register::<DPTPrioritisedModeControl>();
         registry.register::<DPTDALIControlGearDiagnostic>();
         registry.register::<DPTGeographicalLocation>();
+        registry.register::<DPTForecastTemperature>();
+        registry.register::<DPTForecastWindSpeed>();
+        registry.register::<DPTForecastRelativeHumidity>();
+        registry.register::<DPTForecastAbsoluteHumidity>();
+        registry.register::<DPTForecastCO2>();
+        registry.register::<DPTForecastAirPollutants>();
+        registry.register::<DPTForecastSunIntensity>();
         registry.register::<DPTRoomTemperatureSetpoints3>();
         registry.register::<DPTRoomTemperatureSetpointShifts3>();
         registry.register::<DPTRoomTemperatureSetpoints4>();

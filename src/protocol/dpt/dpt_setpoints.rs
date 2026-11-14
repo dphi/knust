@@ -28,23 +28,22 @@ fn bad() -> crate::error::KnxError {
     }
     .into()
 }
-fn pack(value: Option<f64>, shift: bool) -> Result<[u8; 2]> {
+pub(super) fn pack(value: Option<f64>, sub: u16) -> Result<[u8; 2]> {
     let Some(value) = value else {
         return Ok([0x7f, 0xff]);
     };
-    let sub = if shift { 2 } else { 1 };
     super::dpt9::validate_subtype(sub, value)?;
     let mut raw = [0; 2];
     super::dpt9::encode_2byte_float_to_bytes(value, &mut raw)?;
     super::dpt9::validate_subtype(sub, super::dpt9::decode_wire_f64(&raw))?;
     Ok(raw)
 }
-fn unpack(raw: &[u8], shift: bool) -> Result<Option<f64>> {
+pub(super) fn unpack(raw: &[u8], sub: u16) -> Result<Option<f64>> {
     if raw == [0x7f, 0xff] {
         return Ok(None);
     }
     let value = super::dpt9::decode_wire_f64(raw);
-    super::dpt9::validate_subtype(if shift { 2 } else { 1 }, value)?;
+    super::dpt9::validate_subtype(sub, value)?;
     Ok(Some(value))
 }
 fn parse_field(text: &str) -> Result<Option<f64>> {
@@ -62,12 +61,12 @@ macro_rules! setpoints {
         impl $type {
             pub(super) fn encode(self, shift: bool) -> Result<Vec<u8>> {
                 let mut raw = Vec::with_capacity($count * 2);
-                $(raw.extend(pack(self.$field, shift)?);)+
+                $(raw.extend(pack(self.$field, if shift { 2 } else { 1 })?);)+
                 Ok(raw)
             }
             pub(super) fn decode(raw: &[u8], shift: bool) -> Result<Self> {
                 let mut fields = raw.chunks_exact(2);
-                Ok(Self { $($field: unpack(fields.next().expect("validated length"), shift)?,)+ })
+                Ok(Self { $($field: unpack(fields.next().expect("validated length"), if shift { 2 } else { 1 })?,)+ })
             }
         }
         impl std::fmt::Display for $type {

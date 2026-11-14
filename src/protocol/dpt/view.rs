@@ -339,6 +339,19 @@ impl<'a> Setpoints4View<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct ForecastView<'a>(pub(crate) &'a [u8], pub(crate) u16);
+impl<'a> ForecastView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt273::Forecast {
+        super::dpt273::Forecast::decode(self.0, self.1).expect("validated forecast")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct GeographicalLocationView<'a>(pub(crate) &'a [u8]);
 impl<'a> GeographicalLocationView<'a> {
     #[must_use]
@@ -656,6 +669,7 @@ pub enum DptView<'a> {
     DALIDiagnostics(DALIDiagnosticsView<'a>),
     DALIControlGearDiagnostic(DALIControlGearDiagnosticView<'a>),
     GeographicalLocation(GeographicalLocationView<'a>),
+    Forecast(ForecastView<'a>),
     Setpoints3(Setpoints3View<'a>),
     Setpoints4(Setpoints4View<'a>),
     Code(CodeView<'a>),
@@ -700,6 +714,7 @@ impl<'a> DptView<'a> {
             | Self::DALIDiagnostics(_)
             | Self::DALIControlGearDiagnostic(_)
             | Self::GeographicalLocation(_)
+            | Self::Forecast(_)
             | Self::Setpoints3(_)
             | Self::Setpoints4(_)
             | Self::Code(_)
@@ -748,6 +763,7 @@ impl<'a> DptView<'a> {
             Self::DALIDiagnostics(v) => v.raw(),
             Self::DALIControlGearDiagnostic(v) => v.raw(),
             Self::GeographicalLocation(v) => v.raw(),
+            Self::Forecast(v) => v.raw(),
             Self::Setpoints3(v) => v.raw(),
             Self::Setpoints4(v) => v.raw(),
             Self::Code(v) => v.raw(),
@@ -803,6 +819,7 @@ impl DptView<'_> {
             Self::DALIDiagnostics(v) => v.value().to_string(),
             Self::DALIControlGearDiagnostic(v) => v.value().to_string(),
             Self::GeographicalLocation(v) => v.value().to_string(),
+            Self::Forecast(v) => v.value().to_string(),
             Self::Setpoints3(v) => v.value().to_string(),
             Self::Setpoints4(v) => v.value().to_string(),
             Self::Code(v) => v.value(),
@@ -1247,6 +1264,7 @@ impl DptType {
             236 => s.parse().map(DptPayload::PrioritisedModeControl),
             237 => s.parse().map(DptPayload::DALIControlGearDiagnostic),
             255 => s.parse().map(DptPayload::GeographicalLocation),
+            273 => s.parse().map(DptPayload::Forecast),
             222 => s.parse().map(DptPayload::Setpoints3),
             275 => s.parse().map(DptPayload::Setpoints4),
             238 if self.sub() == 1 => s.parse().map(DptPayload::SceneConfig),
