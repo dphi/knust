@@ -33,7 +33,8 @@ pub mod dpt235;
 pub mod dpt236;
 pub mod dpt237;
 pub mod dpt238;
-pub mod dpt240; // Tariff Active Energy
+pub mod dpt240;
+pub mod dpt241; // Tariff Active Energy
 pub mod dpt242; // XYY Color
 pub mod dpt25;
 pub mod dpt251;
@@ -93,6 +94,7 @@ pub use dpt236::*;
 pub use dpt237::*;
 pub use dpt238::*;
 pub use dpt240::*;
+pub use dpt241::*;
 pub use dpt242::*;
 pub use dpt251::*;
 pub use dpt255::*;
@@ -106,8 +108,8 @@ pub use view::{
     DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView, DptView, EnumView,
     Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView, I8View, I16View,
     I32View, I64View, MBusAddressView, PrioritisedModeControlView, RgbView, RgbwView,
-    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View, StrView, TimeView,
-    U8View, U16View, U32View, VersionView, XyyView,
+    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View, StatusSABView,
+    StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -670,6 +672,7 @@ impl DptRegistry {
         registry.register::<DPTDALIControlGearDiagnostic>();
         registry.register::<DPTGeographicalLocation>();
         registry.register::<DPTCombinedPosition>();
+        registry.register::<DPTStatusSAB>();
         registry.register::<DPTForecastTemperature>();
         registry.register::<DPTForecastWindSpeed>();
         registry.register::<DPTForecastRelativeHumidity>();
