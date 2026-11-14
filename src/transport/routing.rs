@@ -5,10 +5,15 @@ use crate::error::{Result, TransportError};
 use crate::log_transport;
 use crate::logging::LogLevel;
 use crate::protocol::knxip::{KnxIpFrame, ServiceType};
+use rand::RngExt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
+
+#[path = "routing_flow.rs"]
+mod flow;
+use flow::FlowControl;
 
 /// KNX/IP routing connection using multicast
 pub struct RoutingConnection {
@@ -20,6 +25,9 @@ pub struct RoutingConnection {
     established_at: Option<Instant>,
     routing_busy_count: Arc<std::sync::RwLock<u32>>,
     lost_message_count: Arc<std::sync::RwLock<u32>>,
+    flow: std::sync::Mutex<FlowControl>,
+    send_lock: tokio::sync::Mutex<()>,
+    flow_changed: tokio::sync::Notify,
 }
 
 impl RoutingConnection {
@@ -73,6 +81,9 @@ impl RoutingConnection {
             established_at: Some(Instant::now()),
             routing_busy_count: Arc::new(std::sync::RwLock::new(0)),
             lost_message_count: Arc::new(std::sync::RwLock::new(0)),
+            flow: std::sync::Mutex::new(FlowControl::default()),
+            send_lock: tokio::sync::Mutex::new(()),
+            flow_changed: tokio::sync::Notify::new(),
         })
     }
 
@@ -120,6 +131,9 @@ impl RoutingConnection {
             established_at: Some(Instant::now()),
             routing_busy_count: Arc::new(std::sync::RwLock::new(0)),
             lost_message_count: Arc::new(std::sync::RwLock::new(0)),
+            flow: std::sync::Mutex::new(FlowControl::default()),
+            send_lock: tokio::sync::Mutex::new(()),
+            flow_changed: tokio::sync::Notify::new(),
         })
     }
 
@@ -179,43 +193,30 @@ impl RoutingConnection {
         );
     }
 
-    /// Handle routing busy indication
     async fn handle_routing_busy(&self, body: &[u8]) -> Result<()> {
-        // Parse routing busy parameters if present
-        let device_state = if body.len() >= 2 {
-            u16::from_be_bytes([body[0], body[1]])
-        } else {
-            0
-        };
-
-        let wait_time = if body.len() >= 4 {
-            u16::from_be_bytes([body[2], body[3]])
-        } else {
-            100 // Default wait time in ms
-        };
-
-        // Increment busy counter
+        if body.len() != 6 || body[0] != 6 {
+            return Err(TransportError::InvalidConfiguration {
+                details: "RoutingBusy must contain a six-byte structure".to_string(),
+            }
+            .into());
+        }
+        let wait = u16::from_be_bytes([body[2], body[3]]);
+        let random = rand::rng().random::<f64>();
+        self.flow.lock().unwrap().busy(
+            tokio::time::Instant::now(),
+            Duration::from_millis(u64::from(wait)),
+            random,
+        );
+        self.flow_changed.notify_waiters();
         if let Ok(mut count) = self.routing_busy_count.write() {
             *count += 1;
         }
-
-        // Update statistics
         if let Ok(mut stats) = self.stats.write() {
             stats.record_receive_error(&format!(
-                "Routing busy: device_state=0x{device_state:04X}, wait_time={wait_time}ms"
+                "Routing busy: device_state=0x{:02X}, wait_time={wait}ms",
+                body[1]
             ));
         }
-
-        log_transport!(
-            LogLevel::Warn,
-            "KNX/IP routing busy indication received (device_state=0x{device_state:04X}, wait_time={wait_time}ms)"
-        );
-
-        // In a real implementation, we might want to implement backoff logic here
-        if wait_time > 0 {
-            tokio::time::sleep(Duration::from_millis(u64::from(wait_time))).await;
-        }
-
         Ok(())
     }
 
@@ -274,6 +275,32 @@ impl Connection for RoutingConnection {
             return Err(TransportError::ConnectionClosed.into());
         }
 
+        let indication =
+            KnxIpFrame::parse(frame)?.header.service_type == ServiceType::RoutingIndication;
+        let _send_guard = if indication {
+            Some(self.send_lock.lock().await)
+        } else {
+            None
+        };
+        if indication {
+            loop {
+                let changed = self.flow_changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if !self.is_connected() {
+                    return Err(TransportError::ConnectionClosed.into());
+                }
+                let now = tokio::time::Instant::now();
+                let until = self.flow.lock().unwrap().deadline(now);
+                if until <= now {
+                    break;
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep_until(until) => {}
+                    _ = &mut changed => {}
+                }
+            }
+        }
         self.socket
             .send_to(frame, self.multicast_addr)
             .await
@@ -287,6 +314,9 @@ impl Connection for RoutingConnection {
                 }
             })?;
 
+        if indication {
+            self.flow.lock().unwrap().sent(tokio::time::Instant::now());
+        }
         if let Ok(mut stats) = self.stats.write() {
             stats.frames_sent += 1;
         }
@@ -326,6 +356,8 @@ impl Connection for RoutingConnection {
         if let Ok(mut state) = self.state.write() {
             *state = ConnectionState::Disconnecting;
         }
+
+        self.flow_changed.notify_waiters();
 
         // Leave multicast group
         let result = self
@@ -393,6 +425,9 @@ mod health_tests {
             established_at: Some(Instant::now()),
             routing_busy_count: Arc::new(std::sync::RwLock::new(0)),
             lost_message_count: Arc::new(std::sync::RwLock::new(0)),
+            flow: std::sync::Mutex::new(FlowControl::default()),
+            send_lock: tokio::sync::Mutex::new(()),
+            flow_changed: tokio::sync::Notify::new(),
         }
     }
 
@@ -456,6 +491,89 @@ mod health_tests {
         assert_eq!(KnxIpFrame::parse(&received).unwrap().body, [0x33, 0x44]);
         assert_eq!(connection.stats().frames_received, 1);
         assert_eq!(connection.routing_stats().lost_message_count, 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_routing_sends_are_spaced_and_cancelled_waiters_do_not_block() {
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let connection = Arc::new(test_connection(peer.local_addr().unwrap()).await);
+        let frame = KnxIpFrame::new(ServiceType::RoutingIndication, vec![1]).serialize();
+        let mut jobs = Vec::new();
+        for _ in 0..3 {
+            let connection = connection.clone();
+            let frame = frame.clone();
+            jobs.push(tokio::spawn(async move {
+                connection.send(&frame).await.unwrap();
+                tokio::time::Instant::now()
+            }));
+        }
+        let mut bytes = [0; 64];
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(1), peer.recv(&mut bytes))
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        let mut sent_at = Vec::new();
+        for job in jobs {
+            sent_at.push(job.await.unwrap());
+        }
+        sent_at.sort();
+        for pair in sent_at.windows(2) {
+            assert!(pair[1].duration_since(pair[0]) >= Duration::from_millis(20));
+        }
+        connection
+            .handle_routing_busy(&[6, 0, 0x03, 0xe8, 0, 0])
+            .await
+            .unwrap();
+        let blocked = tokio::spawn({
+            let connection = connection.clone();
+            let frame = frame.clone();
+            async move { connection.send(&frame).await }
+        });
+        tokio::task::yield_now().await;
+        blocked.abort();
+        let _ = blocked.await;
+        // Close wakes the following waiter even though the busy delay has not elapsed.
+        let next = tokio::spawn({
+            let connection = connection.clone();
+            async move { connection.send(&frame).await }
+        });
+        tokio::task::yield_now().await;
+        let _ = connection.close().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), next)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn busy_handling_is_nonblocking_and_validates_the_entire_body() {
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let connection = test_connection(peer.local_addr().unwrap()).await;
+        for body in [
+            &[][..],
+            &[6, 0, 0, 1][..],
+            &[5, 0, 0, 1, 0, 0][..],
+            &[6, 0, 0, 1, 0, 0, 0][..],
+        ] {
+            assert!(connection.handle_routing_busy(body).await.is_err());
+        }
+        let now = tokio::time::Instant::now();
+        connection
+            .handle_routing_busy(&[6, 2, 0, 100, 0, 0])
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::Instant::now(),
+            now,
+            "busy handler blocked receive processing"
+        );
+        assert!(connection.flow.lock().unwrap().deadline(now) >= now + Duration::from_millis(100));
+        assert_eq!(connection.routing_stats().routing_busy_count, 1);
     }
 
     #[tokio::test]
