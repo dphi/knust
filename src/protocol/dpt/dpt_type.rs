@@ -259,6 +259,8 @@ pub enum DptType {
     // DPT 20.xxx - HVAC
     HVACMode = 2_000_102,
     HVACContrMode = 2_000_105,
+    ChangeoverMode = 2_000_107,
+    EnableHCStage = 2_000_116,
 
     // DPT 29.xxx - Signed 64-bit
     ActiveEnergy8Byte = 2_900_010,
@@ -469,6 +471,22 @@ impl DptType {
             235 | 242 | 251 => 6,
             _ => 0,
         }
+    }
+
+    fn validate_mode(&self, value: u8) -> Result<()> {
+        let max = match self {
+            Self::ChangeoverMode => 2,
+            Self::EnableHCStage => 3,
+            _ => return Ok(()),
+        };
+        if value > max {
+            return Err(ProtocolError::DptError {
+                dpt_type: self.number_str(),
+                details: format!("Reserved mode value {value}"),
+            }
+            .into());
+        }
+        Ok(())
     }
 }
 
@@ -721,6 +739,7 @@ impl DptType {
                 Ok(DptView::DateTime(DateTimeView(bytes)))
             }
             20 => {
+                self.validate_mode(bytes[0])?;
                 log_protocol!(
                     LogLevel::Trace,
                     "DPT {} decode: enum_value={} raw=[{:02X}]",
@@ -940,7 +959,10 @@ impl DptType {
             (18, DptPayload::SceneControl { scene, learn }) => Ok(vec![
                 (if *learn { 0x80 } else { 0 }) | (scene.saturating_sub(1) & 0x3F),
             ]),
-            (20, DptPayload::Enum(v)) => Ok(vec![*v]),
+            (20, DptPayload::Enum(v)) => {
+                self.validate_mode(*v)?;
+                Ok(vec![*v])
+            }
             (29, DptPayload::SignedInt(v)) => Ok(v.to_be_bytes().to_vec()),
             (217, DptPayload::Version(value)) => Ok(value.encode()?.to_vec()),
             (232, DptPayload::ColorRGB { r, g, b }) => Ok(vec![*r, *g, *b]),

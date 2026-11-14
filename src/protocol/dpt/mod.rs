@@ -24,6 +24,7 @@ pub mod dpt18; // Scene Control
 pub mod dpt19; // Date and Time
 pub mod dpt2; // 2-bit control
 pub mod dpt20; // HVAC
+mod dpt20_modes;
 pub mod dpt217; // Version
 pub mod dpt232; // RGB Color
 pub mod dpt235; // Tariff Active Energy
@@ -63,6 +64,7 @@ pub use dpt17::*;
 pub use dpt18::*;
 pub use dpt19::*;
 pub use dpt20::*;
+pub use dpt20_modes::*;
 pub use dpt29::*;
 pub use dpt217::*;
 pub use dpt232::*;
@@ -628,6 +630,8 @@ impl DptRegistry {
         registry.register::<DateTime>();
         registry.register::<DPTHVACMode>();
         registry.register::<DPTHVACContrMode>();
+        registry.register::<DPTChangeoverMode>();
+        registry.register::<DPTEnableHCStage>();
         registry.register::<DPTActiveEnergy8Byte>();
         registry.register::<DPTApparantEnergy8Byte>();
         registry.register::<DPTReactiveEnergy8Byte>();

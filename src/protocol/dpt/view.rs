@@ -867,6 +867,14 @@ fn weekday_name(day: u8) -> Option<&'static str> {
 
 fn format_enum(value: u8, dpt: DptType) -> String {
     match dpt {
+        DptType::ChangeoverMode => ["Auto", "Cooling Only", "Heating Only"]
+            .get(value as usize)
+            .unwrap_or(&"Unknown")
+            .to_string(),
+        DptType::EnableHCStage => ["Disabled", "Stage A", "Stage B", "Both Stages"]
+            .get(value as usize)
+            .unwrap_or(&"Unknown")
+            .to_string(),
         DptType::HVACMode => match value {
             0 => "Auto".to_string(),
             1 => "Comfort".to_string(),
@@ -1196,6 +1204,19 @@ fn parse_enum(s: &str, dpt: DptType) -> Option<u8> {
     }
     let lower = s.trim().to_ascii_lowercase();
     match dpt {
+        DptType::ChangeoverMode => match lower.as_str() {
+            "auto" => Some(0),
+            "cooling only" | "cooling_only" => Some(1),
+            "heating only" | "heating_only" => Some(2),
+            _ => None,
+        },
+        DptType::EnableHCStage => match lower.as_str() {
+            "disabled" => Some(0),
+            "stage a" | "stage_a" => Some(1),
+            "stage b" | "stage_b" => Some(2),
+            "both stages" | "both_stages" => Some(3),
+            _ => None,
+        },
         DptType::HVACMode => match lower.as_str() {
             "auto" => Some(0),
             "comfort" => Some(1),
