@@ -3,7 +3,7 @@ use super::unit::Unit;
 use super::view::{
     BoolView, CharacterView, Control2View, ControlView, DateTimeView, DateView, DptView, EnumView,
     Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView,
-    SceneView, StrView, TimeView, U8View, U16View, U32View, XyyView,
+    SceneView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -239,6 +239,9 @@ pub enum DptType {
     VolumeFluxMeter = 1_401_200,
     VolumeFluxLs = 1_401_201,
 
+    // DPT 217.001 - Version
+    Version = 21_700_001,
+
     // DPT 16.xxx - String
     StringAscii = 1_600_000,
     StringLatin1 = 1_600_001,
@@ -457,7 +460,7 @@ impl DptType {
     pub fn byte_length(&self) -> usize {
         match self.main() {
             1..=6 | 17 | 18 | 20 => 1,
-            7..=9 => 2,
+            7..=9 | 217 => 2,
             10 | 11 | 232 => 3,
             12..=14 => 4,
             16 => 14,
@@ -667,6 +670,7 @@ impl DptType {
                 );
                 Ok(DptView::Float4Byte(view))
             }
+            217 => Ok(DptView::Version(VersionView(bytes))),
             16 => {
                 let view = StrView(bytes);
                 log_protocol!(
@@ -936,6 +940,7 @@ impl DptType {
             ]),
             (20, DptPayload::Enum(v)) => Ok(vec![*v]),
             (29, DptPayload::SignedInt(v)) => Ok(v.to_be_bytes().to_vec()),
+            (217, DptPayload::Version(value)) => Ok(value.encode()?.to_vec()),
             (232, DptPayload::ColorRGB { r, g, b }) => Ok(vec![*r, *g, *b]),
             (242, DptPayload::ColorXYY { x, y, brightness }) => {
                 let xr = (*x * 65535.0) as u16;

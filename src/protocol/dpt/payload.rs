@@ -17,6 +17,7 @@ pub enum DptPayload {
     SignedInt(i64),
     Float(f64),
     String(String),
+    Version(super::dpt217::KnxVersion),
     Time {
         day: u8,
         hour: u8,
@@ -110,6 +111,7 @@ impl DptPayload {
                 }
             }
             Self::String(s) => s.clone(),
+            Self::Version(v) => v.to_string(),
             Self::Scene(n) => format!("Scene {n}"),
             Self::SceneControl { scene, learn } => format!(
                 "Scene {} ({})",
@@ -173,6 +175,7 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::I64(v) => Self::SignedInt(v.value()),
             DptView::Str(v) => Self::String(v.as_str().to_string()),
             DptView::Character(v) => Self::String(v.as_string()),
+            DptView::Version(v) => Self::Version(v.value()),
             DptView::Time(v) => Self::Time {
                 day: v.day(),
                 hour: v.hour(),

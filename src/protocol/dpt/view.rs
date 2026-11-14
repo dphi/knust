@@ -247,6 +247,22 @@ impl<'a> CharacterView<'a> {
     }
 }
 
+/// Borrowed DPT 217.001 version payload.
+#[derive(Debug, Clone, Copy)]
+pub struct VersionView<'a>(pub(crate) &'a [u8]);
+
+impl<'a> VersionView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt217::KnxVersion {
+        super::dpt217::KnxVersion::from_raw([self.0[0], self.0[1]])
+    }
+
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TimeView<'a>(pub(crate) &'a [u8]);
 impl<'a> TimeView<'a> {
@@ -445,6 +461,7 @@ pub enum DptView<'a> {
     I64(I64View<'a>),
     Str(StrView<'a>),
     Character(CharacterView<'a>),
+    Version(VersionView<'a>),
     Time(TimeView<'a>),
     Date(DateView<'a>),
     DateTime(DateTimeView<'a>),
@@ -475,6 +492,7 @@ impl<'a> DptView<'a> {
             | Self::Control2(_)
             | Self::Str(_)
             | Self::Character(_)
+            | Self::Version(_)
             | Self::Time(_)
             | Self::Date(_)
             | Self::DateTime(_)
@@ -509,6 +527,7 @@ impl<'a> DptView<'a> {
             Self::I64(v) => v.raw(),
             Self::Str(v) => v.raw(),
             Self::Character(v) => v.raw(),
+            Self::Version(v) => v.raw(),
             Self::Time(v) => v.raw(),
             Self::Date(v) => v.raw(),
             Self::DateTime(v) => v.raw(),
@@ -550,6 +569,7 @@ impl DptView<'_> {
             Self::I64(v) => format_numeric(v.as_f64(), dpt),
             Self::Str(v) => v.as_str().to_string(),
             Self::Character(v) => v.as_string(),
+            Self::Version(v) => v.value().to_string(),
             Self::Time(v) => {
                 let base = format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second());
                 match weekday_name(v.day()) {
@@ -982,6 +1002,7 @@ impl DptType {
             20 => parse_enum(s, self)
                 .map(DptPayload::Enum)
                 .ok_or_else(|| bad(format!("cannot parse {s:?} as an enum value"))),
+            217 => s.parse().map(DptPayload::Version),
             232 => parse_rgb(s).ok_or_else(|| {
                 bad(format!(
                     "cannot parse {s:?} as RGB (try \"RGB(r, g, b)\" or \"#RRGGBB\")"

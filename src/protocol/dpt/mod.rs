@@ -24,6 +24,7 @@ pub mod dpt18; // Scene Control
 pub mod dpt19; // Date and Time
 pub mod dpt2; // 2-bit control
 pub mod dpt20; // HVAC
+pub mod dpt217; // Version
 pub mod dpt232; // RGB Color
 pub mod dpt235; // Tariff Active Energy
 pub mod dpt242; // XYY Color
@@ -63,6 +64,7 @@ pub use dpt18::*;
 pub use dpt19::*;
 pub use dpt20::*;
 pub use dpt29::*;
+pub use dpt217::*;
 pub use dpt232::*;
 pub use dpt235::*;
 pub use dpt242::*;
@@ -73,7 +75,7 @@ pub use unit::Unit;
 pub use view::{
     BoolView, CharacterView, Control2View, ControlView, DateTimeView, DateView, DptView, EnumView,
     Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView,
-    SceneView, StrView, TimeView, U8View, U16View, U32View, XyyView,
+    SceneView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -628,6 +630,7 @@ impl DptRegistry {
         registry.register::<DPTActiveEnergy8Byte>();
         registry.register::<DPTApparantEnergy8Byte>();
         registry.register::<DPTReactiveEnergy8Byte>();
+        registry.register::<Version>();
         registry.register::<ColorRGB>();
         registry.register::<TariffActiveEnergy>();
         registry.register::<ColorXYY>();

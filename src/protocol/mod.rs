@@ -49,6 +49,7 @@ pub use dpt::{
 
     DPTValue4Ucount,
 
+    DPTVersion,
     // Core DPT types and traits
     Dpt,
     // DPT 14.xxx - 4-byte float
@@ -57,6 +58,7 @@ pub use dpt::{
     DptRegistry,
     DptValue,
 
+    KnxVersion,
     // DPT 6.xxx - Signed 8-bit
     PercentV8,
     // DPT 5.xxx - Unsigned 8-bit
@@ -76,6 +78,7 @@ pub use dpt::{
     Value4ByteSigned,
     // DPT 12.xxx - Unsigned 32-bit
     Value4ByteUnsigned,
+    Version,
 };
 pub use knxip::{ConnectRequest, ConnectResponse, Hpai, KnxIpFrame, ServiceType};
 pub use management::{DeviceDescriptorRead, DeviceDescriptorResponse};
