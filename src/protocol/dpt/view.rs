@@ -274,6 +274,19 @@ impl<'a> VersionView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct CombinedInfoOnOffView<'a>(pub(crate) &'a [u8]);
+impl<'a> CombinedInfoOnOffView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt27::CombinedInfoOnOff {
+        super::dpt27::CombinedInfoOnOff::decode([self.0[0], self.0[1], self.0[2], self.0[3]])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct SceneInfoView<'a>(pub(crate) &'a [u8]);
 impl<'a> SceneInfoView<'a> {
     #[must_use]
@@ -503,6 +516,7 @@ pub enum DptView<'a> {
     Version(VersionView<'a>),
     DoubleNibble(DoubleNibbleView<'a>),
     SceneInfo(SceneInfoView<'a>),
+    CombinedInfoOnOff(CombinedInfoOnOffView<'a>),
     Time(TimeView<'a>),
     Date(DateView<'a>),
     DateTime(DateTimeView<'a>),
@@ -536,6 +550,7 @@ impl<'a> DptView<'a> {
             | Self::Version(_)
             | Self::DoubleNibble(_)
             | Self::SceneInfo(_)
+            | Self::CombinedInfoOnOff(_)
             | Self::Time(_)
             | Self::Date(_)
             | Self::DateTime(_)
@@ -573,6 +588,7 @@ impl<'a> DptView<'a> {
             Self::Version(v) => v.raw(),
             Self::DoubleNibble(v) => v.raw(),
             Self::SceneInfo(v) => v.raw(),
+            Self::CombinedInfoOnOff(v) => v.raw(),
             Self::Time(v) => v.raw(),
             Self::Date(v) => v.raw(),
             Self::DateTime(v) => v.raw(),
@@ -617,6 +633,7 @@ impl DptView<'_> {
             Self::Version(v) => v.value().to_string(),
             Self::DoubleNibble(v) => v.value().to_string(),
             Self::SceneInfo(v) => v.value().to_string(),
+            Self::CombinedInfoOnOff(v) => v.value().to_string(),
             Self::Time(v) => {
                 let base = format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second());
                 match weekday_name(v.day()) {
@@ -1052,6 +1069,7 @@ impl DptType {
             217 => s.parse().map(DptPayload::Version),
             25 => s.parse().map(DptPayload::DoubleNibble),
             26 => s.parse().map(DptPayload::SceneInfo),
+            27 => s.parse().map(DptPayload::CombinedInfoOnOff),
             232 => parse_rgb(s).ok_or_else(|| {
                 bad(format!(
                     "cannot parse {s:?} as RGB (try \"RGB(r, g, b)\" or \"#RRGGBB\")"

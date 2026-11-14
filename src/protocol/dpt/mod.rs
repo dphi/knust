@@ -32,6 +32,7 @@ pub mod dpt242; // XYY Color
 pub mod dpt25;
 pub mod dpt251;
 pub mod dpt26;
+pub mod dpt27;
 pub mod dpt29; // Signed 64-bit
 pub mod dpt3; // Control
 pub mod dpt4; // Character
@@ -69,6 +70,7 @@ pub use dpt20::*;
 pub use dpt20_modes::*;
 pub use dpt25::*;
 pub use dpt26::*;
+pub use dpt27::*;
 pub use dpt29::*;
 pub use dpt217::*;
 pub use dpt232::*;
@@ -79,10 +81,10 @@ pub use group_registry::{GroupAddressRegistry, GroupAddressState};
 pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
-    BoolView, CharacterView, Control2View, ControlView, DateTimeView, DateView, DoubleNibbleView,
-    DptView, EnumView, Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, RgbView,
-    RgbwView, SceneInfoView, SceneView, StrView, TimeView, U8View, U16View, U32View, VersionView,
-    XyyView,
+    BoolView, CharacterView, CombinedInfoOnOffView, Control2View, ControlView, DateTimeView,
+    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, I8View, I16View,
+    I32View, I64View, RgbView, RgbwView, SceneInfoView, SceneView, StrView, TimeView, U8View,
+    U16View, U32View, VersionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -639,6 +641,7 @@ impl DptRegistry {
         registry.register::<DPTEnableHCStage>();
         registry.register::<DPTDoubleNibble>();
         registry.register::<DPTSceneInfo>();
+        registry.register::<DPTCombinedInfoOnOff>();
         registry.register::<DPTActiveEnergy8Byte>();
         registry.register::<DPTApparantEnergy8Byte>();
         registry.register::<DPTReactiveEnergy8Byte>();
