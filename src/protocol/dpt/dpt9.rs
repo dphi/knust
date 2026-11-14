@@ -15,7 +15,7 @@ impl Temperature {
         let mut temp = Temperature([0, 0]);
         let value = if value == 670_433.28_f32 {
             670_433.28
-        } else if value == -671_088.64_f32 {
+        } else if value == -671_088.6_f32 {
             -671_088.64
         } else {
             f64::from(value)
