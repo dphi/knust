@@ -16,7 +16,7 @@ use crate::logging::LogLevel;
 /// Configuration for heartbeat monitoring.
 #[derive(Debug, Clone)]
 pub struct HeartbeatConfig {
-    /// Interval between heartbeat requests (default: 60s per KNX spec)
+    /// Interval between heartbeat requests (default: 30 seconds).
     pub interval: Duration,
     /// Timeout waiting for response (default: 10s)
     pub timeout: Duration,
@@ -27,7 +27,7 @@ pub struct HeartbeatConfig {
 impl Default for HeartbeatConfig {
     fn default() -> Self {
         Self {
-            interval: Duration::from_secs(60),
+            interval: Duration::from_secs(30),
             timeout: Duration::from_secs(10),
             max_failures: 3,
         }

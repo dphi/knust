@@ -1043,6 +1043,26 @@ mod tunneling_address_tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_first_attempt_uses_thirty_second_interval() {
+        let tunnel = Arc::new(Tunnel::new_udp(gateway()));
+        let mut handle = tunnel.start_heartbeat("test".into());
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(29)).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), handle.recv_event())
+                .await
+                .is_err()
+        );
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let event = tokio::time::timeout(Duration::from_secs(1), handle.recv_event())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!event.ok);
+        handle.stop().await;
+    }
+
     #[tokio::test]
     async fn tunneling_without_address_management_has_no_address_and_default_cri() {
         let tunnel = Tunnel::new_udp(gateway());
