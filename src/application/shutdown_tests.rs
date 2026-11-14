@@ -65,7 +65,8 @@ async fn sending(knx: &Knx) -> Arc<BlockingConnection> {
         active: Arc::new(AtomicUsize::new(0)),
         sent: AtomicUsize::new(0),
     });
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task(connection.clone()));
+    knx.connection.send_replace(Some(connection.clone()));
+    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
     knx.send_telegram(&Telegram::group_write(
         GroupAddress::try_from_raw(1).unwrap(),
         vec![1],

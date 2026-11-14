@@ -178,11 +178,11 @@ async fn foreign_disconnect_replies_with_channel_error_without_losing_tunnel() {
     .await
     .unwrap();
     assert!(matches!(
-        control_rx.try_recv().unwrap(),
+        control_rx.try_recv().unwrap().event,
         ConnectionControlEvent::SendDisconnectResponse { channel_id: 7 }
     ));
     assert!(matches!(
-        control_rx.try_recv().unwrap(),
+        control_rx.try_recv().unwrap().event,
         ConnectionControlEvent::TunnelLost { channel_id: 7, .. }
     ));
     assert!(control_rx.try_recv().is_err());

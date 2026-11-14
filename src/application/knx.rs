@@ -39,6 +39,13 @@ pub enum ConnectionControlEvent {
     SendDisconnectResponse { channel_id: u8 },
 }
 
+struct ConnectionControlMessage {
+    event: ConnectionControlEvent,
+    connection: Arc<dyn Connection>,
+}
+
+type ActiveConnection = tokio::sync::watch::Sender<Option<Arc<dyn Connection>>>;
+
 /// Main Knx library interface
 ///
 /// Knx provides a high-level interface for KNX/IP communication.
@@ -90,7 +97,7 @@ pub struct Knx {
     config: ConnectionConfig,
 
     /// Active connection
-    connection: Arc<RwLock<Option<Arc<dyn Connection>>>>,
+    connection: ActiveConnection,
 
     /// Library state
     state: Arc<RwLock<KnxState>>,
@@ -133,10 +140,10 @@ pub struct Knx {
     event_handler: Arc<EventHandler>,
 
     /// Channel for connection control events (tunnel lost, disconnect, etc.)
-    control_tx: mpsc::Sender<ConnectionControlEvent>,
+    control_tx: mpsc::Sender<ConnectionControlMessage>,
 
     /// Receiver for connection control events (wrapped in Option for taking)
-    control_rx: Arc<RwLock<Option<mpsc::Receiver<ConnectionControlEvent>>>>,
+    control_rx: Arc<RwLock<Option<mpsc::Receiver<ConnectionControlMessage>>>>,
 
     /// Current communication channel ID (for tunneling connections)
     channel_id: Arc<RwLock<Option<u8>>>,
@@ -626,7 +633,7 @@ impl Knx {
         let telegram_queue = Arc::new(TelegramQueue::new());
 
         // Create control channel for connection events
-        let (control_tx, control_rx) = mpsc::channel::<ConnectionControlEvent>(32);
+        let (control_tx, control_rx) = mpsc::channel::<ConnectionControlMessage>(32);
 
         // Create receive rate limiter
         let (receive_limiter, mut receive_limiter_rx) =
@@ -645,7 +652,7 @@ impl Knx {
 
         let knx = Self {
             config,
-            connection: Arc::new(RwLock::new(None)),
+            connection: tokio::sync::watch::channel(None).0,
             state: Arc::new(RwLock::new(KnxState::Disconnected)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
@@ -783,7 +790,7 @@ impl Knx {
 
     /// Start the connection control task that handles disconnect/reconnect events
     /// Following Python implementation pattern for `tunnel_lost` handling
-    async fn start_connection_control_task(&self, connection: Arc<dyn Connection>) -> Result<()> {
+    async fn start_connection_control_task(&self) -> Result<()> {
         use crate::protocol::knxip::{DisconnectResponse, KnxIpFrame, ServiceType};
 
         let shutdown_flag = self.shutdown_flag.clone();
@@ -814,8 +821,12 @@ impl Knx {
             loop {
                 tokio::select! {
                     // Check for control events
-                    Some(event) = control_rx.recv() => {
-                        match event {
+                    Some(message) = control_rx.recv() => {
+                        let connection = message.connection;
+                        let is_current = connection_arc.borrow().as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &connection));
+                        if !is_current { continue; }
+                        match message.event {
                             ConnectionControlEvent::SendDisconnectResponse { channel_id } => {
                                 log_application!(LogLevel::Debug, "Sending DisconnectResponse for channel {}", channel_id);
 
@@ -831,10 +842,16 @@ impl Knx {
                                     log_application!(LogLevel::Info, "DisconnectResponse sent for channel {}", channel_id);
                                 }
 
-                                // Clear the channel ID since we're disconnected
-                                *channel_id_arc.write().await = None;
+
                             }
                             ConnectionControlEvent::TunnelLost { channel_id, reason } => {
+                                let removed = connection_arc.send_if_modified(|active| {
+                                    if active.as_ref().is_some_and(|current| Arc::ptr_eq(current, &connection)) {
+                                        *active = None;
+                                        true
+                                    } else { false }
+                                });
+                                if !removed { continue; }
                                 log_application!(LogLevel::Warn, "Tunnel lost for channel {}: {}", channel_id, reason);
 
                                 // Update state to disconnected
@@ -848,21 +865,17 @@ impl Knx {
                                     crate::application::callbacks::ConnectionState::Disconnected
                                 ).await;
 
-                                // Clear the connection
-                                {
-                                    let mut conn = connection_arc.write().await;
-                                    if let Some(c) = conn.take()
-                                        && let Err(e) = c.close().await {
-                                        log_application!(LogLevel::Warn, "Failed to close connection: {}", e);
-                                    }
+                                *channel_id_arc.write().await = None;
+                                if let Err(e) = connection.close().await {
+                                    log_application!(LogLevel::Warn, "Failed to close connection: {}", e);
                                 }
 
-                                if auto_reconnect {
+                                if auto_reconnect && connection_arc.borrow().is_none() {
                                     log_application!(LogLevel::Info, "Auto-reconnect enabled, starting reconnection task");
 
                                     // Check if reconnection is already in progress
                                     let mut reconnect_task_guard = reconnect_task.write().await;
-                                    if reconnect_task_guard.is_none() {
+                                    if reconnect_task_guard.as_ref().is_none_or(|task| task.is_finished()) {
                                         // Start reconnection task (following Python pattern)
                                         let reconnect_handle = Self::start_reconnection_task(
                                             config.clone(),
@@ -880,7 +893,6 @@ impl Knx {
                                     }
                                 } else {
                                     log_application!(LogLevel::Warn, "Auto-reconnect disabled, tunnel connection closed");
-                                    break;
                                 }
                             }
                         }
@@ -907,124 +919,52 @@ impl Knx {
         Ok(())
     }
 
-    /// Start reconnection task with exponential backoff (following Python implementation)
     fn start_reconnection_task(
         config: ConnectionConfig,
-        connection_arc: Arc<RwLock<Option<Arc<dyn Connection>>>>,
+        connection_arc: ActiveConnection,
         state: Arc<RwLock<KnxState>>,
         event_handler: Arc<EventHandler>,
         channel_id_arc: Arc<RwLock<Option<u8>>>,
         shutdown_flag: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            log_application!(LogLevel::Info, "Reconnection task started");
-
             let backoff = &config.reconnect_backoff;
-            let mut attempt = 1;
             let mut delay_ms = backoff.initial_delay_ms;
-
-            loop {
-                // Check shutdown flag
+            for attempt in 1..=backoff.max_attempts {
                 if shutdown_flag.load(Ordering::SeqCst) {
-                    log_application!(
-                        LogLevel::Info,
-                        "Shutdown flag set, stopping reconnection task"
-                    );
                     break;
                 }
-
-                // Check if we've exceeded max attempts
-                if attempt > backoff.max_attempts {
-                    log_application!(
-                        LogLevel::Error,
-                        "Maximum reconnection attempts ({}) exceeded, giving up",
-                        backoff.max_attempts
-                    );
-                    break;
-                }
-
-                log_application!(
-                    LogLevel::Debug,
-                    "Reconnecting to KNX bus... (attempt {} of {})",
-                    attempt,
-                    backoff.max_attempts
-                );
-
-                // Attempt to create and establish new connection
                 match Self::create_connection(&config).await {
-                    Ok(new_connection) => {
-                        // Get channel ID from the connection
-                        {
-                            let channel_id = Self::establish_connection(&new_connection, &config);
-                            {
-                                log_application!(
-                                    LogLevel::Info,
-                                    "Successfully reconnected to KNX bus"
-                                );
-
-                                // Update connection and state
-                                {
-                                    let mut conn = connection_arc.write().await;
-                                    *conn = Some(new_connection);
-                                }
-
-                                {
-                                    let mut state_guard = state.write().await;
-                                    *state_guard = KnxState::Connected;
-                                }
-
-                                // Update channel ID, keeping the previous value if this
-                                // connection type doesn't have one (Routing) or the
-                                // downcast to get it failed.
-                                if let Some(channel_id) = channel_id {
-                                    let mut channel_guard = channel_id_arc.write().await;
-                                    *channel_guard = Some(channel_id);
-                                }
-
-                                // Notify callbacks
-                                event_handler
-                                    .notify_connection_state_changed(
-                                        crate::application::callbacks::ConnectionState::Connected,
-                                    )
-                                    .await;
-
-                                log_application!(
-                                    LogLevel::Info,
-                                    "Reconnection successful, resuming operations"
-                                );
-                                break;
-                            }
+                    Ok(connection) => {
+                        if shutdown_flag.load(Ordering::SeqCst) {
+                            break;
                         }
+                        *channel_id_arc.write().await =
+                            Self::establish_connection(&connection, &config);
+                        *state.write().await = KnxState::Connected;
+                        connection_arc.send_replace(Some(connection));
+                        event_handler
+                            .notify_connection_state_changed(
+                                crate::application::callbacks::ConnectionState::Connected,
+                            )
+                            .await;
+                        return;
                     }
-                    Err(e) => {
+                    Err(error) => {
                         log_application!(
                             LogLevel::Warn,
-                            "Failed to create connection on attempt {}: {}",
+                            "Reconnect attempt {} failed: {}",
                             attempt,
-                            e
+                            error
                         );
                     }
                 }
-
-                // Wait before next attempt with exponential backoff
-                log_application!(
-                    LogLevel::Debug,
-                    "Reconnection attempt {} failed. Waiting {}ms before next attempt",
-                    attempt,
-                    delay_ms
-                );
-
-                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-
-                // Update for next attempt
-                attempt += 1;
-                delay_ms = std::cmp::min(
-                    (delay_ms as f64 * backoff.multiplier) as u64,
-                    backoff.max_delay_ms,
-                );
+                if attempt < backoff.max_attempts {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    delay_ms =
+                        ((delay_ms as f64 * backoff.multiplier) as u64).min(backoff.max_delay_ms);
+                }
             }
-
-            log_application!(LogLevel::Info, "Reconnection task stopped");
         })
     }
 
@@ -1149,170 +1089,30 @@ impl Knx {
         }
     }
 
-    /// Connect to the KNX/IP network
+    /// Connect to the configured KNX/IP network.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigurationError::MissingParameter`] if `self.config`
-    /// selects a tunneling connection type without a `gateway_ip`, or the
-    /// underlying [`Tunnel::connect`]/[`RoutingConnection::new`] error for
-    /// the selected connection type.
+    /// Returns configuration, handshake or transport errors for the selected connection.
     pub async fn connect(&self) -> Result<()> {
-        let timer = Timer::start(Component::Application, "knx_connect");
-        log_application!(
-            LogLevel::Info,
-            "Connecting to KNX/IP network using {:?}",
-            self.config.connection_type
-        );
-
-        {
-            let mut state = self.state.write().await;
-            *state = KnxState::Connecting;
-        }
-
-        // Notify connection state change callbacks
+        *self.state.write().await = KnxState::Connecting;
         self.notify_connection_state_changed(KnxState::Connecting.into())
             .await;
-
-        log::info!(target: "transport", "Connection state change: {:?} disconnected -> connecting (connect() called)", self.config.connection_type);
-
-        let connection_result = match self.config.connection_type {
-            ConnectionType::Tunneling | ConnectionType::SecureTunneling => {
-                let gateway_ip = self.config.gateway_ip.ok_or_else(|| {
-                    log_application!(
-                        LogLevel::Error,
-                        "Gateway IP not configured for tunneling connection"
-                    );
-                    ConfigurationError::MissingParameter {
-                        parameter: "gateway_ip".to_string(),
-                    }
-                })?;
-
-                let gateway_port = self.config.gateway_port.unwrap_or(3671);
-                let gateway_addr = std::net::SocketAddr::new(gateway_ip, gateway_port);
-
-                log_application!(
-                    LogLevel::Info,
-                    "Creating UDP tunneling connection to {}:{}",
-                    gateway_ip,
-                    gateway_port
-                );
-
-                let mut tunneling_conn = Tunnel::new_udp(gateway_addr);
-
-                if self.config.connection_type == ConnectionType::SecureTunneling {
-                    #[cfg(feature = "secure")]
-                    {
-                        let security = self.config.security.as_ref().ok_or_else(|| {
-                            ConfigurationError::MissingParameter {
-                                parameter: "security".to_string(),
-                            }
-                        })?;
-                        tunneling_conn.connect_secure(security).await?;
-                    }
-                    #[cfg(not(feature = "secure"))]
-                    {
-                        return Err(ConfigurationError::ValidationError {
-                            details: "SecureTunneling requires the `secure` feature".to_string(),
-                        }
-                        .into());
-                    }
-                } else {
-                    // Establish the tunneling connection with KNX/IP protocol handshake
-                    tunneling_conn.connect().await?;
-                }
-                let channel_id = tunneling_conn.channel_id();
-                *self.channel_id.write().await = Some(channel_id);
-
-                Ok(Arc::new(tunneling_conn) as Arc<dyn Connection>)
-            }
-            ConnectionType::TcpTunneling => {
-                let gateway_ip = self.config.gateway_ip.ok_or_else(|| {
-                    log_application!(
-                        LogLevel::Error,
-                        "Gateway IP not configured for TCP tunneling connection"
-                    );
-                    ConfigurationError::MissingParameter {
-                        parameter: "gateway_ip".to_string(),
-                    }
-                })?;
-
-                let gateway_port = self.config.gateway_port.unwrap_or(3671);
-                let gateway_addr = std::net::SocketAddr::new(gateway_ip, gateway_port);
-
-                log_application!(
-                    LogLevel::Info,
-                    "Creating TCP tunneling connection to {}:{}",
-                    gateway_ip,
-                    gateway_port
-                );
-
-                let mut tcp_conn = Tunnel::new_tcp_with_timeout(
-                    gateway_addr,
-                    std::time::Duration::from_millis(self.config.tcp_config.connect_timeout_ms),
-                );
-
-                // Establish the TCP connection
-                tcp_conn.connect().await?;
-
-                Ok(Arc::new(tcp_conn) as Arc<dyn Connection>)
-            }
-            ConnectionType::Routing => {
-                log_application!(
-                    LogLevel::Info,
-                    "Creating routing connection (local_ip: {:?})",
-                    self.config.local_ip
-                );
-
-                RoutingConnection::new(self.config.local_ip)
-                    .await
-                    .map(|conn| Arc::new(conn) as Arc<dyn Connection>)
-            }
-            ConnectionType::SecureRouting => Err(ConfigurationError::ValidationError {
-                details: "SecureRouting (KNX IP Secure over multicast) is not yet implemented"
-                    .to_string(),
-            }
-            .into()),
-        };
-
-        match connection_result {
+        match Self::create_connection(&self.config).await {
             Ok(connection) => {
-                {
-                    let mut conn = self.connection.write().await;
-                    *conn = Some(connection);
-                }
-
-                {
-                    let mut state = self.state.write().await;
-                    *state = KnxState::Connected;
-                }
-
-                // Notify connection state change callbacks
+                *self.channel_id.write().await =
+                    Self::establish_connection(&connection, &self.config);
+                *self.state.write().await = KnxState::Connected;
+                self.connection.send_replace(Some(connection));
                 self.notify_connection_state_changed(KnxState::Connected.into())
                     .await;
-
-                log::info!(target: "transport", "Connection state change: {:?} connecting -> connected", self.config.connection_type);
-
-                log_application!(LogLevel::Info, "Successfully connected to KNX/IP network");
-                timer.finish_with_message("KNX/IP connection established");
-
                 Ok(())
             }
-            Err(e) => {
-                {
-                    let mut state = self.state.write().await;
-                    *state = KnxState::Error;
-                }
-
-                // Notify connection state change callbacks
+            Err(error) => {
+                *self.state.write().await = KnxState::Error;
                 self.notify_connection_state_changed(KnxState::Error.into())
                     .await;
-
-                log::info!(target: "transport", "Connection state change: {:?} connecting -> error ({})", self.config.connection_type, e);
-                log::error!(target: "application", "Failed to connect to KNX/IP network: {} (category: {})", e, e.category());
-                timer.finish_with_message(&format!("KNX/IP connection failed: {e}"));
-
-                Err(e)
+                Err(error)
             }
         }
     }
@@ -1332,7 +1132,7 @@ impl Knx {
         self.notify_connection_state_changed(KnxState::Disconnecting.into())
             .await;
 
-        if let Some(connection) = self.connection.write().await.take() {
+        if let Some(connection) = self.connection.send_replace(None) {
             connection.close().await?;
         }
 
@@ -1592,33 +1392,24 @@ impl Knx {
             "Starting Knx telegram processing with queue"
         );
 
-        let connection = self.connection.read().await;
-        let connection = connection
-            .as_ref()
-            .ok_or_else(|| {
-                log_application!(
-                    LogLevel::Error,
-                    "Cannot start: not connected to KNX network"
-                );
-                KnxError::Configuration(ConfigurationError::ValidationError {
-                    details: "Not connected to KNX network".to_string(),
-                })
-            })?
-            .clone();
+        if self.connection.borrow().is_none() {
+            return Err(ConfigurationError::ValidationError {
+                details: "Not connected to KNX network".to_string(),
+            }
+            .into());
+        }
 
         // Start the connection control task (handles disconnect/reconnect events)
-        self.start_connection_control_task(connection.clone())
-            .await?;
+        self.start_connection_control_task().await?;
 
         // Start the telegram receiving task
-        self.start_telegram_receiving_task(connection.clone())
-            .await?;
+        self.start_telegram_receiving_task().await?;
 
         // Start the telegram processing task
         self.start_telegram_processing_task().await?;
 
         // Start the outgoing telegram sending task
-        *self.sending_task.write().await = Some(self.start_telegram_sending_task(connection));
+        *self.sending_task.write().await = Some(self.start_telegram_sending_task());
 
         // Start the group-address refresh task
         #[cfg(feature = "dpt")]
@@ -1633,105 +1424,68 @@ impl Knx {
         Ok(())
     }
 
-    /// Start the telegram receiving task that feeds the queue
-    async fn start_telegram_receiving_task(&self, connection: Arc<dyn Connection>) -> Result<()> {
+    async fn start_telegram_receiving_task(&self) -> Result<()> {
+        let mut active = self.connection.subscribe();
         let shutdown_flag = self.shutdown_flag.clone();
-        let memory_monitor = self.memory_monitor.clone();
-        let performance_optimizer = self.performance_optimizer.clone();
         let telegram_queue = self.telegram_queue.clone();
         let control_tx = self.control_tx.clone();
-        let channel_id = self.channel_id.clone();
         let receive_limiter = self.receive_limiter.clone();
-
-        log_application!(LogLevel::Debug, "Starting telegram receiving task");
-
+        let memory_monitor = self.memory_monitor.clone();
+        let performance_optimizer = self.performance_optimizer.clone();
         let handle = tokio::spawn(async move {
-            log_application!(LogLevel::Info, "Telegram receiving task started");
-            let mut receive_count = 0u64;
-
-            loop {
-                // Check shutdown flag
-                if shutdown_flag.load(Ordering::SeqCst) {
-                    log_application!(
-                        LogLevel::Info,
-                        "Shutdown flag set, stopping telegram receiving (received {} telegrams)",
-                        receive_count
-                    );
-                    break;
-                }
-
-                // Use select to allow checking shutdown flag periodically
+            while !shutdown_flag.load(Ordering::SeqCst) {
+                let connection = active.borrow_and_update().clone();
+                let Some(connection) = connection else {
+                    tokio::select! {
+                        _ = active.changed() => {}
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                    }
+                    continue;
+                };
                 tokio::select! {
-                    result = connection.recv() => {
-                        let recv_timer = std::time::Instant::now();
-
-                        match result {
+                    _ = active.changed() => {}
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                    received = connection.recv() => {
+                        let is_current = active.borrow().as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &connection));
+                        if !is_current { continue; }
+                        let channel_id = connection.as_any().downcast_ref::<Tunnel>().map(Tunnel::channel_id);
+                        match received {
                             Ok(frame_data) => {
-                                receive_count += 1;
-                                log_application!(LogLevel::Trace, "Received frame data ({} bytes) - telegram #{}", frame_data.len(), receive_count);
-
-                                // Track memory usage for frame data
                                 let frame_size = frame_data.len() as u64;
-                                if let Err(e) = memory_monitor.allocate(Component::Protocol, frame_size).await {
-                                    log_application!(LogLevel::Warn, "Memory allocation failed for frame data: {}", e);
+                                if let Err(error) = memory_monitor.allocate(Component::Protocol, frame_size).await {
+                                    log_application!(LogLevel::Warn, "Receive allocation failed: {}", error);
                                     continue;
                                 }
-
-                                // Handle incoming frame based on type
-                                let parse_timer = std::time::Instant::now();
-                                let current_channel_id = *channel_id.read().await;
-                                match Self::handle_incoming_frame(&frame_data, &telegram_queue, &control_tx, current_channel_id, &connection, receive_limiter.as_deref()).await {
-                                    Ok(frame_handled) => {
-                                        let parse_duration = parse_timer.elapsed();
-                                        performance_optimizer.record_hot_path("frame_handle", parse_duration).await;
-
-                                        if frame_handled {
-                                            log_application!(LogLevel::Trace, "Successfully handled frame #{}", receive_count);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log_application!(LogLevel::Warn, "Failed to handle frame #{}: {}", receive_count, e);
-                                    }
+                                let timer = std::time::Instant::now();
+                                if let Err(error) = Self::handle_incoming_frame(
+                                    &frame_data, &telegram_queue, &control_tx, channel_id,
+                                    &connection, receive_limiter.as_deref(),
+                                ).await {
+                                    log_application!(LogLevel::Warn, "Failed to handle incoming frame: {}", error);
                                 }
-
-                                // Deallocate frame memory
                                 memory_monitor.deallocate(Component::Protocol, frame_size).await;
-
-                                // Record overall receive processing time
-                                let recv_duration = recv_timer.elapsed();
-                                performance_optimizer.record_hot_path("telegram_recv", recv_duration).await;
+                                performance_optimizer.record_hot_path("frame_handle", timer.elapsed()).await;
                             }
-                            Err(e) => {
-                                log_application!(LogLevel::Error, "Failed to receive telegram: {}", e);
-                                break;
+                            Err(error) => {
+                                let _ = control_tx.send(ConnectionControlMessage {
+                                    event: ConnectionControlEvent::TunnelLost {
+                                        channel_id: channel_id.unwrap_or(0), reason: error.to_string(),
+                                    },
+                                    connection: connection.clone(),
+                                }).await;
+                                // Avoid spinning on EOF while control handles this generation.
+                                tokio::select! {
+                                    _ = active.changed() => {}
+                                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                                }
                             }
-                        }
-                    }
-                    () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                        // Periodic check for shutdown flag
-                        if shutdown_flag.load(Ordering::SeqCst) {
-                            break;
                         }
                     }
                 }
             }
-
-            // Close the queue when receiving stops
-            telegram_queue.close().await;
-
-            log_application!(
-                LogLevel::Info,
-                "Telegram receiving task stopped (total received: {})",
-                receive_count
-            );
         });
-
-        // Store the task handle
-        {
-            let mut task = self.receiving_task.write().await;
-            *task = Some(handle);
-        }
-
+        *self.receiving_task.write().await = Some(handle);
         Ok(())
     }
 
@@ -1836,7 +1590,8 @@ impl Knx {
     }
 
     /// Start the telegram sending task that sends outgoing telegrams
-    fn start_telegram_sending_task(&self, connection: Arc<dyn Connection>) -> JoinHandle<()> {
+    fn start_telegram_sending_task(&self) -> JoinHandle<()> {
+        let mut active = self.connection.subscribe();
         let shutdown_flag = self.shutdown_flag.clone();
         let telegram_queue = self.telegram_queue.clone();
         let performance_optimizer = self.performance_optimizer.clone();
@@ -1878,6 +1633,19 @@ impl Knx {
                         telegram.priority
                     );
 
+                    let connection = loop {
+                        let connection = active.borrow_and_update().clone();
+                        if let Some(connection) = connection {
+                            break connection;
+                        }
+                        if shutdown_flag.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        tokio::select! {
+                            _ = active.changed() => {}
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                        }
+                    };
                     let frame_data =
                         Self::build_outgoing_frame_for_connection(&telegram, &connection);
 
@@ -2034,13 +1802,13 @@ impl Knx {
 
     /// Get connection statistics
     pub async fn connection_stats(&self) -> Option<crate::transport::connection::ConnectionStats> {
-        let connection = self.connection.read().await;
+        let connection = self.connection.borrow().clone();
         connection.as_ref().map(|c| c.stats())
     }
 
     /// Capture health for this instance's current connection.
     pub async fn connection_health(&self) -> Option<crate::transport::ConnectionHealth> {
-        let connection = self.connection.read().await;
+        let connection = self.connection.borrow().clone();
         connection.as_ref().map(|connection| connection.health())
     }
 
@@ -2253,7 +2021,7 @@ impl Knx {
     async fn handle_incoming_frame(
         frame_data: &[u8],
         telegram_queue: &crate::transport::queue::TelegramQueue,
-        control_tx: &mpsc::Sender<ConnectionControlEvent>,
+        control_tx: &mpsc::Sender<ConnectionControlMessage>,
         current_channel_id: Option<u8>,
         connection: &Arc<dyn Connection>,
         receive_limiter: Option<&ReceiveRateLimiter>,
@@ -2518,7 +2286,7 @@ impl Knx {
     /// Reply with a channel error for foreign requests; disconnect only our channel.
     async fn handle_disconnect_request(
         knx_frame: &crate::protocol::knxip::KnxIpFrame,
-        control_tx: &mpsc::Sender<ConnectionControlEvent>,
+        control_tx: &mpsc::Sender<ConnectionControlMessage>,
         current_channel_id: Option<u8>,
         connection: &Arc<dyn Connection>,
     ) -> Result<()> {
@@ -2556,8 +2324,11 @@ impl Knx {
         if is_our_channel {
             // Send event to send DisconnectResponse
             if let Err(e) = control_tx
-                .send(ConnectionControlEvent::SendDisconnectResponse {
-                    channel_id: disconnect_request.communication_channel_id,
+                .send(ConnectionControlMessage {
+                    event: ConnectionControlEvent::SendDisconnectResponse {
+                        channel_id: disconnect_request.communication_channel_id,
+                    },
+                    connection: connection.clone(),
                 })
                 .await
             {
@@ -2570,9 +2341,12 @@ impl Knx {
 
             // Send tunnel lost event to trigger reconnection
             if let Err(e) = control_tx
-                .send(ConnectionControlEvent::TunnelLost {
-                    channel_id: disconnect_request.communication_channel_id,
-                    reason: "DisconnectRequest received from server".to_string(),
+                .send(ConnectionControlMessage {
+                    event: ConnectionControlEvent::TunnelLost {
+                        channel_id: disconnect_request.communication_channel_id,
+                        reason: "DisconnectRequest received from server".to_string(),
+                    },
+                    connection: connection.clone(),
                 })
                 .await
             {
@@ -2820,6 +2594,10 @@ impl std::fmt::Display for KnxState {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "handover_tests.rs"]
+mod handover_tests;
 
 #[cfg(test)]
 #[path = "shutdown_tests.rs"]

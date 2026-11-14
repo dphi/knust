@@ -1,0 +1,296 @@
+use super::*;
+use crate::protocol::{
+    CemiFrame, GroupValueService, address::IndividualAddress, cemi::MessageCode,
+};
+use crate::transport::{ConnectionState, ConnectionStats};
+use std::sync::atomic::AtomicUsize;
+use tokio::sync::Mutex;
+use tokio::time::{Duration, timeout};
+
+struct Peer {
+    incoming: Mutex<mpsc::Receiver<Vec<u8>>>,
+    outgoing: mpsc::Sender<Vec<u8>>,
+    closes: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl Connection for Peer {
+    async fn send(&self, frame: &[u8]) -> Result<()> {
+        self.outgoing.send(frame.to_vec()).await.unwrap();
+        Ok(())
+    }
+    async fn recv(&self) -> Result<Vec<u8>> {
+        self.incoming
+            .lock()
+            .await
+            .recv()
+            .await
+            .ok_or(crate::error::TransportError::ConnectionClosed.into())
+    }
+    async fn close(&self) -> Result<()> {
+        self.closes.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn state(&self) -> ConnectionState {
+        ConnectionState::Connected
+    }
+    fn stats(&self) -> ConnectionStats {
+        ConnectionStats::default()
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+fn peer() -> (Arc<Peer>, mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
+    let (tx, rx) = mpsc::channel(8);
+    let (sent, received) = mpsc::channel(8);
+    (
+        Arc::new(Peer {
+            incoming: Mutex::new(rx),
+            outgoing: sent,
+            closes: AtomicUsize::new(0),
+        }),
+        tx,
+        received,
+    )
+}
+
+async fn knx() -> Knx {
+    Knx::new(ConnectionConfig {
+        connection_type: ConnectionType::Routing,
+        auto_reconnect: false,
+        ..Default::default()
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn sender_uses_replacement_connection() {
+    let knx = knx().await;
+    let (old, _old_tx, mut old_sent) = peer();
+    let (new, _new_tx, mut new_sent) = peer();
+    knx.connection.send_replace(Some(old.clone()));
+    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    let telegram = Telegram::group_write(GroupAddress::try_from_raw(1).unwrap(), vec![1]);
+    knx.send_telegram(&telegram).await.unwrap();
+    timeout(Duration::from_secs(1), old_sent.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    knx.connection.send_replace(Some(new));
+    knx.send_telegram(&telegram).await.unwrap();
+    timeout(Duration::from_secs(1), new_sent.recv())
+        .await
+        .expect("sender retained old connection")
+        .unwrap();
+    assert!(old_sent.try_recv().is_err());
+    knx.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn receiver_uses_replacement_and_keeps_queue_open_after_socket_failure() {
+    let knx = knx().await;
+    let (old, old_tx, _old_sent) = peer();
+    let (new, new_tx, _new_sent) = peer();
+    knx.connection.send_replace(Some(old.clone()));
+    knx.start_telegram_receiving_task().await.unwrap();
+    tokio::task::yield_now().await;
+    drop(old_tx);
+    tokio::task::yield_now().await;
+    assert!(
+        knx.send_telegram(&Telegram::group_read(
+            GroupAddress::try_from_raw(1).unwrap()
+        ))
+        .await
+        .is_ok(),
+        "socket loss closed shared queue"
+    );
+    knx.connection.send_replace(Some(new));
+    let cemi = CemiFrame::new(
+        MessageCode::LDataInd,
+        IndividualAddress::new(1, 1, 2),
+        Address::Group(GroupAddress::try_from_raw(1).unwrap()),
+        GroupValueService::Write(vec![1]).encode(),
+    );
+    let frame = crate::protocol::knxip::KnxIpFrame::new(
+        crate::protocol::knxip::ServiceType::RoutingIndication,
+        cemi.serialize(),
+    );
+    new_tx.send(frame.serialize()).await.unwrap();
+    let received = timeout(
+        Duration::from_secs(1),
+        knx.telegram_queue.dequeue_incoming(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(received.payload, [1]);
+    knx.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn stale_loss_event_cannot_close_replacement_connection() {
+    let knx = knx().await;
+    let (old, _old_tx, _old_sent) = peer();
+    let (new, _new_tx, _new_sent) = peer();
+    knx.connection.send_replace(Some(old.clone()));
+    knx.start_connection_control_task().await.unwrap();
+    knx.connection.send_replace(Some(new.clone()));
+    knx.control_tx
+        .send(ConnectionControlMessage {
+            event: ConnectionControlEvent::TunnelLost {
+                channel_id: 0,
+                reason: "old socket failed".into(),
+            },
+            connection: old,
+        })
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        new.closes.load(Ordering::SeqCst),
+        0,
+        "stale event closed healthy replacement"
+    );
+    knx.stop().await;
+}
+
+#[tokio::test]
+async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
+    use crate::protocol::knxip::{
+        ConnectResponse, DisconnectRequest, DisconnectResponse, Hpai, KnxIpFrame, ServiceType,
+        TunnellingRequest,
+    };
+    use tokio::net::UdpSocket;
+    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let gateway = socket.local_addr().unwrap();
+    let (connected_tx, mut connected_rx) = mpsc::channel(8);
+    let (written_tx, mut written_rx) = mpsc::channel(8);
+    let server = tokio::spawn({
+        let socket = socket.clone();
+        async move {
+            let mut bytes = [0; 1024];
+            loop {
+                let (len, peer) = socket.recv_from(&mut bytes).await.unwrap();
+                let frame = KnxIpFrame::parse(&bytes[..len]).unwrap();
+                match frame.header.service_type {
+                    ServiceType::ConnectRequest => {
+                        let response = ConnectResponse {
+                            channel_id: 7,
+                            status: 0,
+                            data_endpoint: Hpai::new(gateway),
+                            crd: vec![4, 4, 0x11, 1],
+                            assigned_address: None,
+                        };
+                        socket
+                            .send_to(
+                                &KnxIpFrame::new(
+                                    ServiceType::ConnectResponse,
+                                    response.serialize(),
+                                )
+                                .serialize(),
+                                peer,
+                            )
+                            .await
+                            .unwrap();
+                        connected_tx.send(peer).await.unwrap();
+                    }
+                    ServiceType::DisconnectRequest => {
+                        socket
+                            .send_to(
+                                &KnxIpFrame::new(
+                                    ServiceType::DisconnectResponse,
+                                    DisconnectResponse::new(7, 0).serialize(),
+                                )
+                                .serialize(),
+                                peer,
+                            )
+                            .await
+                            .unwrap();
+                    }
+                    ServiceType::TunnellingRequest => {
+                        let request = TunnellingRequest::parse(&frame.body).unwrap();
+                        let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
+                        let service =
+                            GroupValueService::decode(cemi.tpci, &cemi.apci_data).unwrap();
+                        written_tx
+                            .send((peer, service.payload().unwrap().to_vec()))
+                            .await
+                            .unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+    let knx = Knx::new(ConnectionConfig {
+        connection_type: ConnectionType::Tunneling,
+        gateway_ip: Some(gateway.ip()),
+        gateway_port: Some(gateway.port()),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let (values_tx, mut values_rx) = mpsc::channel(8);
+    struct Received(mpsc::Sender<u8>);
+    #[async_trait::async_trait]
+    impl TelegramCallbackFn for Received {
+        async fn call(&self, telegram: &Telegram) {
+            self.0.send(telegram.payload[0]).await.unwrap();
+        }
+    }
+    knx.register_telegram_callback(Received(values_tx)).await;
+    timeout(Duration::from_secs(2), knx.connect())
+        .await
+        .unwrap()
+        .unwrap();
+    knx.start().await.unwrap();
+    for value in 1..=3 {
+        let peer = timeout(Duration::from_secs(2), connected_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        knx.send_telegram(&Telegram::group_write(
+            GroupAddress::try_from_raw(1).unwrap(),
+            vec![value],
+        ))
+        .await
+        .unwrap();
+        let (sender, payload) = timeout(Duration::from_secs(2), written_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(sender, peer);
+        assert_eq!(payload, [value]);
+        let cemi = CemiFrame::new(
+            MessageCode::LDataInd,
+            IndividualAddress::new(1, 1, 2),
+            Address::Group(GroupAddress::try_from_raw(1).unwrap()),
+            GroupValueService::Write(vec![value]).encode(),
+        );
+        let incoming = KnxIpFrame::new(
+            ServiceType::TunnellingRequest,
+            TunnellingRequest::new(7, 0, cemi.serialize()).serialize(),
+        );
+        socket.send_to(&incoming.serialize(), peer).await.unwrap();
+        assert_eq!(
+            timeout(Duration::from_secs(2), values_rx.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            value
+        );
+        if value < 3 {
+            let disconnect = KnxIpFrame::new(
+                ServiceType::DisconnectRequest,
+                DisconnectRequest::new(7, Hpai::new(gateway)).serialize(),
+            );
+            socket.send_to(&disconnect.serialize(), peer).await.unwrap();
+        }
+    }
+    knx.shutdown().await.unwrap();
+    server.abort();
+    let _ = server.await;
+}
