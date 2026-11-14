@@ -188,6 +188,7 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::SceneInfo(v) => Self::SceneInfo(v.value()),
             DptView::CombinedInfoOnOff(v) => Self::CombinedInfoOnOff(v.value()),
             DptView::ChannelActivation24(v) => Self::ChannelActivation24(v.value()),
+            DptView::Code(v) => Self::String(v.value()),
             DptView::Time(v) => Self::Time {
                 day: v.day(),
                 hour: v.hour(),

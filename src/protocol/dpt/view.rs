@@ -274,6 +274,19 @@ impl<'a> VersionView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct CodeView<'a>(pub(crate) &'a [u8], pub(crate) bool);
+impl<'a> CodeView<'a> {
+    #[must_use]
+    pub fn value(&self) -> String {
+        super::dpt234::decode_code(self.0, self.1).expect("validated code")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct ChannelActivation24View<'a>(pub(crate) &'a [u8]);
 impl<'a> ChannelActivation24View<'a> {
     #[must_use]
@@ -531,6 +544,7 @@ pub enum DptView<'a> {
     SceneInfo(SceneInfoView<'a>),
     CombinedInfoOnOff(CombinedInfoOnOffView<'a>),
     ChannelActivation24(ChannelActivation24View<'a>),
+    Code(CodeView<'a>),
     Time(TimeView<'a>),
     Date(DateView<'a>),
     DateTime(DateTimeView<'a>),
@@ -566,6 +580,7 @@ impl<'a> DptView<'a> {
             | Self::SceneInfo(_)
             | Self::CombinedInfoOnOff(_)
             | Self::ChannelActivation24(_)
+            | Self::Code(_)
             | Self::Time(_)
             | Self::Date(_)
             | Self::DateTime(_)
@@ -605,6 +620,7 @@ impl<'a> DptView<'a> {
             Self::SceneInfo(v) => v.raw(),
             Self::CombinedInfoOnOff(v) => v.raw(),
             Self::ChannelActivation24(v) => v.raw(),
+            Self::Code(v) => v.raw(),
             Self::Time(v) => v.raw(),
             Self::Date(v) => v.raw(),
             Self::DateTime(v) => v.raw(),
@@ -651,6 +667,7 @@ impl DptView<'_> {
             Self::SceneInfo(v) => v.value().to_string(),
             Self::CombinedInfoOnOff(v) => v.value().to_string(),
             Self::ChannelActivation24(v) => v.value().to_string(),
+            Self::Code(v) => v.value(),
             Self::Time(v) => {
                 let base = format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second());
                 match weekday_name(v.day()) {
@@ -993,7 +1010,7 @@ impl DptType {
     /// Returns [`ProtocolError::DptError`] if `input` doesn't parse into a
     /// value this DPT can encode, or if the parsed value is out of range.
     pub fn parse(&self, input: &str) -> Result<Vec<u8>> {
-        let input = if matches!(self.main(), 4 | 16) {
+        let input = if matches!(self.main(), 4 | 16 | 234) {
             input
         } else {
             input.trim()
@@ -1088,6 +1105,7 @@ impl DptType {
             26 => s.parse().map(DptPayload::SceneInfo),
             27 => s.parse().map(DptPayload::CombinedInfoOnOff),
             30 => s.parse().map(DptPayload::ChannelActivation24),
+            234 => Ok(DptPayload::String(s.to_string())),
             232 => parse_rgb(s).ok_or_else(|| {
                 bad(format!(
                     "cannot parse {s:?} as RGB (try \"RGB(r, g, b)\" or \"#RRGGBB\")"
