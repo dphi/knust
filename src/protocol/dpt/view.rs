@@ -287,6 +287,19 @@ impl<'a> CodeView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct PrioritisedModeControlView<'a>(pub(crate) &'a [u8]);
+impl<'a> PrioritisedModeControlView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt236::PrioritisedModeControl {
+        super::dpt236::PrioritisedModeControl::decode(self.0[0])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct MBusAddressView<'a>(pub(crate) &'a [u8]);
 impl<'a> MBusAddressView<'a> {
     #[must_use]
@@ -558,6 +571,7 @@ pub enum DptView<'a> {
     CombinedInfoOnOff(CombinedInfoOnOffView<'a>),
     ChannelActivation24(ChannelActivation24View<'a>),
     MBusAddress(MBusAddressView<'a>),
+    PrioritisedModeControl(PrioritisedModeControlView<'a>),
     Code(CodeView<'a>),
     Time(TimeView<'a>),
     Date(DateView<'a>),
@@ -595,6 +609,7 @@ impl<'a> DptView<'a> {
             | Self::CombinedInfoOnOff(_)
             | Self::ChannelActivation24(_)
             | Self::MBusAddress(_)
+            | Self::PrioritisedModeControl(_)
             | Self::Code(_)
             | Self::Time(_)
             | Self::Date(_)
@@ -636,6 +651,7 @@ impl<'a> DptView<'a> {
             Self::CombinedInfoOnOff(v) => v.raw(),
             Self::ChannelActivation24(v) => v.raw(),
             Self::MBusAddress(v) => v.raw(),
+            Self::PrioritisedModeControl(v) => v.raw(),
             Self::Code(v) => v.raw(),
             Self::Time(v) => v.raw(),
             Self::Date(v) => v.raw(),
@@ -684,6 +700,7 @@ impl DptView<'_> {
             Self::CombinedInfoOnOff(v) => v.value().to_string(),
             Self::ChannelActivation24(v) => v.value().to_string(),
             Self::MBusAddress(v) => v.value().to_string(),
+            Self::PrioritisedModeControl(v) => v.value().to_string(),
             Self::Code(v) => v.value(),
             Self::Time(v) => {
                 let base = format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second());
@@ -1123,6 +1140,7 @@ impl DptType {
             27 => s.parse().map(DptPayload::CombinedInfoOnOff),
             30 => s.parse().map(DptPayload::ChannelActivation24),
             230 => s.parse().map(DptPayload::MBusAddress),
+            236 => s.parse().map(DptPayload::PrioritisedModeControl),
             234 => Ok(DptPayload::String(s.to_string())),
             232 => parse_rgb(s).ok_or_else(|| {
                 bad(format!(

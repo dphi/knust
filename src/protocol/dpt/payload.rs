@@ -23,6 +23,7 @@ pub enum DptPayload {
     CombinedInfoOnOff(super::dpt27::CombinedInfoOnOff),
     ChannelActivation24(super::dpt30::ChannelActivation24),
     MBusAddress(super::dpt230::MBusAddress),
+    PrioritisedModeControl(super::dpt236::PrioritisedModeControl),
     Time {
         day: u8,
         hour: u8,
@@ -122,6 +123,7 @@ impl DptPayload {
             Self::CombinedInfoOnOff(v) => v.to_string(),
             Self::ChannelActivation24(v) => v.to_string(),
             Self::MBusAddress(v) => v.to_string(),
+            Self::PrioritisedModeControl(v) => v.to_string(),
             Self::Scene(n) => format!("Scene {n}"),
             Self::SceneControl { scene, learn } => format!(
                 "Scene {} ({})",
@@ -191,6 +193,7 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::CombinedInfoOnOff(v) => Self::CombinedInfoOnOff(v.value()),
             DptView::ChannelActivation24(v) => Self::ChannelActivation24(v.value()),
             DptView::MBusAddress(v) => Self::MBusAddress(v.value()),
+            DptView::PrioritisedModeControl(v) => Self::PrioritisedModeControl(v.value()),
             DptView::Code(v) => Self::String(v.value()),
             DptView::Time(v) => Self::Time {
                 day: v.day(),

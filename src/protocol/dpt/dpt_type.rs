@@ -3,9 +3,9 @@ use super::unit::Unit;
 use super::view::{
     BoolView, ChannelActivation24View, CharacterView, CodeView, CombinedInfoOnOffView,
     Control2View, ControlView, DateTimeView, DateView, DoubleNibbleView, DptView, EnumView,
-    Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, MBusAddressView, RgbView,
-    RgbwView, SceneInfoView, SceneView, StrView, TimeView, U8View, U16View, U32View, VersionView,
-    XyyView,
+    Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, MBusAddressView,
+    PrioritisedModeControlView, RgbView, RgbwView, SceneInfoView, SceneView, StrView, TimeView,
+    U8View, U16View, U32View, VersionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -249,6 +249,7 @@ pub enum DptType {
     CombinedInfoOnOff = 2_700_001,
     ChannelActivation24 = 3_001_010,
     MBusAddress = 23_001_000,
+    PrioritisedModeControl = 23_600_001,
     LanguageCodeAlpha2 = 23_400_001,
     RegionCodeAlpha2 = 23_400_002,
 
@@ -471,7 +472,7 @@ impl DptType {
     #[must_use]
     pub fn byte_length(&self) -> usize {
         match self.main() {
-            1..=6 | 17 | 18 | 20 | 25 | 26 => 1,
+            1..=6 | 17 | 18 | 20 | 25 | 26 | 236 => 1,
             7..=9 | 217 | 234 => 2,
             10 | 11 | 30 | 232 => 3,
             12..=14 | 27 => 4,
@@ -703,6 +704,9 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            236 => Ok(DptView::PrioritisedModeControl(PrioritisedModeControlView(
+                bytes,
+            ))),
             234 => {
                 super::dpt234::decode_code(bytes, self.sub() == 2)?;
                 Ok(DptView::Code(CodeView(bytes, self.sub() == 2)))
@@ -991,6 +995,7 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (236, DptPayload::PrioritisedModeControl(value)) => Ok(vec![value.encode()?]),
             (234, DptPayload::String(value)) => {
                 Ok(super::dpt234::encode_code(value, self.sub() == 2)?.to_vec())
             }
