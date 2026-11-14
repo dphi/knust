@@ -30,7 +30,8 @@ pub mod dpt230;
 pub mod dpt232; // RGB Color
 pub mod dpt234;
 pub mod dpt235;
-pub mod dpt236; // Tariff Active Energy
+pub mod dpt236;
+pub mod dpt238; // Tariff Active Energy
 pub mod dpt242; // XYY Color
 pub mod dpt25;
 pub mod dpt251;
@@ -83,6 +84,7 @@ pub use dpt232::*;
 pub use dpt234::*;
 pub use dpt235::*;
 pub use dpt236::*;
+pub use dpt238::*;
 pub use dpt242::*;
 pub use dpt251::*;
 pub use group_registry::{GroupAddressRegistry, GroupAddressState};
@@ -90,10 +92,10 @@ pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
     BoolView, ChannelActivation24View, CharacterView, CodeView, CombinedInfoOnOffView,
-    Control2View, ControlView, DateTimeView, DateView, DoubleNibbleView, DptView, EnumView,
-    Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, MBusAddressView,
-    PrioritisedModeControlView, RgbView, RgbwView, SceneInfoView, SceneView, StrView, TimeView,
-    U8View, U16View, U32View, VersionView, XyyView,
+    Control2View, ControlView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
+    DptView, EnumView, Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View,
+    MBusAddressView, PrioritisedModeControlView, RgbView, RgbwView, SceneConfigView, SceneInfoView,
+    SceneView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -654,6 +656,8 @@ impl DptRegistry {
         registry.register::<DPTChannelActivation24>();
         registry.register::<DPTMBusAddress>();
         registry.register::<DPTPrioritisedModeControl>();
+        registry.register::<DPTSceneConfig>();
+        registry.register::<DPTDALIDiagnostics>();
         registry.register::<DPTLanguageCodeAlpha2ASCII>();
         registry.register::<DPTRegionCodeAlpha2ASCII>();
         registry.register::<DPTActiveEnergy8Byte>();

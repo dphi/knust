@@ -2,10 +2,10 @@ use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
     BoolView, ChannelActivation24View, CharacterView, CodeView, CombinedInfoOnOffView,
-    Control2View, ControlView, DateTimeView, DateView, DoubleNibbleView, DptView, EnumView,
-    Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View, MBusAddressView,
-    PrioritisedModeControlView, RgbView, RgbwView, SceneInfoView, SceneView, StrView, TimeView,
-    U8View, U16View, U32View, VersionView, XyyView,
+    Control2View, ControlView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
+    DptView, EnumView, Float2ByteView, Float4ByteView, I8View, I16View, I32View, I64View,
+    MBusAddressView, PrioritisedModeControlView, RgbView, RgbwView, SceneConfigView, SceneInfoView,
+    SceneView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -250,6 +250,8 @@ pub enum DptType {
     ChannelActivation24 = 3_001_010,
     MBusAddress = 23_001_000,
     PrioritisedModeControl = 23_600_001,
+    SceneConfig = 23_800_001,
+    DALIDiagnostics = 23_800_600,
     LanguageCodeAlpha2 = 23_400_001,
     RegionCodeAlpha2 = 23_400_002,
 
@@ -472,7 +474,7 @@ impl DptType {
     #[must_use]
     pub fn byte_length(&self) -> usize {
         match self.main() {
-            1..=6 | 17 | 18 | 20 | 25 | 26 | 236 => 1,
+            1..=6 | 17 | 18 | 20 | 25 | 26 | 236 | 238 => 1,
             7..=9 | 217 | 234 => 2,
             10 | 11 | 30 | 232 => 3,
             12..=14 | 27 => 4,
@@ -704,6 +706,8 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            238 if self.sub() == 1 => Ok(DptView::SceneConfig(SceneConfigView(bytes))),
+            238 => Ok(DptView::DALIDiagnostics(DALIDiagnosticsView(bytes))),
             236 => Ok(DptView::PrioritisedModeControl(PrioritisedModeControlView(
                 bytes,
             ))),
@@ -996,6 +1000,10 @@ impl DptType {
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
             (236, DptPayload::PrioritisedModeControl(value)) => Ok(vec![value.encode()?]),
+            (238, DptPayload::SceneConfig(value)) if self.sub() == 1 => Ok(vec![value.encode()?]),
+            (238, DptPayload::DALIDiagnostics(value)) if self.sub() == 600 => {
+                Ok(vec![value.encode()?])
+            }
             (234, DptPayload::String(value)) => {
                 Ok(super::dpt234::encode_code(value, self.sub() == 2)?.to_vec())
             }

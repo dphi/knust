@@ -24,6 +24,8 @@ pub enum DptPayload {
     ChannelActivation24(super::dpt30::ChannelActivation24),
     MBusAddress(super::dpt230::MBusAddress),
     PrioritisedModeControl(super::dpt236::PrioritisedModeControl),
+    SceneConfig(super::dpt238::SceneConfig),
+    DALIDiagnostics(super::dpt238::DALIDiagnostics),
     Time {
         day: u8,
         hour: u8,
@@ -124,6 +126,8 @@ impl DptPayload {
             Self::ChannelActivation24(v) => v.to_string(),
             Self::MBusAddress(v) => v.to_string(),
             Self::PrioritisedModeControl(v) => v.to_string(),
+            Self::SceneConfig(v) => v.to_string(),
+            Self::DALIDiagnostics(v) => v.to_string(),
             Self::Scene(n) => format!("Scene {n}"),
             Self::SceneControl { scene, learn } => format!(
                 "Scene {} ({})",
@@ -194,6 +198,8 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::ChannelActivation24(v) => Self::ChannelActivation24(v.value()),
             DptView::MBusAddress(v) => Self::MBusAddress(v.value()),
             DptView::PrioritisedModeControl(v) => Self::PrioritisedModeControl(v.value()),
+            DptView::SceneConfig(v) => Self::SceneConfig(v.value()),
+            DptView::DALIDiagnostics(v) => Self::DALIDiagnostics(v.value()),
             DptView::Code(v) => Self::String(v.value()),
             DptView::Time(v) => Self::Time {
                 day: v.day(),

@@ -287,6 +287,31 @@ impl<'a> CodeView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct SceneConfigView<'a>(pub(crate) &'a [u8]);
+impl<'a> SceneConfigView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt238::SceneConfig {
+        super::dpt238::SceneConfig::decode(self.0[0])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+#[derive(Debug, Clone, Copy)]
+pub struct DALIDiagnosticsView<'a>(pub(crate) &'a [u8]);
+impl<'a> DALIDiagnosticsView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt238::DALIDiagnostics {
+        super::dpt238::DALIDiagnostics::decode(self.0[0])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct PrioritisedModeControlView<'a>(pub(crate) &'a [u8]);
 impl<'a> PrioritisedModeControlView<'a> {
     #[must_use]
@@ -572,6 +597,8 @@ pub enum DptView<'a> {
     ChannelActivation24(ChannelActivation24View<'a>),
     MBusAddress(MBusAddressView<'a>),
     PrioritisedModeControl(PrioritisedModeControlView<'a>),
+    SceneConfig(SceneConfigView<'a>),
+    DALIDiagnostics(DALIDiagnosticsView<'a>),
     Code(CodeView<'a>),
     Time(TimeView<'a>),
     Date(DateView<'a>),
@@ -610,6 +637,8 @@ impl<'a> DptView<'a> {
             | Self::ChannelActivation24(_)
             | Self::MBusAddress(_)
             | Self::PrioritisedModeControl(_)
+            | Self::SceneConfig(_)
+            | Self::DALIDiagnostics(_)
             | Self::Code(_)
             | Self::Time(_)
             | Self::Date(_)
@@ -652,6 +681,8 @@ impl<'a> DptView<'a> {
             Self::ChannelActivation24(v) => v.raw(),
             Self::MBusAddress(v) => v.raw(),
             Self::PrioritisedModeControl(v) => v.raw(),
+            Self::SceneConfig(v) => v.raw(),
+            Self::DALIDiagnostics(v) => v.raw(),
             Self::Code(v) => v.raw(),
             Self::Time(v) => v.raw(),
             Self::Date(v) => v.raw(),
@@ -701,6 +732,8 @@ impl DptView<'_> {
             Self::ChannelActivation24(v) => v.value().to_string(),
             Self::MBusAddress(v) => v.value().to_string(),
             Self::PrioritisedModeControl(v) => v.value().to_string(),
+            Self::SceneConfig(v) => v.value().to_string(),
+            Self::DALIDiagnostics(v) => v.value().to_string(),
             Self::Code(v) => v.value(),
             Self::Time(v) => {
                 let base = format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second());
@@ -1141,6 +1174,8 @@ impl DptType {
             30 => s.parse().map(DptPayload::ChannelActivation24),
             230 => s.parse().map(DptPayload::MBusAddress),
             236 => s.parse().map(DptPayload::PrioritisedModeControl),
+            238 if self.sub() == 1 => s.parse().map(DptPayload::SceneConfig),
+            238 => s.parse().map(DptPayload::DALIDiagnostics),
             234 => Ok(DptPayload::String(s.to_string())),
             232 => parse_rgb(s).ok_or_else(|| {
                 bad(format!(
