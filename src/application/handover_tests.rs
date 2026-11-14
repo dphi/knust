@@ -172,11 +172,13 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
         let socket = socket.clone();
         async move {
             let mut bytes = [0; 1024];
+            let mut generation = 0;
             loop {
                 let (len, peer) = socket.recv_from(&mut bytes).await.unwrap();
                 let frame = KnxIpFrame::parse(&bytes[..len]).unwrap();
                 match frame.header.service_type {
                     ServiceType::ConnectRequest => {
+                        generation += 1;
                         let response = ConnectResponse {
                             channel_id: 7,
                             status: 0,
@@ -211,7 +213,23 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
                             .unwrap();
                     }
                     ServiceType::TunnellingRequest => {
+                        // Drop both requests on this session to force send-triggered reconnect.
+                        if generation == 2 {
+                            continue;
+                        }
                         let request = TunnellingRequest::parse(&frame.body).unwrap();
+                        let ack = crate::protocol::knxip::TunnellingAck::new_ok(
+                            request.communication_channel_id,
+                            request.sequence_counter,
+                        );
+                        socket
+                            .send_to(
+                                &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize())
+                                    .serialize(),
+                                peer,
+                            )
+                            .await
+                            .unwrap();
                         let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
                         let service =
                             GroupValueService::decode(cemi.tpci, &cemi.apci_data).unwrap();
@@ -248,7 +266,7 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
         .unwrap();
     knx.start().await.unwrap();
     for value in 1..=3 {
-        let peer = timeout(Duration::from_secs(2), connected_rx.recv())
+        let mut peer = timeout(Duration::from_secs(2), connected_rx.recv())
             .await
             .unwrap()
             .unwrap();
@@ -258,10 +276,16 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
         ))
         .await
         .unwrap();
-        let (sender, payload) = timeout(Duration::from_secs(2), written_rx.recv())
+        let (sender, payload) = timeout(Duration::from_secs(5), written_rx.recv())
             .await
             .unwrap()
             .unwrap();
+        if sender != peer {
+            peer = timeout(Duration::from_secs(2), connected_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
         assert_eq!(sender, peer);
         assert_eq!(payload, [value]);
         let cemi = CemiFrame::new(

@@ -65,6 +65,7 @@ pub struct Tunnel {
     connection_timeout: Duration,
     established_at: Option<Instant>,
     router: Arc<FrameRouter>,
+    send_lock: tokio::sync::Mutex<()>,
     heartbeat: std::sync::RwLock<Option<Arc<HeartbeatMonitor>>>,
     #[cfg(feature = "secure")]
     secure_session: Option<Arc<tokio::sync::RwLock<SecureSession>>>,
@@ -143,6 +144,7 @@ impl Tunnel {
             connection_timeout,
             established_at: None,
             router: Arc::new(FrameRouter::new()),
+            send_lock: tokio::sync::Mutex::new(()),
             heartbeat: std::sync::RwLock::new(None),
             #[cfg(feature = "secure")]
             secure_session: None,
@@ -650,6 +652,67 @@ impl Tunnel {
         }
     }
 
+    /// High-level UDP request delivery; raw send_frame remains unacknowledged.
+    pub(crate) async fn send_acknowledged(
+        &self,
+        data: &[u8],
+        attempts: u8,
+        transmitted: &mut Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Result<()> {
+        let frame = KnxIpFrame::parse(data)?;
+        let ack_service = match frame.header.service_type {
+            ServiceType::TunnellingRequest => ServiceType::TunnellingAck,
+            ServiceType::DeviceConfigurationRequest => ServiceType::DeviceConfigurationAck,
+            _ => return self.send_signalled(data, transmitted).await,
+        };
+        if self.kind == TransportKind::Tcp {
+            return self.send_signalled(data, transmitted).await;
+        }
+        if frame.body.len() < 4 || frame.body[0] != 4 || frame.body[1] != self.channel_id {
+            return Err(ProtocolError::InvalidFrame {
+                details: "Invalid tunnel request channel/header".into(),
+            }
+            .into());
+        }
+        let _guard = self.send_lock.lock().await;
+        for attempt in 0..attempts {
+            let ack = self
+                .router
+                .register_ack(ack_service, self.channel_id, frame.body[2]);
+            self.send_signalled(data, transmitted).await?;
+            match timeout(Duration::from_secs(1), ack).await {
+                Ok(Ok(reply)) if reply.body[3] == 0 => return Ok(()),
+                Ok(Ok(reply)) if attempt + 1 == attempts => {
+                    return Err(ProtocolError::InvalidFrame {
+                        details: format!("Tunnel request rejected: status 0x{:02X}", reply.body[3]),
+                    }
+                    .into());
+                }
+                _ => {}
+            }
+        }
+        Err(TransportError::Timeout { timeout_ms: 1000 }.into())
+    }
+
+    async fn send_signalled(
+        &self,
+        data: &[u8],
+        transmitted: &mut Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Result<()> {
+        if let Some(tx) = transmitted.as_mut() {
+            tokio::select! {
+                result = self.send_frame(data) => result?,
+                _ = tx.closed() => return Err(TransportError::QueueClosed.into()),
+            }
+        } else {
+            self.send_frame(data).await?;
+        }
+        if let Some(tx) = transmitted.take() {
+            let _ = tx.send(());
+        }
+        Ok(())
+    }
+
     /// Receive one complete KNX/IP frame (decrypting if a secure session exists).
     ///
     /// # Errors
@@ -732,7 +795,10 @@ impl Tunnel {
                     () = tokio::time::sleep(interval) => {}
                     () = task_lost.notified() => break,
                 }
-                let rx = conn.router().register(ServiceType::ConnectionstateResponse);
+                let rx = conn.router().register_channel_response(
+                    ServiceType::ConnectionstateResponse,
+                    conn.channel_id(),
+                );
                 let t0 = Instant::now();
                 if conn.send_connectionstate_request().await.is_err() {
                     let _ = event_tx.send(HeartbeatEvent {

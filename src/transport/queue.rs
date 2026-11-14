@@ -57,7 +57,16 @@ struct PriorityTelegram {
     receipt: Option<SendReceipt>,
 }
 
-pub(crate) type SendReceipt = tokio::sync::oneshot::Sender<Result<()>>;
+#[derive(Debug)]
+pub(crate) struct SendReceipt {
+    pub(crate) transmitted: Option<tokio::sync::oneshot::Sender<()>>,
+    pub(crate) completed: tokio::sync::oneshot::Sender<Result<()>>,
+}
+impl SendReceipt {
+    pub(crate) fn is_closed(&self) -> bool {
+        self.transmitted.as_ref().is_some_and(|tx| tx.is_closed())
+    }
+}
 
 impl PartialEq for PriorityTelegram {
     fn eq(&self, other: &Self) -> bool {
@@ -174,10 +183,21 @@ impl TelegramQueue {
     pub(crate) async fn enqueue_outgoing_tracked(
         &self,
         telegram: Telegram,
-    ) -> Result<tokio::sync::oneshot::Receiver<Result<()>>> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.enqueue_outgoing_inner(telegram, Some(tx)).await?;
-        Ok(rx)
+    ) -> Result<(
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Receiver<Result<()>>,
+    )> {
+        let (transmitted, sent) = tokio::sync::oneshot::channel();
+        let (completed, result) = tokio::sync::oneshot::channel();
+        self.enqueue_outgoing_inner(
+            telegram,
+            Some(SendReceipt {
+                transmitted: Some(transmitted),
+                completed,
+            }),
+        )
+        .await?;
+        Ok((sent, result))
     }
 
     async fn enqueue_outgoing_inner(

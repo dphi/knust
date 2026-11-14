@@ -1208,11 +1208,13 @@ impl Knx {
         let result = async {
             let mut read = Telegram::group_read(address);
             read.source = self.config.individual_address;
-            let sent = self.telegram_queue.enqueue_outgoing_tracked(read).await?;
-            tokio::time::timeout(std::time::Duration::from_secs(10), sent)
-                .await
-                .map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })?
-                .map_err(|_| crate::error::TransportError::QueueClosed)??;
+            let (sent, completed) = self.telegram_queue.enqueue_outgoing_tracked(read).await?;
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                tokio::select! {
+                    sent = sent => sent.map_err(|_| crate::error::TransportError::QueueClosed.into()),
+                    result = completed => result.map_err(|_| crate::error::TransportError::QueueClosed)?,
+                }
+            }).await.map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })??;
             match tokio::time::timeout(timeout_duration, rx.recv()).await {
                 Ok(Some(payload)) => Ok(payload),
                 _ => Err(DeviceError::CommunicationTimeout {
@@ -1474,6 +1476,10 @@ impl Knx {
                         let channel_id = connection.as_any().downcast_ref::<Tunnel>().map(Tunnel::channel_id);
                         match received {
                             Ok(frame_data) => {
+                                if let Some(tunnel) = connection.as_any().downcast_ref::<Tunnel>()
+                                    && let Ok(frame) = crate::protocol::knxip::KnxIpFrame::parse(&frame_data)
+                                    && tunnel.router().dispatch(frame).is_none()
+                                { continue; }
                                 let frame_size = frame_data.len() as u64;
                                 if let Err(error) = memory_monitor.allocate(Component::Protocol, frame_size).await {
                                     log_application!(LogLevel::Warn, "Receive allocation failed: {}", error);
@@ -1488,6 +1494,7 @@ impl Knx {
                                 }
                                 memory_monitor.deallocate(Component::Protocol, frame_size).await;
                                 performance_optimizer.record_hot_path("frame_handle", timer.elapsed()).await;
+                                performance_optimizer.record_hot_path("telegram_recv", timer.elapsed()).await;
                             }
                             Err(error) => {
                                 let _ = control_tx.send(ConnectionControlMessage {
@@ -1614,6 +1621,8 @@ impl Knx {
     /// Start the telegram sending task that sends outgoing telegrams
     fn start_telegram_sending_task(&self) -> JoinHandle<()> {
         let mut active = self.connection.subscribe();
+        let control_tx = self.control_tx.clone();
+        let auto_reconnect = self.config.auto_reconnect;
         let shutdown_flag = self.shutdown_flag.clone();
         let telegram_queue = self.telegram_queue.clone();
         let performance_optimizer = self.performance_optimizer.clone();
@@ -1624,7 +1633,7 @@ impl Knx {
             log_application!(LogLevel::Info, "Telegram sending task started");
             let mut send_count = 0u64;
 
-            loop {
+            'sending: loop {
                 // Check shutdown flag
                 if shutdown_flag.load(Ordering::SeqCst) && telegram_queue.is_empty().await {
                     log_application!(
@@ -1677,14 +1686,52 @@ impl Knx {
                     let frame_data =
                         Self::build_outgoing_frame_for_connection(&telegram, &connection);
 
-                    let result = if let Some(receipt) = receipt.as_mut() {
-                        tokio::select! {
-                            result = connection.send(&frame_data) => result,
-                            _ = receipt.closed() => continue,
+                    let mut result =
+                        Self::send_telegram_frame(&connection, &frame_data, 2, &mut receipt).await;
+                    if let Err(error) = &result {
+                        if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
+                            continue;
                         }
-                    } else {
-                        connection.send(&frame_data).await
-                    };
+                        Self::report_connection_failure(
+                            &control_tx,
+                            connection.clone(),
+                            error.to_string(),
+                        )
+                        .await;
+                        if auto_reconnect && !shutdown_flag.load(Ordering::SeqCst) {
+                            let replacement = loop {
+                                let current = active.borrow_and_update().clone();
+                                if let Some(current) = current
+                                    && !Arc::ptr_eq(&current, &connection)
+                                {
+                                    break current;
+                                }
+                                if shutdown_flag.load(Ordering::SeqCst) {
+                                    return;
+                                }
+                                if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
+                                    continue 'sending;
+                                }
+                                tokio::select! {
+                                    _ = active.changed() => {}
+                                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                                }
+                            };
+                            let frame =
+                                Self::build_outgoing_frame_for_connection(&telegram, &replacement);
+                            result =
+                                Self::send_telegram_frame(&replacement, &frame, 1, &mut receipt)
+                                    .await;
+                            if let Err(error) = &result {
+                                Self::report_connection_failure(
+                                    &control_tx,
+                                    replacement,
+                                    error.to_string(),
+                                )
+                                .await;
+                            }
+                        }
+                    }
                     match &result {
                         Ok(()) => {
                             let send_duration = send_timer.elapsed();
@@ -1707,7 +1754,7 @@ impl Knx {
                         }
                     }
                     if let Some(receipt) = receipt {
-                        let _ = receipt.send(result);
+                        let _ = receipt.completed.send(result);
                     }
                 } else {
                     // Queue is closed and empty, exit
@@ -1725,6 +1772,52 @@ impl Knx {
                 send_count
             );
         })
+    }
+
+    async fn send_telegram_frame(
+        connection: &Arc<dyn Connection>,
+        frame: &[u8],
+        attempts: u8,
+        receipt: &mut Option<crate::transport::queue::SendReceipt>,
+    ) -> Result<()> {
+        let mut untracked = None;
+        let signal = receipt
+            .as_mut()
+            .map(|receipt| &mut receipt.transmitted)
+            .unwrap_or(&mut untracked);
+        if let Some(tunnel) = connection.as_any().downcast_ref::<Tunnel>() {
+            tunnel.send_acknowledged(frame, attempts, signal).await
+        } else {
+            if let Some(tx) = signal.as_mut() {
+                tokio::select! {
+                    result = connection.send(frame) => result?,
+                    _ = tx.closed() => return Err(crate::error::TransportError::QueueClosed.into()),
+                }
+            } else {
+                connection.send(frame).await?;
+            }
+            if let Some(tx) = signal.take() {
+                let _ = tx.send(());
+            }
+            Ok(())
+        }
+    }
+
+    async fn report_connection_failure(
+        control: &mpsc::Sender<ConnectionControlMessage>,
+        connection: Arc<dyn Connection>,
+        reason: String,
+    ) {
+        let channel_id = connection
+            .as_any()
+            .downcast_ref::<Tunnel>()
+            .map_or(0, Tunnel::channel_id);
+        let _ = control
+            .send(ConnectionControlMessage {
+                event: ConnectionControlEvent::TunnelLost { channel_id, reason },
+                connection,
+            })
+            .await;
     }
 
     /// Stop processing, allowing queued work to finish within bounded deadlines.

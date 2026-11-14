@@ -187,3 +187,209 @@ async fn foreign_disconnect_replies_with_channel_error_without_losing_tunnel() {
     ));
     assert!(control_rx.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn udp_send_ignores_foreign_and_stale_acknowledgements() {
+    let (connection, peer) = connected_tunnel().await;
+    let destination = connection
+        .as_any()
+        .downcast_ref::<Tunnel>()
+        .unwrap()
+        .local_addr();
+    let knx = Knx::new(ConnectionConfig {
+        connection_type: ConnectionType::Routing,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    knx.connection.send_replace(Some(connection.clone()));
+    knx.start_telegram_receiving_task().await.unwrap();
+    for sequence in [5, 6] {
+        let data = KnxIpFrame::new(
+            ServiceType::TunnellingRequest,
+            TunnellingRequest::new(7, sequence, vec![0x11]).serialize(),
+        )
+        .serialize();
+        let sending = tokio::spawn({
+            let connection = connection.clone();
+            async move { Knx::send_telegram_frame(&connection, &data, 2, &mut None).await }
+        });
+        assert_eq!(
+            receive(&peer).await.header.service_type,
+            ServiceType::TunnellingRequest
+        );
+        for (channel, ack_sequence) in [(8, sequence), (7, sequence - 1)] {
+            let ack = TunnellingAck::new_ok(channel, ack_sequence);
+            peer.send_to(
+                &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+                destination,
+            )
+            .await
+            .unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            !sending.is_finished(),
+            "a different request's ACK confirmed this send"
+        );
+        let ack = TunnellingAck::new_ok(7, sequence);
+        peer.send_to(
+            &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+            destination,
+        )
+        .await
+        .unwrap();
+        assert!(
+            timeout(Duration::from_secs(1), sending)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_ok()
+        );
+    }
+    knx.stop().await;
+}
+
+#[tokio::test]
+async fn udp_retry_reuses_identical_sequence_and_cancellation_releases_sender() {
+    let (connection, peer) = connected_tunnel().await;
+    let destination = connection
+        .as_any()
+        .downcast_ref::<Tunnel>()
+        .unwrap()
+        .local_addr();
+    let knx = Knx::new(ConnectionConfig {
+        connection_type: ConnectionType::Routing,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    knx.connection.send_replace(Some(connection.clone()));
+    knx.start_telegram_receiving_task().await.unwrap();
+    let data = KnxIpFrame::new(
+        ServiceType::TunnellingRequest,
+        TunnellingRequest::new(7, 9, vec![0x11]).serialize(),
+    )
+    .serialize();
+    let sending = tokio::spawn({
+        let connection = connection.clone();
+        let data = data.clone();
+        async move { Knx::send_telegram_frame(&connection, &data, 2, &mut None).await }
+    });
+    let first = receive(&peer).await.serialize();
+    let mut bytes = [0; 1024];
+    let len = timeout(Duration::from_secs(2), peer.recv(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&bytes[..len], first);
+    let ack = TunnellingAck::new_ok(7, 9);
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+    assert!(sending.await.unwrap().is_ok());
+    let cancelled = tokio::spawn({
+        let connection = connection.clone();
+        let data = data.clone();
+        async move { Knx::send_telegram_frame(&connection, &data, 2, &mut None).await }
+    });
+    receive(&peer).await;
+    cancelled.abort();
+    let _ = cancelled.await;
+    let next = tokio::spawn({
+        let connection = connection.clone();
+        async move { Knx::send_telegram_frame(&connection, &data, 1, &mut None).await }
+    });
+    receive(&peer).await;
+    let ack = TunnellingAck::new(7, 9, TunnellingAck::STATUS_ERROR_SEQUENCE_NUMBER);
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+    assert!(
+        timeout(Duration::from_secs(1), next)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    knx.stop().await;
+}
+
+#[tokio::test]
+async fn read_response_can_arrive_before_tunnelling_ack() {
+    use crate::protocol::{
+        CemiFrame, GroupValueService, TelegramType,
+        address::{Address, GroupAddress, IndividualAddress},
+        cemi::MessageCode,
+    };
+    let (connection, peer) = connected_tunnel().await;
+    let destination = connection
+        .as_any()
+        .downcast_ref::<Tunnel>()
+        .unwrap()
+        .local_addr();
+    let knx = Knx::new(ConnectionConfig {
+        connection_type: ConnectionType::Routing,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    knx.connection.send_replace(Some(connection.clone()));
+    knx.start_telegram_receiving_task().await.unwrap();
+    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    let address = GroupAddress::try_from_raw(1).unwrap();
+    let reading = tokio::spawn({
+        let knx = knx.clone();
+        async move {
+            knx.read_group_value(address, Duration::from_millis(200))
+                .await
+        }
+    });
+    let outgoing = receive(&peer).await;
+    let request = TunnellingRequest::parse(&outgoing.body).unwrap();
+    let cemi = CemiFrame::new(
+        MessageCode::LDataInd,
+        IndividualAddress::new(1, 1, 1),
+        Address::Group(address),
+        GroupValueService::Response(vec![42]).encode(),
+    );
+    let response = KnxIpFrame::new(
+        ServiceType::TunnellingRequest,
+        TunnellingRequest::new(7, 0, cemi.serialize()).serialize(),
+    );
+    peer.send_to(&response.serialize(), destination)
+        .await
+        .unwrap();
+    // Feed the response through the normal callback dispatcher, not just the socket.
+    let telegram = timeout(
+        Duration::from_secs(1),
+        knx.telegram_queue.dequeue_incoming(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(telegram.telegram_type, TelegramType::GroupValueResponse);
+    knx.test_notify_telegram_received(&telegram).await;
+    assert_eq!(
+        timeout(Duration::from_millis(100), reading)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        [42]
+    );
+    let ack = TunnellingAck::new_ok(7, request.sequence_counter);
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+    knx.stop().await;
+}
