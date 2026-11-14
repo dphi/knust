@@ -963,11 +963,19 @@ impl HeartbeatHandle {
     }
 
     /// Stop the heartbeat loop and wait for its task to finish.
-    pub async fn stop(self) {
+    pub async fn stop(mut self) {
         self.lost.notify_waiters();
-        if let Some(task) = self.task {
+        if let Some(task) = self.task.take() {
             task.abort();
             let _ = task.await;
+        }
+    }
+}
+
+impl Drop for HeartbeatHandle {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
         }
     }
 }
@@ -1019,6 +1027,20 @@ mod tunneling_address_tests {
 
     fn gateway() -> SocketAddr {
         "127.0.0.1:3671".parse().unwrap()
+    }
+
+    #[tokio::test]
+    async fn dropping_heartbeat_handle_stops_its_task() {
+        let tunnel = Arc::new(Tunnel::new_udp(gateway()));
+        let weak = Arc::downgrade(&tunnel);
+        let handle = tunnel.clone().start_heartbeat("test".into());
+        drop(tunnel);
+        drop(handle);
+        tokio::task::yield_now().await;
+        assert!(
+            weak.upgrade().is_none(),
+            "heartbeat task retained the tunnel"
+        );
     }
 
     #[tokio::test]
