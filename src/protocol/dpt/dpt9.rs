@@ -1,6 +1,6 @@
 //! DPT 9.xxx - 2-byte float values (true zero-copy)
 
-use super::{DptValue, Result};
+use super::{DptType, DptValue, Result, WriteValue};
 use crate::error::ProtocolError;
 
 /// DPT 9.001 - Temperature (°C) - stores raw 2-byte representation
@@ -116,22 +116,120 @@ fn decode_2byte_float_from_bytes(bytes: [u8; 2]) -> f32 {
 }
 
 // Helper trait for aliases
-use super::DptInnerType;
 
-impl DptInnerType for Temperature {
-    type InnerType = f32;
-    fn new(value: f32) -> Self {
-        Temperature::new(value).unwrap_or(Temperature([0, 0]))
-    }
-    fn into_inner(self) -> f32 {
-        self.value()
+// Python-style aliases
+
+pub(super) fn subtype_min(sub: u16) -> f64 {
+    match sub {
+        1 => -273.0,
+        4..=8 | 28..=30 => 0.0,
+        27 => -459.6,
+        _ => -671_088.64,
     }
 }
 
-// Python-style aliases
-use crate::dpt_alias;
+pub(super) fn decode_wire_f64(bytes: &[u8]) -> f64 {
+    let raw = u16::from_be_bytes([bytes[0], bytes[1]]);
+    let mantissa = i32::from(raw & 0x07ff) - if raw & 0x8000 != 0 { 2048 } else { 0 };
+    f64::from(mantissa << ((raw >> 11) & 15)) * 0.01
+}
 
-dpt_alias!(
+pub(super) fn validate_subtype(sub: u16, value: f64) -> Result<()> {
+    let min = subtype_min(sub);
+    if !(min..=670_433.28).contains(&value) {
+        return Err(ProtocolError::DptError {
+            dpt_type: format!("9.{sub:03}"),
+            details: format!("Value {value} outside {min}..=670433.28"),
+        }
+        .into());
+    }
+    Ok(())
+}
+
+const fn subtype_number(text: &str) -> u16 {
+    let bytes = text.as_bytes();
+    let mut value = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        value = value * 10 + (bytes[i] - b'0') as u16;
+        i += 1;
+    }
+    value
+}
+
+macro_rules! dpt9_alias {
+    ($name:ident, $main:literal, $sub:literal, $base:ty, $value_type:literal, $unit:expr, $ha_class:expr) => {
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct $name($base);
+        impl $name {
+            /// Construct a subtype value without silently replacing invalid input.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error for non-finite or out-of-range values.
+            pub fn new(value: f32) -> Result<Self> {
+                let min = subtype_min(subtype_number(stringify!($sub)));
+                if !value.is_finite() || value < min as f32 {
+                    return Err(ProtocolError::DptError {
+                        dpt_type: Self::DPT_NUMBER.into(),
+                        details: "Value outside subtype range".into(),
+                    }
+                    .into());
+                }
+                let raw = <$base>::new(value)?;
+                validate_subtype(
+                    subtype_number(stringify!($sub)),
+                    decode_wire_f64(raw.as_bytes()),
+                )?;
+                Ok(Self(raw))
+            }
+            #[must_use]
+            pub fn value(&self) -> f32 {
+                self.0.value()
+            }
+        }
+        impl TryFrom<f32> for $name {
+            type Error = crate::error::KnxError;
+            fn try_from(value: f32) -> Result<Self> {
+                Self::new(value)
+            }
+        }
+        impl WriteValue<$name> for f32 {
+            fn resolve(self, _: DptType) -> Result<$name> {
+                $name::new(self)
+            }
+        }
+        impl DptValue for $name {
+            const DPT_NUMBER: &'static str = concat!(stringify!($main), ".", stringify!($sub));
+            const VALUE_TYPE: &'static str = $value_type;
+            const UNIT: Option<&'static str> = $unit;
+            const HA_DEVICE_CLASS: Option<&'static str> = $ha_class;
+            const BYTE_LENGTH: usize = 2;
+            fn from_bytes(bytes: &[u8]) -> Result<Self> {
+                let value = <$base>::from_bytes(bytes)?;
+                validate_subtype(
+                    subtype_number(stringify!($sub)),
+                    decode_wire_f64(value.as_bytes()),
+                )?;
+                Ok(Self(value))
+            }
+            fn as_bytes(&self) -> &[u8] {
+                self.0.as_bytes()
+            }
+            fn validate(&self) -> Result<()> {
+                validate_subtype(
+                    subtype_number(stringify!($sub)),
+                    decode_wire_f64(self.0.as_bytes()),
+                )
+            }
+            fn value_range() -> (f64, f64) {
+                (subtype_min(subtype_number(stringify!($sub))), 670_433.28)
+            }
+        }
+    };
+}
+
+dpt9_alias!(
     DPTTemperature,
     9,
     001,
@@ -140,7 +238,7 @@ dpt_alias!(
     Some("°C"),
     Some("temperature")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTTemperatureDifference2Byte,
     9,
     002,
@@ -149,7 +247,7 @@ dpt_alias!(
     Some("K"),
     Some("temperature")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTTemperatureA,
     9,
     003,
@@ -158,7 +256,7 @@ dpt_alias!(
     Some("K/h"),
     None
 );
-dpt_alias!(
+dpt9_alias!(
     DPTLux,
     9,
     004,
@@ -167,7 +265,7 @@ dpt_alias!(
     Some("lx"),
     Some("illuminance")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTWsp,
     9,
     005,
@@ -176,7 +274,7 @@ dpt_alias!(
     Some("m/s"),
     Some("wind_speed")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTPressure2Byte,
     9,
     006,
@@ -185,7 +283,7 @@ dpt_alias!(
     Some("Pa"),
     Some("pressure")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTHumidity,
     9,
     007,
@@ -194,7 +292,7 @@ dpt_alias!(
     Some("%"),
     Some("humidity")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTPartsPerMillion,
     9,
     008,
@@ -203,7 +301,7 @@ dpt_alias!(
     Some("ppm"),
     None
 );
-dpt_alias!(
+dpt9_alias!(
     DPTAirFlow,
     9,
     009,
@@ -212,9 +310,9 @@ dpt_alias!(
     Some("m³/h"),
     None
 );
-dpt_alias!(DPTTime1, 9, 010, Temperature, "time_1", Some("s"), None);
-dpt_alias!(DPTTime2, 9, 011, Temperature, "time_2", Some("ms"), None);
-dpt_alias!(
+dpt9_alias!(DPTTime1, 9, 010, Temperature, "time_1", Some("s"), None);
+dpt9_alias!(DPTTime2, 9, 011, Temperature, "time_2", Some("ms"), None);
+dpt9_alias!(
     DPTVoltage,
     9,
     020,
@@ -223,7 +321,7 @@ dpt_alias!(
     Some("mV"),
     Some("voltage")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTCurrent,
     9,
     021,
@@ -232,7 +330,7 @@ dpt_alias!(
     Some("mA"),
     Some("current")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTPowerDensity,
     9,
     022,
@@ -241,7 +339,7 @@ dpt_alias!(
     Some("W/m²"),
     None
 );
-dpt_alias!(
+dpt9_alias!(
     DPTKelvinPerPercent,
     9,
     023,
@@ -250,7 +348,7 @@ dpt_alias!(
     Some("K/%"),
     None
 );
-dpt_alias!(
+dpt9_alias!(
     DPTPower2Byte,
     9,
     024,
@@ -259,7 +357,7 @@ dpt_alias!(
     Some("kW"),
     Some("power")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTVolumeFlow,
     9,
     025,
@@ -268,7 +366,7 @@ dpt_alias!(
     Some("L/h"),
     None
 );
-dpt_alias!(
+dpt9_alias!(
     DPTRainAmount,
     9,
     026,
@@ -277,7 +375,7 @@ dpt_alias!(
     Some("L/m²"),
     None
 );
-dpt_alias!(
+dpt9_alias!(
     DPTTemperatureF,
     9,
     027,
@@ -286,7 +384,7 @@ dpt_alias!(
     Some("°F"),
     Some("temperature")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTWspKmh,
     9,
     028,
@@ -295,7 +393,7 @@ dpt_alias!(
     Some("km/h"),
     Some("wind_speed")
 );
-dpt_alias!(
+dpt9_alias!(
     DPTAbsoluteHumidity,
     9,
     029,
@@ -304,7 +402,7 @@ dpt_alias!(
     Some("g/m³"),
     None
 );
-dpt_alias!(
+dpt9_alias!(
     DPTConcentrationUGM3,
     9,
     030,
@@ -313,7 +411,7 @@ dpt_alias!(
     Some("μg/m³"),
     None
 );
-dpt_alias!(
+dpt9_alias!(
     DPTEnthalpy,
     9,
     60000,

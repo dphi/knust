@@ -257,9 +257,8 @@ pub trait DptValue: Sized + Send + Sync + std::fmt::Debug + Clone + PartialEq + 
 /// plain inner value), or a human string parsed against `T`'s own DPT
 /// number at runtime. This is what lets a single `write` call accept
 /// `DPTSwitch::new(true)`, `true`, or `"on"` without losing the
-/// compile-time guarantee that the *shape* of value matches the bound DPT
-/// — the string case is the only one that can still fail at runtime, same
-/// as [`DptType::parse`] always could.
+/// compile-time guarantee that the *shape* of value matches the bound DPT.
+/// Values can still fail runtime validation for their specific DPT.
 pub trait WriteValue<T: DptValue> {
     /// # Errors
     ///

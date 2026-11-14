@@ -537,7 +537,7 @@ fn test_dpt_registry() {
     assert_eq!(decoded_switch, &switch);
 
     // Test DPTTemperature
-    let temp = DPTTemperature::new(25.0);
+    let temp = DPTTemperature::new(25.0).unwrap();
     let bytes = registry.encode("9.001", &temp).unwrap();
 
     let decoded = registry.decode("9.001", &bytes).unwrap();
@@ -563,7 +563,7 @@ fn test_dpt_aliases() {
     assert_eq!(DPTBool::DPT_NUMBER, "1.002");
 
     // Test DPTTemperature alias
-    let dpt_temp = DPTTemperature::new(20.0);
+    let dpt_temp = DPTTemperature::new(20.0).unwrap();
     let bytes = dpt_temp.as_bytes();
 
     let decoded = DPTTemperature::from_bytes(bytes).unwrap();

@@ -615,6 +615,7 @@ impl DptType {
                     }
                     .into());
                 }
+                super::dpt9::validate_subtype(self.sub(), super::dpt9::decode_wire_f64(bytes))?;
                 let raw = (u16::from(bytes[0]) << 8) | u16::from(bytes[1]);
                 let m = raw & 0x07FF;
                 let sign = raw & 0x8000 != 0;
@@ -926,8 +927,10 @@ impl DptType {
             (7, DptPayload::UnsignedInt(v)) => Ok((*v as u16).to_be_bytes().to_vec()),
             (8, DptPayload::SignedInt(v)) => Ok((*v as i16).to_be_bytes().to_vec()),
             (9, DptPayload::Float(v)) => {
+                super::dpt9::validate_subtype(self.sub(), *v)?;
                 let mut bytes = [0; 2];
                 super::dpt9::encode_2byte_float_to_bytes(*v, &mut bytes)?;
+                super::dpt9::validate_subtype(self.sub(), super::dpt9::decode_wire_f64(&bytes))?;
                 Ok(bytes.to_vec())
             }
             (
