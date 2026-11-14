@@ -21,6 +21,7 @@ pub enum DptPayload {
     DoubleNibble(super::dpt25::DoubleNibble),
     SceneInfo(super::dpt26::SceneInfo),
     CombinedInfoOnOff(super::dpt27::CombinedInfoOnOff),
+    ChannelActivation24(super::dpt30::ChannelActivation24),
     Time {
         day: u8,
         hour: u8,
@@ -118,6 +119,7 @@ impl DptPayload {
             Self::DoubleNibble(v) => v.to_string(),
             Self::SceneInfo(v) => v.to_string(),
             Self::CombinedInfoOnOff(v) => v.to_string(),
+            Self::ChannelActivation24(v) => v.to_string(),
             Self::Scene(n) => format!("Scene {n}"),
             Self::SceneControl { scene, learn } => format!(
                 "Scene {} ({})",
@@ -185,6 +187,7 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::DoubleNibble(v) => Self::DoubleNibble(v.value()),
             DptView::SceneInfo(v) => Self::SceneInfo(v.value()),
             DptView::CombinedInfoOnOff(v) => Self::CombinedInfoOnOff(v.value()),
+            DptView::ChannelActivation24(v) => Self::ChannelActivation24(v.value()),
             DptView::Time(v) => Self::Time {
                 day: v.day(),
                 hour: v.hour(),

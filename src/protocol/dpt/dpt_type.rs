@@ -1,10 +1,10 @@
 use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
-    BoolView, CharacterView, CombinedInfoOnOffView, Control2View, ControlView, DateTimeView,
-    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, I8View, I16View,
-    I32View, I64View, RgbView, RgbwView, SceneInfoView, SceneView, StrView, TimeView, U8View,
-    U16View, U32View, VersionView, XyyView,
+    BoolView, ChannelActivation24View, CharacterView, CombinedInfoOnOffView, Control2View,
+    ControlView, DateTimeView, DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView,
+    Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView, SceneInfoView, SceneView,
+    StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -246,6 +246,7 @@ pub enum DptType {
     DoubleNibble = 2_501_000,
     SceneInfo = 2_600_001,
     CombinedInfoOnOff = 2_700_001,
+    ChannelActivation24 = 3_001_010,
 
     // DPT 16.xxx - String
     StringAscii = 1_600_000,
@@ -468,7 +469,7 @@ impl DptType {
         match self.main() {
             1..=6 | 17 | 18 | 20 | 25 | 26 => 1,
             7..=9 | 217 => 2,
-            10 | 11 | 232 => 3,
+            10 | 11 | 30 | 232 => 3,
             12..=14 | 27 => 4,
             16 => 14,
             19 | 29 => 8,
@@ -696,6 +697,7 @@ impl DptType {
             217 => Ok(DptView::Version(VersionView(bytes))),
             26 => Ok(DptView::SceneInfo(SceneInfoView(bytes))),
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
+            30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             25 => {
                 super::dpt25::DoubleNibble::decode(bytes[0])?;
                 Ok(DptView::DoubleNibble(DoubleNibbleView(bytes)))
@@ -978,6 +980,7 @@ impl DptType {
             (25, DptPayload::DoubleNibble(value)) => Ok(vec![value.encode()?]),
             (26, DptPayload::SceneInfo(value)) => Ok(vec![value.encode()?]),
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
+            (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (232, DptPayload::ColorRGB { r, g, b }) => Ok(vec![*r, *g, *b]),
             (242, DptPayload::ColorXYY { x, y, brightness }) => {
                 let xr = (*x * 65535.0) as u16;
