@@ -1,8 +1,8 @@
 use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
-    AccessDataView, ActuatorView, BoolView, ChannelActivation24View, CharacterView, CodeView,
-    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
+    AccessDataView, ActuatorView, AlarmInfoView, BoolView, ChannelActivation24View, CharacterView,
+    CodeView, CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
@@ -273,6 +273,7 @@ pub enum DptType {
     ScalingSpeed = 22_500_001,
     ScalingStepTime = 22_500_002,
     MeteringValue = 22_900_001,
+    AlarmInfo = 21_900_001,
     CombinedStatusRTSM = 2_100_107,
     CombinedStatusHVA = 2_200_102,
     CombinedStatusRTC = 2_200_103,
@@ -515,7 +516,7 @@ impl DptType {
             12..=15 | 27 | 241 => 4,
             16 => 14,
             19 | 29 | 230 | 255 | 273 | 275 => 8,
-            222 | 229 | 235 | 242 | 251 => 6,
+            219 | 222 | 229 | 235 | 242 | 251 => 6,
             _ => 0,
         }
     }
@@ -742,6 +743,10 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            219 => {
+                super::dpt219::AlarmInfo::decode(bytes.try_into().expect("validated length"))?;
+                Ok(DptView::AlarmInfo(AlarmInfoView(bytes)))
+            }
             207 => {
                 super::dpt207::decode_payload([bytes[0], bytes[1]], self.sub())?;
                 Ok(DptView::Actuator(ActuatorView(bytes, self.sub())))
@@ -1087,6 +1092,7 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (219, DptPayload::AlarmInfo(value)) => Ok(value.encode()?.to_vec()),
             (207, DptPayload::BurnerControllerStatus(value)) if self.sub() == 100 => {
                 Ok(value.encode()?.to_vec())
             }

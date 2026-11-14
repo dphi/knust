@@ -28,7 +28,8 @@ pub mod dpt20; // HVAC
 pub mod dpt206;
 pub mod dpt207;
 mod dpt20_modes;
-pub mod dpt217; // Version
+pub mod dpt217;
+pub mod dpt219; // Version
 pub mod dpt225;
 pub mod dpt229;
 pub mod dpt230;
@@ -96,6 +97,7 @@ pub use dpt30::*;
 pub use dpt206::*;
 pub use dpt207::*;
 pub use dpt217::*;
+pub use dpt219::*;
 pub use dpt225::*;
 pub use dpt229::*;
 pub use dpt230::*;
@@ -115,8 +117,8 @@ pub use group_registry::{GroupAddressRegistry, GroupAddressState};
 pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
-    AccessDataView, ActuatorView, BoolView, ChannelActivation24View, CharacterView, CodeView,
-    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
+    AccessDataView, ActuatorView, AlarmInfoView, BoolView, ChannelActivation24View, CharacterView,
+    CodeView, CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
@@ -700,6 +702,7 @@ impl DptRegistry {
         registry.register::<DPTScalingSpeed>();
         registry.register::<DPTScalingStepTime>();
         registry.register::<DPTMeteringValue>();
+        registry.register::<DPTAlarmInfo>();
         registry.register::<DPTCombinedStatusRTSM>();
         registry.register::<DPTCombinedStatusHVA>();
         registry.register::<DPTCombinedStatusRTC>();
