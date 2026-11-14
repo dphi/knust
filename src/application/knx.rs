@@ -1006,7 +1006,10 @@ impl Knx {
                 let gateway_port = config.gateway_port.unwrap_or(3671);
                 let gateway_addr = std::net::SocketAddr::new(gateway_ip, gateway_port);
 
-                let mut tunneling_conn = Tunnel::new_udp(gateway_addr);
+                let mut tunneling_conn = Tunnel::new_udp_with_timeout(
+                    gateway_addr,
+                    std::time::Duration::from_millis(config.timeout_ms),
+                );
 
                 if config.connection_type == ConnectionType::SecureTunneling {
                     #[cfg(feature = "secure")]

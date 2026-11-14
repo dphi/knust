@@ -66,6 +66,27 @@ async fn knx() -> Knx {
     .unwrap()
 }
 
+#[tokio::test]
+async fn udp_connect_uses_configured_timeout() {
+    let gateway = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let addr = gateway.local_addr().unwrap();
+    let config = ConnectionConfig {
+        connection_type: ConnectionType::Tunneling,
+        gateway_ip: Some(addr.ip()),
+        gateway_port: Some(addr.port()),
+        timeout_ms: 50,
+        ..Default::default()
+    };
+    let result =
+        tokio::time::timeout(Duration::from_secs(1), Knx::create_connection(&config)).await;
+    assert!(matches!(
+        result,
+        Ok(Err(crate::error::KnxError::Transport(
+            crate::error::TransportError::Timeout { timeout_ms: 50 }
+        )))
+    ));
+}
+
 #[tokio::test(start_paused = true)]
 async fn sender_uses_replacement_connection() {
     let knx = knx().await;
