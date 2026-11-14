@@ -455,6 +455,7 @@ impl DptRegistry {
         registry.register::<DPTDecimalFactor>();
         registry.register::<DPTTariff>();
         registry.register::<DPTValue1Ucount>();
+        registry.register::<DPTFanStage>();
 
         // DPT 6.xxx - Signed 8-bit
         registry.register::<DPTPercentV8>();

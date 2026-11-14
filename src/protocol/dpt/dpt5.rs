@@ -89,3 +89,4 @@ dpt_alias!(
 );
 dpt_alias!(DPTTariff, 5, 006, Scaling, "tariff", None, None);
 dpt_alias!(DPTValue1Ucount, 5, 010, Scaling, "pulse", None, None);
+dpt_alias!(DPTFanStage, 5, 100, Scaling, "fan_stage", None, None);

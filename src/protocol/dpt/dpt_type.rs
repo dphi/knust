@@ -70,6 +70,7 @@ pub enum DptType {
     DecimalFactor = 500_005,
     Tariff = 500_006,
     Value1Ucount = 500_010,
+    FanStage = 500_100,
 
     // DPT 6.xxx - Signed 8-bit
     PercentV8 = 600_001,
