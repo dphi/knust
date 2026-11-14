@@ -41,10 +41,10 @@ mod tests {
                 println!("✓ Successfully connected to KNX gateway via UDP");
                 assert_eq!(conn.state(), ConnectionState::Connected);
 
-                // Test basic statistics
+                // The completed handshake sent ConnectRequest and received ConnectResponse.
                 let stats = conn.stats();
-                assert_eq!(stats.frames_sent, 0);
-                assert_eq!(stats.frames_received, 0);
+                assert_eq!(stats.frames_sent, 1);
+                assert_eq!(stats.frames_received, 1);
 
                 // Test disconnection
                 conn.disconnect().await;
@@ -95,10 +95,10 @@ mod tests {
                 println!("✓ Successfully connected to KNX gateway via TCP");
                 assert!(conn.is_connected());
 
-                // Test basic statistics
+                // The completed handshake sent ConnectRequest and received ConnectResponse.
                 let stats = conn.stats();
-                assert_eq!(stats.frames_sent, 0);
-                assert_eq!(stats.frames_received, 0);
+                assert_eq!(stats.frames_sent, 1);
+                assert_eq!(stats.frames_received, 1);
 
                 // Test disconnection
                 conn.disconnect().await;
