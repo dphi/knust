@@ -221,9 +221,8 @@ fn parse_probe_cemi(raw: &[u8]) -> Result<CemiFrame> {
     let mut frame = CemiFrame::parse(raw)?;
     if frame.data_length == 0 && frame.tpci == 0 {
         let ai_len = raw[1] as usize;
-        let ext = usize::from(frame.extended_control_field.is_some());
-        // MC(1) + AI-len octet(1) + AI bytes + control(2) + ext(0/1) + src(2) + dst(2)
-        let npdu_len_idx = 2 + ai_len + 2 + ext + 4;
+        // MC(1) + AI-len octet(1) + AI bytes + control(2) + src(2) + dst(2)
+        let npdu_len_idx = 2 + ai_len + 2 + 4;
         let tpci_idx = npdu_len_idx + 1;
         if tpci_idx < raw.len() {
             frame.tpci = raw[tpci_idx];

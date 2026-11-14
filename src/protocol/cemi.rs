@@ -23,7 +23,7 @@ pub struct CemiFrame {
     /// Control field with frame properties
     pub control_field: ControlField,
 
-    /// Extended control field (for extended frames)
+    /// Decoded Ctrl2 metadata for extended frames; occupies no additional wire byte.
     pub extended_control_field: Option<ExtendedControlField>,
 
     /// Source individual address
@@ -189,29 +189,20 @@ impl CemiFrame {
             data[offset],
             data[offset + 1]
         );
-        let mut control_field = ControlField::from_flags(flags);
+        let control_field = ControlField::from_flags(flags);
         offset += 2;
 
-        // Parse extended control field if this is an extended frame
-        let extended_control_field = if control_field.frame_type == FrameType::Extended {
-            if offset >= data.len() {
-                return Err(ProtocolError::ParseError {
-                    offset,
-                    reason: "Missing extended control field".to_string(),
-                }
-                .into());
+        // Ctrl2 is already part of flags for both standard and extended frames.
+        let ext_ctrl = ExtendedControlField::from_u8(flags as u8);
+        if ext_ctrl.extended_frame_format != 0 {
+            return Err(ProtocolError::ParseError {
+                offset: offset - 1,
+                reason: "Unsupported cEMI extended frame format".to_string(),
             }
-            let ext_ctrl = ExtendedControlField::from_u8(data[offset]);
-            offset += 1;
-
-            // Update the control field with information from extended control field
-            control_field.destination_address_type = ext_ctrl.destination_address_type;
-            control_field.hop_count = ext_ctrl.hop_count;
-
-            Some(ext_ctrl)
-        } else {
-            None
-        };
+            .into());
+        }
+        let extended_control_field =
+            (control_field.frame_type == FrameType::Extended).then_some(ext_ctrl);
 
         // Parse source address
         if offset + 1 >= data.len() {
@@ -385,15 +376,14 @@ impl CemiFrame {
             additional_info_data.len()
         );
 
-        // Control field (2 bytes)
-        let flags = self.control_field.to_flags();
-        result.extend_from_slice(&flags.to_be_bytes());
-
-        // Extended control field (if present)
-        if let Some(ext_ctrl) = &self.extended_control_field {
-            result.push(ext_ctrl.to_u8());
-            log_protocol!(LogLevel::Trace, "CEMI extended control field included");
+        // Standard APDUs fit in 15 octets; longer ones use extended frames.
+        let mut flags = self.control_field.to_flags();
+        if self.data_length > 14 {
+            flags &= !0x8000;
+        } else {
+            flags |= 0x8000;
         }
+        result.extend_from_slice(&flags.to_be_bytes());
 
         // Source address
         result.extend_from_slice(&self.source_addr.raw().to_be_bytes());
@@ -766,7 +756,7 @@ impl ControlField {
     }
 }
 
-/// Extended control field (for extended frames)
+/// Decoded Ctrl2 metadata for extended frames; occupies no additional wire byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtendedControlField {
     /// Destination address type (0 = individual, 1 = group)
@@ -797,6 +787,7 @@ impl ExtendedControlField {
         }
     }
 
+    #[cfg(test)]
     fn to_u8(self) -> u8 {
         let mut result = 0u8;
 
@@ -914,11 +905,12 @@ mod tests {
                         Address::Individual(_) => AddressType::Individual,
                     };
 
-                    // For round-trip property testing, we need to use extended frames
-                    // because standard frames cannot reliably preserve address type information
-                    // for all address values (especially ambiguous ones like 0)
                     let control_field = ControlField {
-                        frame_type: FrameType::Extended,
+                        frame_type: if actual_data_length > 14 {
+                            FrameType::Extended
+                        } else {
+                            FrameType::Standard
+                        },
                         repeat: false,
                         system_broadcast: false,
                         priority: Priority::System,
@@ -927,11 +919,12 @@ mod tests {
                         destination_address_type,
                         hop_count: 0,
                     };
-                    let extended_control_field = Some(ExtendedControlField {
-                        destination_address_type,
-                        hop_count: 0,
-                        extended_frame_format: 0,
-                    });
+                    let extended_control_field =
+                        (actual_data_length > 14).then_some(ExtendedControlField {
+                            destination_address_type,
+                            hop_count: 0,
+                            extended_frame_format: 0,
+                        });
 
                     // Ensure TPCI is consistent with data_length
                     let (final_tpci, final_apci_data) = if actual_data_length == 0 {
@@ -1115,6 +1108,44 @@ mod tests {
         assert_eq!(frame.control_field.frame_type, FrameType::Standard);
         // Standard frames don't have extended control field in the new parsing
         // The destination address type comes from the 2-byte control field
+    }
+
+    #[test]
+    fn extended_frame_uses_two_control_octets() {
+        for length in [14, 15, 254] {
+            let mut wire = vec![
+                0x11,
+                0,
+                if length > 14 { 0x3c } else { 0xbc },
+                0xe0,
+                0x12,
+                0x34,
+                0x56,
+                0x78,
+                length,
+                0,
+            ];
+            wire.extend(vec![0x81; usize::from(length)]);
+            let frame = CemiFrame::parse(&wire).unwrap();
+            assert_eq!(frame.source_addr.raw(), 0x1234);
+            assert_eq!(
+                frame.dest_addr,
+                Address::Group(GroupAddress::try_from_raw(0x5678).unwrap())
+            );
+            assert_eq!(frame.apci_data.len(), usize::from(length));
+            assert_eq!(frame.serialize(), wire);
+            let mut frame = frame;
+            frame.control_field.frame_type = FrameType::Standard;
+            assert_eq!(frame.serialize(), wire);
+        }
+    }
+
+    #[test]
+    fn rejects_nonstandard_extended_frame_formats() {
+        for format in 1..=15 {
+            let wire = [0x11, 0, 0x3c, 0xe0 | format, 0x12, 0x34, 0x56, 0x78, 0];
+            assert!(CemiFrame::parse(&wire).is_err());
+        }
     }
 
     #[test]
