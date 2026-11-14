@@ -173,7 +173,7 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::I32(v) => Self::SignedInt(i64::from(v.value())),
             DptView::Float4Byte(v) => Self::Float(v.as_f64()),
             DptView::I64(v) => Self::SignedInt(v.value()),
-            DptView::Str(v) => Self::String(v.as_str().to_string()),
+            DptView::Str(v) => Self::String(v.as_string()),
             DptView::Character(v) => Self::String(v.as_string()),
             DptView::Version(v) => Self::Version(v.value()),
             DptView::Time(v) => Self::Time {

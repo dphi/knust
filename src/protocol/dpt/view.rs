@@ -213,8 +213,18 @@ impl<'a> I64View<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct StrView<'a>(pub(crate) &'a [u8]);
+pub struct StrView<'a>(pub(crate) &'a [u8], pub(crate) bool);
 impl<'a> StrView<'a> {
+    #[must_use]
+    pub fn as_string(&self) -> String {
+        if self.1 {
+            super::dpt16::decode_latin1_value(self.0)
+        } else {
+            super::dpt16::decode_ascii_value(self.0)
+        }
+    }
+
+    /// View the bytes as UTF-8 up to the first NUL, if valid.
     #[must_use]
     pub fn as_str(&self) -> &'a str {
         let end = self.0.iter().position(|&b| b == 0).unwrap_or(self.0.len());
@@ -567,7 +577,7 @@ impl DptView<'_> {
             Self::I32(v) => format_numeric(v.as_f64(), dpt),
             Self::Float4Byte(v) => format_numeric(v.as_f64(), dpt),
             Self::I64(v) => format_numeric(v.as_f64(), dpt),
-            Self::Str(v) => v.as_str().to_string(),
+            Self::Str(v) => v.as_string(),
             Self::Character(v) => v.as_string(),
             Self::Version(v) => v.value().to_string(),
             Self::Time(v) => {
@@ -904,7 +914,7 @@ impl DptType {
     /// Returns [`ProtocolError::DptError`] if `input` doesn't parse into a
     /// value this DPT can encode, or if the parsed value is out of range.
     pub fn parse(&self, input: &str) -> Result<Vec<u8>> {
-        let input = if self.main() == 4 {
+        let input = if matches!(self.main(), 4 | 16) {
             input
         } else {
             input.trim()
@@ -985,15 +995,7 @@ impl DptType {
                 ))
             }),
             4 => Ok(DptPayload::String(s.to_string())),
-            16 => {
-                if s.len() > 14 {
-                    return Err(bad(format!(
-                        "string too long for DPT 16 (max 14 bytes, got {})",
-                        s.len()
-                    )));
-                }
-                Ok(DptPayload::String(s.to_string()))
-            }
+            16 => Ok(DptPayload::String(s.to_string())),
             17 => parse_scene_number(s)
                 .map(DptPayload::Scene)
                 .ok_or_else(|| bad(format!("cannot parse {s:?} as a scene number (1-64)"))),

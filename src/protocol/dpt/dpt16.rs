@@ -15,7 +15,7 @@ fn validate_string_length(value: &str, dpt_type: &'static str) -> Result<()> {
     Ok(())
 }
 
-fn encode_ascii_payload(value: &str) -> Result<[u8; 14]> {
+pub(super) fn encode_ascii_payload(value: &str) -> Result<[u8; 14]> {
     validate_string_length(value, "16.000")?;
 
     let mut payload = [0u8; 14];
@@ -30,7 +30,7 @@ fn encode_ascii_payload(value: &str) -> Result<[u8; 14]> {
     Ok(payload)
 }
 
-fn encode_latin1_payload(value: &str) -> Result<[u8; 14]> {
+pub(super) fn encode_latin1_payload(value: &str) -> Result<[u8; 14]> {
     validate_string_length(value, "16.001")?;
 
     let mut payload = [0u8; 14];
@@ -45,7 +45,7 @@ fn encode_latin1_payload(value: &str) -> Result<[u8; 14]> {
     Ok(payload)
 }
 
-fn decode_ascii_value(bytes: &[u8]) -> String {
+pub(super) fn decode_ascii_value(bytes: &[u8]) -> String {
     bytes
         .iter()
         .copied()
@@ -54,7 +54,7 @@ fn decode_ascii_value(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn decode_latin1_value(bytes: &[u8]) -> String {
+pub(super) fn decode_latin1_value(bytes: &[u8]) -> String {
     bytes
         .iter()
         .copied()

@@ -672,7 +672,7 @@ impl DptType {
             }
             217 => Ok(DptView::Version(VersionView(bytes))),
             16 => {
-                let view = StrView(bytes);
+                let view = StrView(bytes, self.sub() == 1);
                 log_protocol!(
                     LogLevel::Trace,
                     "DPT {} decode: str={:?} len={}",
@@ -928,11 +928,12 @@ impl DptType {
             (13, DptPayload::SignedInt(v)) => Ok((*v as i32).to_be_bytes().to_vec()),
             (14, DptPayload::Float(v)) => Ok((*v as f32).to_be_bytes().to_vec()),
             (16, DptPayload::String(s)) => {
-                let mut bytes = vec![0u8; 14];
-                for (i, b) in s.bytes().take(14).enumerate() {
-                    bytes[i] = b;
-                }
-                Ok(bytes)
+                let bytes = if self.sub() == 1 {
+                    super::dpt16::encode_latin1_payload(s)?
+                } else {
+                    super::dpt16::encode_ascii_payload(s)?
+                };
+                Ok(bytes.to_vec())
             }
             (17, DptPayload::Scene(n)) => Ok(vec![(*n).saturating_sub(1) & 0x3F]),
             (18, DptPayload::SceneControl { scene, learn }) => Ok(vec![
