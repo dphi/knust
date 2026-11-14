@@ -2689,8 +2689,13 @@ impl Knx {
         use crate::transport::Tunnel;
 
         let apci_data = telegram.encode_group_service();
+        let message_code = if connection.as_any().is::<Tunnel>() {
+            MessageCode::LDataReq
+        } else {
+            MessageCode::LDataInd
+        };
         let cemi = CemiFrame::new(
-            MessageCode::LDataReq,
+            message_code,
             telegram.source,
             telegram.destination,
             apci_data,
@@ -2877,6 +2882,7 @@ mod integration_tests {
                 let frame = KnxIpFrame::parse(&wire).unwrap();
                 let request = TunnellingRequest::parse(&frame.body).unwrap();
                 let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
+                assert_eq!(cemi.message_code, MessageCode::LDataReq);
                 assert_eq!(cemi.apci_data, [service_bits, byte]);
                 let received = Knx::parse_cemi_to_telegram(&request.raw_cemi).unwrap();
                 assert_eq!(received.payload, [byte]);

@@ -75,10 +75,19 @@ async fn sender_uses_replacement_connection() {
     *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
     let telegram = Telegram::group_write(GroupAddress::try_from_raw(1).unwrap(), vec![1]);
     knx.send_telegram(&telegram).await.unwrap();
-    timeout(Duration::from_secs(1), old_sent.recv())
+    let wire = timeout(Duration::from_secs(1), old_sent.recv())
         .await
         .unwrap()
         .unwrap();
+    let frame = crate::protocol::knxip::KnxIpFrame::parse(&wire).unwrap();
+    assert_eq!(
+        frame.header.service_type,
+        crate::protocol::knxip::ServiceType::RoutingIndication
+    );
+    assert_eq!(
+        CemiFrame::parse(&frame.body).unwrap().message_code,
+        MessageCode::LDataInd
+    );
     knx.connection.send_replace(Some(new));
     knx.send_telegram(&telegram).await.unwrap();
     timeout(Duration::from_secs(1), new_sent.recv())
