@@ -32,7 +32,8 @@ pub mod dpt234;
 pub mod dpt235;
 pub mod dpt236;
 pub mod dpt237;
-pub mod dpt238; // Tariff Active Energy
+pub mod dpt238;
+pub mod dpt240; // Tariff Active Energy
 pub mod dpt242; // XYY Color
 pub mod dpt25;
 pub mod dpt251;
@@ -91,6 +92,7 @@ pub use dpt235::*;
 pub use dpt236::*;
 pub use dpt237::*;
 pub use dpt238::*;
+pub use dpt240::*;
 pub use dpt242::*;
 pub use dpt251::*;
 pub use dpt255::*;
@@ -100,12 +102,12 @@ pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
     BoolView, ChannelActivation24View, CharacterView, CodeView, CombinedInfoOnOffView,
-    Control2View, ControlView, DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView,
-    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
-    GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
-    PrioritisedModeControlView, RgbView, RgbwView, SceneConfigView, SceneInfoView, SceneView,
-    Setpoints3View, Setpoints4View, StrView, TimeView, U8View, U16View, U32View, VersionView,
-    XyyView,
+    CombinedPositionView, Control2View, ControlView, DALIControlGearDiagnosticView,
+    DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView, DptView, EnumView,
+    Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView, I8View, I16View,
+    I32View, I64View, MBusAddressView, PrioritisedModeControlView, RgbView, RgbwView,
+    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View, StrView, TimeView,
+    U8View, U16View, U32View, VersionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -667,6 +669,7 @@ impl DptRegistry {
         registry.register::<DPTPrioritisedModeControl>();
         registry.register::<DPTDALIControlGearDiagnostic>();
         registry.register::<DPTGeographicalLocation>();
+        registry.register::<DPTCombinedPosition>();
         registry.register::<DPTForecastTemperature>();
         registry.register::<DPTForecastWindSpeed>();
         registry.register::<DPTForecastRelativeHumidity>();

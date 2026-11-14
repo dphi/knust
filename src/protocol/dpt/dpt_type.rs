@@ -2,12 +2,12 @@ use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
     BoolView, ChannelActivation24View, CharacterView, CodeView, CombinedInfoOnOffView,
-    Control2View, ControlView, DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView,
-    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
-    GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
-    PrioritisedModeControlView, RgbView, RgbwView, SceneConfigView, SceneInfoView, SceneView,
-    Setpoints3View, Setpoints4View, StrView, TimeView, U8View, U16View, U32View, VersionView,
-    XyyView,
+    CombinedPositionView, Control2View, ControlView, DALIControlGearDiagnosticView,
+    DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView, DptView, EnumView,
+    Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView, I8View, I16View,
+    I32View, I64View, MBusAddressView, PrioritisedModeControlView, RgbView, RgbwView,
+    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View, StrView, TimeView,
+    U8View, U16View, U32View, VersionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -256,6 +256,7 @@ pub enum DptType {
     DALIDiagnostics = 23_800_600,
     DALIControlGearDiagnostic = 23_700_600,
     GeographicalLocation = 25_500_001,
+    CombinedPosition = 24_000_800,
     ForecastTemperature = 27_300_001,
     ForecastWindSpeed = 27_300_002,
     ForecastRelativeHumidity = 27_300_003,
@@ -491,7 +492,7 @@ impl DptType {
         match self.main() {
             1..=6 | 17 | 18 | 20 | 25 | 26 | 236 | 238 => 1,
             7..=9 | 217 | 234 | 237 => 2,
-            10 | 11 | 30 | 232 => 3,
+            10 | 11 | 30 | 232 | 240 => 3,
             12..=14 | 27 => 4,
             16 => 14,
             19 | 29 | 230 | 255 | 273 | 275 => 8,
@@ -722,6 +723,7 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            240 => Ok(DptView::CombinedPosition(CombinedPositionView(bytes))),
             273 => {
                 super::dpt273::Forecast::decode(bytes, self.sub())?;
                 Ok(DptView::Forecast(ForecastView(bytes, self.sub())))
@@ -1045,6 +1047,7 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (240, DptPayload::CombinedPosition(value)) => Ok(value.encode()?.to_vec()),
             (273, DptPayload::Forecast(value)) => Ok(value.encode(self.sub())?.to_vec()),
             (222, DptPayload::Setpoints3(value)) => value.encode(self.sub() == 101),
             (275, DptPayload::Setpoints4(value)) => value.encode(self.sub() == 101),

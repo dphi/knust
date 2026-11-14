@@ -352,6 +352,19 @@ impl<'a> ForecastView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct CombinedPositionView<'a>(pub(crate) &'a [u8]);
+impl<'a> CombinedPositionView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt240::CombinedPosition {
+        super::dpt240::CombinedPosition::decode([self.0[0], self.0[1], self.0[2]])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct GeographicalLocationView<'a>(pub(crate) &'a [u8]);
 impl<'a> GeographicalLocationView<'a> {
     #[must_use]
@@ -669,6 +682,7 @@ pub enum DptView<'a> {
     DALIDiagnostics(DALIDiagnosticsView<'a>),
     DALIControlGearDiagnostic(DALIControlGearDiagnosticView<'a>),
     GeographicalLocation(GeographicalLocationView<'a>),
+    CombinedPosition(CombinedPositionView<'a>),
     Forecast(ForecastView<'a>),
     Setpoints3(Setpoints3View<'a>),
     Setpoints4(Setpoints4View<'a>),
@@ -714,6 +728,7 @@ impl<'a> DptView<'a> {
             | Self::DALIDiagnostics(_)
             | Self::DALIControlGearDiagnostic(_)
             | Self::GeographicalLocation(_)
+            | Self::CombinedPosition(_)
             | Self::Forecast(_)
             | Self::Setpoints3(_)
             | Self::Setpoints4(_)
@@ -763,6 +778,7 @@ impl<'a> DptView<'a> {
             Self::DALIDiagnostics(v) => v.raw(),
             Self::DALIControlGearDiagnostic(v) => v.raw(),
             Self::GeographicalLocation(v) => v.raw(),
+            Self::CombinedPosition(v) => v.raw(),
             Self::Forecast(v) => v.raw(),
             Self::Setpoints3(v) => v.raw(),
             Self::Setpoints4(v) => v.raw(),
@@ -819,6 +835,7 @@ impl DptView<'_> {
             Self::DALIDiagnostics(v) => v.value().to_string(),
             Self::DALIControlGearDiagnostic(v) => v.value().to_string(),
             Self::GeographicalLocation(v) => v.value().to_string(),
+            Self::CombinedPosition(v) => v.value().to_string(),
             Self::Forecast(v) => v.value().to_string(),
             Self::Setpoints3(v) => v.value().to_string(),
             Self::Setpoints4(v) => v.value().to_string(),
@@ -1264,6 +1281,7 @@ impl DptType {
             236 => s.parse().map(DptPayload::PrioritisedModeControl),
             237 => s.parse().map(DptPayload::DALIControlGearDiagnostic),
             255 => s.parse().map(DptPayload::GeographicalLocation),
+            240 => s.parse().map(DptPayload::CombinedPosition),
             273 => s.parse().map(DptPayload::Forecast),
             222 => s.parse().map(DptPayload::Setpoints3),
             275 => s.parse().map(DptPayload::Setpoints4),
