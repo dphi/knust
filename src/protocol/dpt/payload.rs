@@ -27,6 +27,7 @@ pub enum DptPayload {
     SceneConfig(super::dpt238::SceneConfig),
     DALIDiagnostics(super::dpt238::DALIDiagnostics),
     DALIControlGearDiagnostic(super::dpt237::DALIControlGearDiagnostic),
+    GeographicalLocation(super::dpt255::GeographicalLocation),
     Time {
         day: u8,
         hour: u8,
@@ -130,6 +131,7 @@ impl DptPayload {
             Self::SceneConfig(v) => v.to_string(),
             Self::DALIDiagnostics(v) => v.to_string(),
             Self::DALIControlGearDiagnostic(v) => v.to_string(),
+            Self::GeographicalLocation(v) => v.to_string(),
             Self::Scene(n) => format!("Scene {n}"),
             Self::SceneControl { scene, learn } => format!(
                 "Scene {} ({})",
@@ -203,6 +205,7 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::SceneConfig(v) => Self::SceneConfig(v.value()),
             DptView::DALIDiagnostics(v) => Self::DALIDiagnostics(v.value()),
             DptView::DALIControlGearDiagnostic(v) => Self::DALIControlGearDiagnostic(v.value()),
+            DptView::GeographicalLocation(v) => Self::GeographicalLocation(v.value()),
             DptView::Code(v) => Self::String(v.value()),
             DptView::Time(v) => Self::Time {
                 day: v.day(),

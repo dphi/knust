@@ -312,6 +312,20 @@ impl<'a> DALIDiagnosticsView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct GeographicalLocationView<'a>(pub(crate) &'a [u8]);
+impl<'a> GeographicalLocationView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt255::GeographicalLocation {
+        super::dpt255::GeographicalLocation::decode(self.0.try_into().expect("validated length"))
+            .expect("validated coordinates")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct DALIControlGearDiagnosticView<'a>(pub(crate) &'a [u8]);
 impl<'a> DALIControlGearDiagnosticView<'a> {
     #[must_use]
@@ -614,6 +628,7 @@ pub enum DptView<'a> {
     SceneConfig(SceneConfigView<'a>),
     DALIDiagnostics(DALIDiagnosticsView<'a>),
     DALIControlGearDiagnostic(DALIControlGearDiagnosticView<'a>),
+    GeographicalLocation(GeographicalLocationView<'a>),
     Code(CodeView<'a>),
     Time(TimeView<'a>),
     Date(DateView<'a>),
@@ -655,6 +670,7 @@ impl<'a> DptView<'a> {
             | Self::SceneConfig(_)
             | Self::DALIDiagnostics(_)
             | Self::DALIControlGearDiagnostic(_)
+            | Self::GeographicalLocation(_)
             | Self::Code(_)
             | Self::Time(_)
             | Self::Date(_)
@@ -700,6 +716,7 @@ impl<'a> DptView<'a> {
             Self::SceneConfig(v) => v.raw(),
             Self::DALIDiagnostics(v) => v.raw(),
             Self::DALIControlGearDiagnostic(v) => v.raw(),
+            Self::GeographicalLocation(v) => v.raw(),
             Self::Code(v) => v.raw(),
             Self::Time(v) => v.raw(),
             Self::Date(v) => v.raw(),
@@ -752,6 +769,7 @@ impl DptView<'_> {
             Self::SceneConfig(v) => v.value().to_string(),
             Self::DALIDiagnostics(v) => v.value().to_string(),
             Self::DALIControlGearDiagnostic(v) => v.value().to_string(),
+            Self::GeographicalLocation(v) => v.value().to_string(),
             Self::Code(v) => v.value(),
             Self::Time(v) => {
                 let base = format!("{:02}:{:02}:{:02}", v.hour(), v.minute(), v.second());
@@ -1193,6 +1211,7 @@ impl DptType {
             230 => s.parse().map(DptPayload::MBusAddress),
             236 => s.parse().map(DptPayload::PrioritisedModeControl),
             237 => s.parse().map(DptPayload::DALIControlGearDiagnostic),
+            255 => s.parse().map(DptPayload::GeographicalLocation),
             238 if self.sub() == 1 => s.parse().map(DptPayload::SceneConfig),
             238 => s.parse().map(DptPayload::DALIDiagnostics),
             234 => Ok(DptPayload::String(s.to_string())),
