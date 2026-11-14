@@ -6,7 +6,8 @@ use super::view::{
     DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView,
     GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
     PrioritisedModeControlView, RgbView, RgbwView, SceneConfigView, SceneInfoView, SceneView,
-    StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
+    Setpoints3View, Setpoints4View, StrView, TimeView, U8View, U16View, U32View, VersionView,
+    XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -255,6 +256,10 @@ pub enum DptType {
     DALIDiagnostics = 23_800_600,
     DALIControlGearDiagnostic = 23_700_600,
     GeographicalLocation = 25_500_001,
+    RoomTemperatureSetpoints3 = 22_200_100,
+    RoomTemperatureSetpointShifts3 = 22_200_101,
+    RoomTemperatureSetpoints4 = 27_500_100,
+    RoomTemperatureSetpointShifts4 = 27_500_101,
     LanguageCodeAlpha2 = 23_400_001,
     RegionCodeAlpha2 = 23_400_002,
 
@@ -482,8 +487,8 @@ impl DptType {
             10 | 11 | 30 | 232 => 3,
             12..=14 | 27 => 4,
             16 => 14,
-            19 | 29 | 230 | 255 => 8,
-            235 | 242 | 251 => 6,
+            19 | 29 | 230 | 255 | 275 => 8,
+            222 | 235 | 242 | 251 => 6,
             _ => 0,
         }
     }
@@ -710,6 +715,16 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            222 => {
+                let shift = self.sub() == 101;
+                super::dpt_setpoints::RoomTemperatureSetpoints3::decode(bytes, shift)?;
+                Ok(DptView::Setpoints3(Setpoints3View(bytes, shift)))
+            }
+            275 => {
+                let shift = self.sub() == 101;
+                super::dpt_setpoints::RoomTemperatureSetpoints4::decode(bytes, shift)?;
+                Ok(DptView::Setpoints4(Setpoints4View(bytes, shift)))
+            }
             255 => {
                 super::dpt255::GeographicalLocation::decode(
                     bytes.try_into().expect("validated length"),
@@ -1019,6 +1034,8 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (222, DptPayload::Setpoints3(value)) => value.encode(self.sub() == 101),
+            (275, DptPayload::Setpoints4(value)) => value.encode(self.sub() == 101),
             (255, DptPayload::GeographicalLocation(value)) => Ok(value.encode()?.to_vec()),
             (237, DptPayload::DALIControlGearDiagnostic(value)) => Ok(value.encode()?.to_vec()),
             (236, DptPayload::PrioritisedModeControl(value)) => Ok(vec![value.encode()?]),

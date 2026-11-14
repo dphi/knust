@@ -47,13 +47,15 @@ pub mod dpt5; // Unsigned 8-bit
 pub mod dpt6; // Signed 8-bit
 pub mod dpt7; // Unsigned 16-bit
 pub mod dpt8; // Signed 16-bit
-pub mod dpt9; // 2-byte float // RGBW Color
+pub mod dpt9;
+mod dpt_setpoints; // 2-byte float // RGBW Color
 
 #[cfg(test)]
 mod tests;
 
 // Re-export all DPT types for convenience
 pub use decode::{DecodedTelegram, decode_telegram};
+pub use dpt_setpoints::*;
 pub use dpt_type::DptType;
 pub use dpt1::*;
 pub use dpt2::*;
@@ -100,7 +102,8 @@ pub use view::{
     DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView,
     GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
     PrioritisedModeControlView, RgbView, RgbwView, SceneConfigView, SceneInfoView, SceneView,
-    StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
+    Setpoints3View, Setpoints4View, StrView, TimeView, U8View, U16View, U32View, VersionView,
+    XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -662,6 +665,10 @@ impl DptRegistry {
         registry.register::<DPTPrioritisedModeControl>();
         registry.register::<DPTDALIControlGearDiagnostic>();
         registry.register::<DPTGeographicalLocation>();
+        registry.register::<DPTRoomTemperatureSetpoints3>();
+        registry.register::<DPTRoomTemperatureSetpointShifts3>();
+        registry.register::<DPTRoomTemperatureSetpoints4>();
+        registry.register::<DPTRoomTemperatureSetpointShifts4>();
         registry.register::<DPTSceneConfig>();
         registry.register::<DPTDALIDiagnostics>();
         registry.register::<DPTLanguageCodeAlpha2ASCII>();
