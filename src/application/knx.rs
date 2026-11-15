@@ -3587,6 +3587,80 @@ impl P2pConnection {
         Ok(response)
     }
 
+    /// Write a property value range, splitting it into APDUs that fit the negotiated limit.
+    pub async fn write_property_values(
+        &mut self,
+        request: crate::protocol::management::PropertyValueWrite,
+        max_apdu_length: usize,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        if max_apdu_length == 0 || request.count == 0 || request.start_index == 0 {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "Property write requires a positive APDU length, count, and start index"
+                    .to_owned(),
+            }
+            .into());
+        }
+        if u32::from(request.start_index) + u32::from(request.count) - 1 > 0x0FFF {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "Property write range exceeds the 12-bit start index".to_owned(),
+            }
+            .into());
+        }
+        let element_count = usize::from(request.count);
+        if request.data.is_empty() || request.data.len() % element_count != 0 {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details:
+                    "Property write data must contain an equal, nonzero byte count per element"
+                        .to_owned(),
+            }
+            .into());
+        }
+        let element_size = request.data.len() / element_count;
+        let max_elements_per_chunk = (max_apdu_length.saturating_sub(6) / element_size).min(15);
+        if max_elements_per_chunk == 0 {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "One property element does not fit within the APDU length limit"
+                    .to_owned(),
+            }
+            .into());
+        }
+
+        let mut current_index = request.start_index;
+        let mut remaining = request.count;
+        let mut data_offset = 0;
+        while remaining > 0 {
+            let chunk_count = remaining.min(max_elements_per_chunk as u8);
+            let chunk_size = usize::from(chunk_count) * element_size;
+            let response = self
+                .write_property_value(
+                    crate::protocol::management::PropertyValueWrite {
+                        object_index: request.object_index,
+                        property_id: request.property_id,
+                        count: chunk_count,
+                        start_index: current_index,
+                        data: request.data[data_offset..data_offset + chunk_size].to_vec(),
+                    },
+                    timeout,
+                )
+                .await?;
+            if response.count != chunk_count {
+                return Err(crate::error::ProtocolError::InvalidFrame {
+                    details: format!(
+                        "Property write requested {chunk_count} elements at index {current_index}, got {}",
+                        response.count
+                    ),
+                }
+                .into());
+            }
+            current_index += u16::from(chunk_count);
+            remaining -= chunk_count;
+            data_offset += chunk_size;
+        }
+
+        Ok(())
+    }
+
     /// Read metadata for one interface-object property over this P2P session.
     pub async fn read_property_description(
         &mut self,
@@ -4364,6 +4438,130 @@ mod integration_tests {
         assert_eq!(
             second_chunk_response_ack.tpci,
             TpciFrame::Ack { sequence: 6 }.encode()
+        );
+
+        assert!(
+            p2p.write_property_values(
+                crate::protocol::management::PropertyValueWrite {
+                    object_index: 1,
+                    property_id: 2,
+                    count: 2,
+                    start_index: 30,
+                    data: vec![1, 2, 3],
+                },
+                10,
+                Duration::from_secs(2),
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), peer_traffic.recv())
+                .await
+                .is_err()
+        );
+
+        let writes = tokio::spawn(async move {
+            p2p.write_property_values(
+                crate::protocol::management::PropertyValueWrite {
+                    object_index: 1,
+                    property_id: 2,
+                    count: 3,
+                    start_index: 20,
+                    data: vec![1, 2, 3, 4, 5, 6],
+                },
+                10,
+                Duration::from_secs(2),
+            )
+            .await?;
+            Ok::<_, KnxError>(p2p)
+        });
+        let first_write = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::PropertyValueWrite::decode(&first_write.payload).unwrap(),
+            crate::protocol::management::PropertyValueWrite {
+                object_index: 1,
+                property_id: 2,
+                count: 2,
+                start_index: 20,
+                data: vec![1, 2, 3, 4],
+            }
+        );
+        let mut first_write_ack = Telegram::individual_data(client_address, Vec::new());
+        first_write_ack.source = device_address;
+        first_write_ack.telegram_type = TelegramType::IndividualControl;
+        first_write_ack.tpci = TpciFrame::Ack { sequence: 8 }.encode();
+        server.send(first_write_ack).await.unwrap();
+        let mut first_write_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::PropertyValueResponse {
+                object_index: 1,
+                property_id: 2,
+                count: 2,
+                start_index: 20,
+                data: Vec::new(),
+            }
+            .encode()
+            .unwrap(),
+        );
+        first_write_response.source = device_address;
+        first_write_response.tpci = TpciFrame::DataConnected { sequence: 7 }.encode();
+        server.send(first_write_response).await.unwrap();
+        let first_write_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            first_write_response_ack.tpci,
+            TpciFrame::Ack { sequence: 7 }.encode()
+        );
+        let second_write = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::PropertyValueWrite::decode(&second_write.payload).unwrap(),
+            crate::protocol::management::PropertyValueWrite {
+                object_index: 1,
+                property_id: 2,
+                count: 1,
+                start_index: 22,
+                data: vec![5, 6],
+            }
+        );
+        let mut second_write_ack = Telegram::individual_data(client_address, Vec::new());
+        second_write_ack.source = device_address;
+        second_write_ack.telegram_type = TelegramType::IndividualControl;
+        second_write_ack.tpci = TpciFrame::Ack { sequence: 9 }.encode();
+        server.send(second_write_ack).await.unwrap();
+        let mut second_write_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::PropertyValueResponse {
+                object_index: 1,
+                property_id: 2,
+                count: 1,
+                start_index: 22,
+                data: Vec::new(),
+            }
+            .encode()
+            .unwrap(),
+        );
+        second_write_response.source = device_address;
+        second_write_response.tpci = TpciFrame::DataConnected { sequence: 8 }.encode();
+        server.send(second_write_response).await.unwrap();
+        let mut p2p = writes.await.unwrap().unwrap();
+        let second_write_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            second_write_response_ack.tpci,
+            TpciFrame::Ack { sequence: 8 }.encode()
         );
 
         p2p.close().await.unwrap();
