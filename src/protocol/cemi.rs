@@ -298,6 +298,18 @@ impl CemiFrame {
             .into());
         }
 
+        if data.len() != offset + tpdu_length {
+            return Err(ProtocolError::ParseError {
+                offset: offset + tpdu_length,
+                reason: format!(
+                    "CEMI payload length mismatch: expected {} bytes, got {}",
+                    tpdu_length,
+                    data.len() - offset
+                ),
+            }
+            .into());
+        }
+
         // Parse TPCI and APCI/Data
         let mut tpci = 0u8;
         let mut apci_data = Vec::new();
@@ -1108,6 +1120,12 @@ mod tests {
         assert_eq!(frame.control_field.frame_type, FrameType::Standard);
         // Standard frames don't have extended control field in the new parsing
         // The destination address type comes from the 2-byte control field
+    }
+
+    #[test]
+    fn rejects_trailing_bytes_after_declared_payload() {
+        let data = [0x11, 0x00, 0xBC, 0xE0, 0x12, 0x34, 0x56, 0x78, 0x00, 0xAA];
+        assert!(CemiFrame::parse(&data).is_err());
     }
 
     #[test]
