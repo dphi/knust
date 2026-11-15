@@ -199,12 +199,7 @@ impl TunnelServer {
     /// (using the device-auth/user credentials in `security`) before any
     /// tunneling frame is accepted; a plain (unwrapped) `ConnectRequest` is
     /// rejected.
-    // TODO: only tested against this crate's own `Tunnel::connect_secure` and
-    // (indirectly, via the tunnel.rs cross-check) a known-good reference
-    // client's wire behavior — no independent secure *client* implementation
-    // has ever completed a real handshake against this server. Low risk
-    // (same handshake code paths as the client side, which is validated), but
-    // worth noting.
+    // TODO: no independent secure client has completed a real handshake against this server.
     /// # Errors
     ///
     /// Returns [`TransportError::SocketError`] if binding the UDP or TCP

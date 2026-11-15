@@ -464,15 +464,7 @@ impl Tunnel {
     }
 
     /// Establish a secure session (KNX IP Secure handshake) over this transport.
-    // TODO: Confirmed spec-correct against a real KNX IP Secure device over
-    // TCP (a known-good reference client and this one produced byte-identical
-    // SessionRequest/Response behavior and hit the same "SessionResponse MAC
-    // verification failed" against a device we didn't have current
-    // credentials for) but no real device has completed a full authenticated
-    // round trip yet — self-consistent tests only (security::tests,
-    // transport::server::tests). Re-test end to end once real device-auth/
-    // user credentials are available.
-    /// # Errors
+    // TODO: no real device has completed a full authenticated round trip yet; re-test when current credentials are available.\n    /// # Errors
     ///
     /// Returns [`TransportError::SocketError`]/[`TransportError::ConnectionFailed`]
     /// if the underlying transport can't connect,
