@@ -246,6 +246,20 @@ pub struct PropertyValueWrite {
     pub data: Vec<u8>,
 }
 
+/// `A_Restart_Master_Reset` request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestartMasterReset {
+    pub erase_code: u8,
+    pub channel_number: u8,
+}
+
+/// `A_Restart_Response` confirming a Master Reset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestartMasterResetResponse {
+    pub error_code: u8,
+    pub process_time: u16,
+}
+
 /// `A_Memory_Read` request for the 64 KiB memory address space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryRead {
@@ -512,6 +526,50 @@ fn decode_user_memory(apdu: &[u8], service: u8, read: bool) -> Result<(u32, u8, 
         apdu[2] & 0x0F,
         &apdu[5..],
     ))
+}
+
+impl RestartMasterReset {
+    pub fn encode(self) -> Vec<u8> {
+        vec![0x03, 0x81, self.erase_code, self.channel_number]
+    }
+
+    pub fn decode(apdu: &[u8]) -> Result<Self> {
+        if apdu.len() != 4 || apdu[..2] != [0x03, 0x81] {
+            return Err(ProtocolError::InvalidFrame {
+                details: "Expected 4-byte RestartMasterReset APCI 0x0381".to_owned(),
+            }
+            .into());
+        }
+        Ok(Self {
+            erase_code: apdu[2],
+            channel_number: apdu[3],
+        })
+    }
+}
+
+impl RestartMasterResetResponse {
+    pub fn encode(self) -> Vec<u8> {
+        vec![
+            0x03,
+            0xA1,
+            self.error_code,
+            (self.process_time >> 8) as u8,
+            self.process_time as u8,
+        ]
+    }
+
+    pub fn decode(apdu: &[u8]) -> Result<Self> {
+        if apdu.len() != 5 || apdu[..2] != [0x03, 0xA1] {
+            return Err(ProtocolError::InvalidFrame {
+                details: "Expected 5-byte RestartMasterResetResponse APCI 0x03A1".to_owned(),
+            }
+            .into());
+        }
+        Ok(Self {
+            error_code: apdu[2],
+            process_time: u16::from_be_bytes([apdu[3], apdu[4]]),
+        })
+    }
 }
 
 impl MemoryRead {
@@ -994,7 +1052,8 @@ mod tests {
         FunctionPropertyService, FunctionPropertyStateRead, FunctionPropertyStateResponse,
         MemoryRead, MemoryResponse, MemoryWrite, PropertyDescriptionRead,
         PropertyDescriptionResponse, PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
-        UserMemoryRead, UserMemoryResponse, UserMemoryWrite,
+        RestartMasterReset, RestartMasterResetResponse, UserMemoryRead, UserMemoryResponse,
+        UserMemoryWrite,
     };
 
     #[test]
@@ -1307,6 +1366,31 @@ mod tests {
         let encoded_write = write.encode().unwrap();
         assert_eq!(encoded_write, [0x03, 0xD7, 3, 4, 0x1A, 0xBC, 0x55]);
         assert_eq!(PropertyValueWrite::decode(&encoded_write).unwrap(), write);
+    }
+
+    #[test]
+    fn master_reset_apci_codecs_match_wire_vectors() {
+        let request = RestartMasterReset {
+            erase_code: 1,
+            channel_number: 7,
+        };
+        assert_eq!(request.encode(), [0x03, 0x81, 1, 7]);
+        assert_eq!(
+            RestartMasterReset::decode(&[0x03, 0x81, 1, 7]).unwrap(),
+            request
+        );
+
+        let response = RestartMasterResetResponse {
+            error_code: 0,
+            process_time: 0x1234,
+        };
+        assert_eq!(response.encode(), [0x03, 0xA1, 0, 0x12, 0x34]);
+        assert_eq!(
+            RestartMasterResetResponse::decode(&response.encode()).unwrap(),
+            response
+        );
+        assert!(RestartMasterReset::decode(&[0x03, 0x80]).is_err());
+        assert!(RestartMasterResetResponse::decode(&[0x03, 0xA1]).is_err());
     }
 
     #[test]

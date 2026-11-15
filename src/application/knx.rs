@@ -4013,6 +4013,45 @@ impl P2pConnection {
         Ok(response)
     }
 
+    /// Perform a confirmed Master Reset on the connected device.
+    ///
+    /// Wait at least the returned process_time before sending another request.
+    pub async fn master_reset(
+        &mut self,
+        erase_code: u8,
+        channel_number: u8,
+        timeout: std::time::Duration,
+    ) -> Result<crate::protocol::management::RestartMasterResetResponse> {
+        if !(1..=8).contains(&erase_code) {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!("Master Reset erase code {erase_code} is not defined"),
+            }
+            .into());
+        }
+        let response = self
+            .request(
+                crate::protocol::management::RestartMasterReset {
+                    erase_code,
+                    channel_number,
+                }
+                .encode(),
+                [0x03, 0xA1],
+                timeout,
+            )
+            .await?;
+        let response = crate::protocol::management::RestartMasterResetResponse::decode(&response)?;
+        if response.error_code != 0 {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!(
+                    "Master Reset failed with error code 0x{:02X}",
+                    response.error_code
+                ),
+            }
+            .into());
+        }
+        Ok(response)
+    }
+
     /// Discover interface objects and their property descriptions on this device.
     pub async fn scan_interface_objects(
         &mut self,
@@ -5947,6 +5986,94 @@ mod integration_tests {
         assert_eq!(objects[0].properties.len(), 2);
         assert_eq!(objects[0].properties[0].property_id, 2);
         assert_eq!(objects[0].properties[1].property_id, 3);
+
+        assert!(
+            p2p.master_reset(0, 2, Duration::from_secs(2))
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), peer_traffic.recv())
+                .await
+                .is_err()
+        );
+
+        let resetting = tokio::spawn(async move {
+            let response = p2p.master_reset(1, 2, Duration::from_secs(2)).await?;
+            Ok::<_, KnxError>((p2p, response))
+        });
+        let reset_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reset_request.payload, [0x03, 0x81, 1, 2]);
+        assert_eq!(
+            reset_request.tpci,
+            TpciFrame::DataConnected { sequence: 0 }.encode()
+        );
+        let mut reset_ack = Telegram::individual_data(client_address, Vec::new());
+        reset_ack.source = device_address;
+        reset_ack.telegram_type = TelegramType::IndividualControl;
+        reset_ack.tpci = TpciFrame::Ack { sequence: 0 }.encode();
+        server.send(reset_ack).await.unwrap();
+        let mut reset_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::RestartMasterResetResponse {
+                error_code: 0,
+                process_time: 10,
+            }
+            .encode(),
+        );
+        reset_response.source = device_address;
+        reset_response.tpci = TpciFrame::DataConnected { sequence: 15 }.encode();
+        server.send(reset_response).await.unwrap();
+        let (mut p2p, reset_response) = resetting.await.unwrap().unwrap();
+        assert_eq!(reset_response.process_time, 10);
+        let reset_response_ack = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reset_response_ack.tpci,
+            TpciFrame::Ack { sequence: 15 }.encode()
+        );
+
+        let resetting_with_error = tokio::spawn(async move {
+            let result = p2p.master_reset(2, 0, Duration::from_secs(2)).await;
+            Ok::<_, KnxError>((p2p, result))
+        });
+        let reset_error_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reset_error_request.payload, [0x03, 0x81, 2, 0]);
+        let mut reset_error_ack = Telegram::individual_data(client_address, Vec::new());
+        reset_error_ack.source = device_address;
+        reset_error_ack.telegram_type = TelegramType::IndividualControl;
+        reset_error_ack.tpci = TpciFrame::Ack { sequence: 1 }.encode();
+        server.send(reset_error_ack).await.unwrap();
+        let mut reset_error_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::RestartMasterResetResponse {
+                error_code: 1,
+                process_time: 0,
+            }
+            .encode(),
+        );
+        reset_error_response.source = device_address;
+        reset_error_response.tpci = TpciFrame::DataConnected { sequence: 0 }.encode();
+        server.send(reset_error_response).await.unwrap();
+        let (mut p2p, result) = resetting_with_error.await.unwrap().unwrap();
+        assert!(result.is_err());
+        let reset_error_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            reset_error_response_ack.tpci,
+            TpciFrame::Ack { sequence: 0 }.encode()
+        );
 
         p2p.close().await.unwrap();
         let disconnect = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
