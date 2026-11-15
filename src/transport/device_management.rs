@@ -757,9 +757,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tcp_device_management_client_reads_properties_with_loopback_server() {
+    async fn tcp_device_management_client_reads_and_writes_properties_with_loopback_server() {
         use crate::protocol::cemi::{
             CemiPropertyInfo, CemiPropertyReadRequest, CemiPropertyReadResponse,
+            CemiPropertyWriteRequest, CemiPropertyWriteResponse,
         };
         use tokio::net::TcpListener;
 
@@ -879,6 +880,56 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
+            let request = TunnellingRequest::parse(&frame.body).unwrap();
+            assert_eq!(request.sequence_counter, 1);
+            let write = CemiPropertyWriteRequest::decode(&request.raw_cemi).unwrap();
+            assert_eq!(write.property, property);
+            assert_eq!(write.data, [0x12, 0x34]);
+            transport
+                .send_frame(
+                    &KnxIpFrame::new(
+                        ServiceType::DeviceConfigurationAck,
+                        TunnellingAck::new_ok(7, 1).serialize(),
+                    )
+                    .serialize(),
+                )
+                .await
+                .unwrap();
+            let response = CemiPropertyWriteResponse {
+                property,
+                error_code: None,
+            }
+            .encode()
+            .unwrap();
+            transport
+                .send_frame(
+                    &KnxIpFrame::new(
+                        ServiceType::DeviceConfigurationRequest,
+                        TunnellingRequest::new(7, 1, response).serialize(),
+                    )
+                    .serialize(),
+                )
+                .await
+                .unwrap();
+            let frame = KnxIpFrame::parse(
+                &timeout(Duration::from_secs(2), transport.recv_frame())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                TunnellingAck::parse(&frame.body).unwrap().sequence_counter,
+                1
+            );
+
+            let frame = KnxIpFrame::parse(
+                &timeout(Duration::from_secs(2), transport.recv_frame())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
             assert_eq!(
                 frame.header.service_type,
                 ServiceType::ConnectionstateRequest
@@ -930,6 +981,10 @@ mod tests {
                 .unwrap(),
             [0x24]
         );
+        connection
+            .write_property(property, &[0x12, 0x34], Duration::from_secs(2))
+            .await
+            .unwrap();
         connection.heartbeat(Duration::from_secs(2)).await.unwrap();
         connection.disconnect(Duration::from_secs(2)).await.unwrap();
         server_task.await.unwrap();
