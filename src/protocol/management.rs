@@ -246,6 +246,52 @@ pub struct PropertyValueWrite {
     pub data: Vec<u8>,
 }
 
+/// `A_Memory_Read` request for the 64 KiB memory address space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryRead {
+    pub address: u16,
+    pub count: u8,
+}
+
+/// `A_Memory_Response` from the 64 KiB memory address space.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryResponse {
+    pub address: u16,
+    pub count: u8,
+    pub data: Vec<u8>,
+}
+
+/// `A_Memory_Write` request for the 64 KiB memory address space.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryWrite {
+    pub address: u16,
+    pub count: u8,
+    pub data: Vec<u8>,
+}
+
+/// `A_UserMemory_Read` request for the 1 MiB user-memory address space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserMemoryRead {
+    pub address: u32,
+    pub count: u8,
+}
+
+/// `A_UserMemory_Response` from the 1 MiB user-memory address space.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserMemoryResponse {
+    pub address: u32,
+    pub count: u8,
+    pub data: Vec<u8>,
+}
+
+/// `A_UserMemory_Write` request for the 1 MiB user-memory address space.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserMemoryWrite {
+    pub address: u32,
+    pub count: u8,
+    pub data: Vec<u8>,
+}
+
 /// `A_DeviceDescriptor_Response` — a device descriptor answer (APCI `0x0340`).
 ///
 /// Sent by the device in reply to a [`DeviceDescriptorRead`]. It echoes the
@@ -402,6 +448,158 @@ impl PropertyDescriptionResponse {
 const APCI_PROPERTY_VALUE_READ: u8 = 0xD5;
 const APCI_PROPERTY_VALUE_RESPONSE: u8 = 0xD6;
 const APCI_PROPERTY_VALUE_WRITE: u8 = 0xD7;
+
+const APCI_MEMORY_READ: u8 = 0x00;
+const APCI_MEMORY_RESPONSE: u8 = 0x40;
+const APCI_MEMORY_WRITE: u8 = 0x80;
+const APCI_USER_MEMORY_READ: u8 = 0xC0;
+const APCI_USER_MEMORY_RESPONSE: u8 = 0xC1;
+const APCI_USER_MEMORY_WRITE: u8 = 0xC2;
+
+fn encode_memory(service: u8, address: u16, count: u8, data: &[u8]) -> Result<Vec<u8>> {
+    if count > 0x3F {
+        return Err(ProtocolError::InvalidFrame {
+            details: format!("Memory element count {count} exceeds 63"),
+        }
+        .into());
+    }
+    let mut result = vec![0x02, service | count, (address >> 8) as u8, address as u8];
+    result.extend_from_slice(data);
+    Ok(result)
+}
+
+fn decode_memory(apdu: &[u8], service: u8, read: bool) -> Result<(u16, u8, &[u8])> {
+    if apdu.len() < 4 || apdu[0] != 0x02 || apdu[1] & 0xC0 != service || (read && apdu.len() != 4) {
+        return Err(ProtocolError::InvalidFrame {
+            details: format!("Malformed memory APCI service 0x02{service:02X}"),
+        }
+        .into());
+    }
+    Ok((
+        u16::from_be_bytes([apdu[2], apdu[3]]),
+        apdu[1] & 0x3F,
+        &apdu[4..],
+    ))
+}
+
+fn encode_user_memory(service: u8, address: u32, count: u8, data: &[u8]) -> Result<Vec<u8>> {
+    if address > 0x0F_FFFF || count > 0x0F {
+        return Err(ProtocolError::InvalidFrame {
+            details: format!("User memory address {address} or count {count} is out of range"),
+        }
+        .into());
+    }
+    let mut result = vec![
+        0x02,
+        service,
+        (((address >> 16) as u8) << 4) | count,
+        (address >> 8) as u8,
+        address as u8,
+    ];
+    result.extend_from_slice(data);
+    Ok(result)
+}
+
+fn decode_user_memory(apdu: &[u8], service: u8, read: bool) -> Result<(u32, u8, &[u8])> {
+    if apdu.len() < 5 || apdu[..2] != [0x02, service] || (read && apdu.len() != 5) {
+        return Err(ProtocolError::InvalidFrame {
+            details: format!("Malformed user memory APCI service 0x02{service:02X}"),
+        }
+        .into());
+    }
+    Ok((
+        (u32::from(apdu[2] & 0xF0) << 12) | u32::from_be_bytes([0, 0, apdu[3], apdu[4]]),
+        apdu[2] & 0x0F,
+        &apdu[5..],
+    ))
+}
+
+impl MemoryRead {
+    pub fn encode(self) -> Result<Vec<u8>> {
+        encode_memory(APCI_MEMORY_READ, self.address, self.count, &[])
+    }
+
+    pub fn decode(apdu: &[u8]) -> Result<Self> {
+        let (address, count, _) = decode_memory(apdu, APCI_MEMORY_READ, true)?;
+        Ok(Self { address, count })
+    }
+}
+
+impl MemoryResponse {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        encode_memory(APCI_MEMORY_RESPONSE, self.address, self.count, &self.data)
+    }
+
+    pub fn decode(apdu: &[u8]) -> Result<Self> {
+        let (address, count, data) = decode_memory(apdu, APCI_MEMORY_RESPONSE, false)?;
+        Ok(Self {
+            address,
+            count,
+            data: data.to_vec(),
+        })
+    }
+}
+
+impl MemoryWrite {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        encode_memory(APCI_MEMORY_WRITE, self.address, self.count, &self.data)
+    }
+
+    pub fn decode(apdu: &[u8]) -> Result<Self> {
+        let (address, count, data) = decode_memory(apdu, APCI_MEMORY_WRITE, false)?;
+        Ok(Self {
+            address,
+            count,
+            data: data.to_vec(),
+        })
+    }
+}
+
+impl UserMemoryRead {
+    pub fn encode(self) -> Result<Vec<u8>> {
+        encode_user_memory(APCI_USER_MEMORY_READ, self.address, self.count, &[])
+    }
+
+    pub fn decode(apdu: &[u8]) -> Result<Self> {
+        let (address, count, _) = decode_user_memory(apdu, APCI_USER_MEMORY_READ, true)?;
+        Ok(Self { address, count })
+    }
+}
+
+impl UserMemoryResponse {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        encode_user_memory(
+            APCI_USER_MEMORY_RESPONSE,
+            self.address,
+            self.count,
+            &self.data,
+        )
+    }
+
+    pub fn decode(apdu: &[u8]) -> Result<Self> {
+        let (address, count, data) = decode_user_memory(apdu, APCI_USER_MEMORY_RESPONSE, false)?;
+        Ok(Self {
+            address,
+            count,
+            data: data.to_vec(),
+        })
+    }
+}
+
+impl UserMemoryWrite {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        encode_user_memory(APCI_USER_MEMORY_WRITE, self.address, self.count, &self.data)
+    }
+
+    pub fn decode(apdu: &[u8]) -> Result<Self> {
+        let (address, count, data) = decode_user_memory(apdu, APCI_USER_MEMORY_WRITE, false)?;
+        Ok(Self {
+            address,
+            count,
+            data: data.to_vec(),
+        })
+    }
+}
 
 fn encode_property_value(
     service: u8,
@@ -794,8 +992,9 @@ mod tests {
         DeviceDescriptorRead, DeviceDescriptorResponse, FunctionPropertyCommand,
         FunctionPropertyExtCommand, FunctionPropertyExtStateRead, FunctionPropertyExtStateResponse,
         FunctionPropertyService, FunctionPropertyStateRead, FunctionPropertyStateResponse,
-        PropertyDescriptionRead, PropertyDescriptionResponse, PropertyValueRead,
-        PropertyValueResponse, PropertyValueWrite,
+        MemoryRead, MemoryResponse, MemoryWrite, PropertyDescriptionRead,
+        PropertyDescriptionResponse, PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
+        UserMemoryRead, UserMemoryResponse, UserMemoryWrite,
     };
 
     #[test]
@@ -1108,6 +1307,88 @@ mod tests {
         let encoded_write = write.encode().unwrap();
         assert_eq!(encoded_write, [0x03, 0xD7, 3, 4, 0x1A, 0xBC, 0x55]);
         assert_eq!(PropertyValueWrite::decode(&encoded_write).unwrap(), write);
+    }
+
+    #[test]
+    fn memory_and_user_memory_apci_codecs_match_wire_vectors() {
+        let read = MemoryRead {
+            address: 0x1234,
+            count: 3,
+        };
+        assert_eq!(read.encode().unwrap(), [0x02, 0x03, 0x12, 0x34]);
+        assert_eq!(MemoryRead::decode(&[0x02, 0x03, 0x12, 0x34]).unwrap(), read);
+        let response = MemoryResponse {
+            address: 0x1234,
+            count: 2,
+            data: vec![0xAA, 0xBB],
+        };
+        let encoded = response.encode().unwrap();
+        assert_eq!(encoded, [0x02, 0x42, 0x12, 0x34, 0xAA, 0xBB]);
+        assert_eq!(MemoryResponse::decode(&encoded).unwrap(), response);
+        let write = MemoryWrite {
+            address: 0x1234,
+            count: 2,
+            data: vec![0xAA, 0xBB],
+        };
+        let encoded = write.encode().unwrap();
+        assert_eq!(encoded, [0x02, 0x82, 0x12, 0x34, 0xAA, 0xBB]);
+        assert_eq!(MemoryWrite::decode(&encoded).unwrap(), write);
+
+        let user_read = UserMemoryRead {
+            address: 0xABCDE,
+            count: 3,
+        };
+        let encoded = user_read.encode().unwrap();
+        assert_eq!(encoded, [0x02, 0xC0, 0xA3, 0xBC, 0xDE]);
+        assert_eq!(UserMemoryRead::decode(&encoded).unwrap(), user_read);
+        let user_response = UserMemoryResponse {
+            address: 0xABCDE,
+            count: 2,
+            data: vec![0xAA, 0xBB],
+        };
+        let encoded = user_response.encode().unwrap();
+        assert_eq!(encoded, [0x02, 0xC1, 0xA2, 0xBC, 0xDE, 0xAA, 0xBB]);
+        assert_eq!(UserMemoryResponse::decode(&encoded).unwrap(), user_response);
+        let user_write = UserMemoryWrite {
+            address: 0xABCDE,
+            count: 2,
+            data: vec![0xAA, 0xBB],
+        };
+        let encoded = user_write.encode().unwrap();
+        assert_eq!(encoded, [0x02, 0xC2, 0xA2, 0xBC, 0xDE, 0xAA, 0xBB]);
+        assert_eq!(UserMemoryWrite::decode(&encoded).unwrap(), user_write);
+    }
+
+    #[test]
+    fn memory_codecs_reject_invalid_services_lengths_and_fields() {
+        assert!(MemoryRead::decode(&[0x02, 0x03, 0x12]).is_err());
+        assert!(MemoryRead::decode(&[0x02, 0x43, 0x12, 0x34]).is_err());
+        assert!(MemoryResponse::decode(&[0x02, 0x02, 0x12, 0x34]).is_err());
+        assert!(
+            MemoryRead {
+                address: 0,
+                count: 64
+            }
+            .encode()
+            .is_err()
+        );
+        assert!(UserMemoryRead::decode(&[0x02, 0xC1, 0, 0, 0]).is_err());
+        assert!(
+            UserMemoryRead {
+                address: 0x10_0000,
+                count: 1,
+            }
+            .encode()
+            .is_err()
+        );
+        assert!(
+            UserMemoryRead {
+                address: 0,
+                count: 16,
+            }
+            .encode()
+            .is_err()
+        );
     }
 
     #[test]
