@@ -413,6 +413,20 @@ impl<'a> ColorTemperatureTransitionView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct ConverterInfoFixView<'a>(pub(crate) &'a [u8]);
+impl<'a> ConverterInfoFixView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt248::ConverterInfoFix {
+        super::dpt248::ConverterInfoFix::decode(self.0.try_into().expect("validated length"))
+            .expect("validated information")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct ConverterStatusView<'a>(pub(crate) &'a [u8]);
 impl<'a> ConverterStatusView<'a> {
     #[must_use]
@@ -879,6 +893,7 @@ pub enum DptView<'a> {
     AlarmInfo(AlarmInfoView<'a>),
     BatteryInfo(BatteryInfoView<'a>),
     ConverterStatus(ConverterStatusView<'a>),
+    ConverterInfoFix(ConverterInfoFixView<'a>),
     ColorTemperatureTransition(ColorTemperatureTransitionView<'a>),
     RelativeColor(RelativeColorView<'a>),
     XYYColorTransition(XYYColorTransitionView<'a>),
@@ -940,6 +955,7 @@ impl<'a> DptView<'a> {
             | Self::AlarmInfo(_)
             | Self::BatteryInfo(_)
             | Self::ConverterStatus(_)
+            | Self::ConverterInfoFix(_)
             | Self::ColorTemperatureTransition(_)
             | Self::RelativeColor(_)
             | Self::XYYColorTransition(_)
@@ -1005,6 +1021,7 @@ impl<'a> DptView<'a> {
             Self::AlarmInfo(v) => v.raw(),
             Self::BatteryInfo(v) => v.raw(),
             Self::ConverterStatus(v) => v.raw(),
+            Self::ConverterInfoFix(v) => v.raw(),
             Self::ColorTemperatureTransition(v) => v.raw(),
             Self::RelativeColor(v) => v.raw(),
             Self::XYYColorTransition(v) => v.raw(),
@@ -1077,6 +1094,7 @@ impl DptView<'_> {
             Self::AlarmInfo(v) => v.value().to_string(),
             Self::BatteryInfo(v) => v.value().to_string(),
             Self::ConverterStatus(v) => v.value().to_string(),
+            Self::ConverterInfoFix(v) => v.value().to_string(),
             Self::ColorTemperatureTransition(v) => v.value().to_string(),
             Self::RelativeColor(v) => v.value().formatted(None),
             Self::XYYColorTransition(v) => v.value().to_string(),
@@ -1538,6 +1556,7 @@ impl DptType {
             219 => s.parse().map(DptPayload::AlarmInfo),
             246 => s.parse().map(DptPayload::BatteryInfo),
             244 => s.parse().map(DptPayload::ConverterStatus),
+            248 => s.parse().map(DptPayload::ConverterInfoFix),
             249 => s.parse().map(DptPayload::ColorTemperatureTransition),
             250 | 252..=254 => super::dpt_relative_color::parse_payload(s,self.main()),
             243 => s.parse().map(DptPayload::XYYColorTransition),

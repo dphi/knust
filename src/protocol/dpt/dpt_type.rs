@@ -3,14 +3,14 @@ use super::unit::Unit;
 use super::view::{
     AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView,
     ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
-    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterStatusView,
-    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
-    DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
-    PrioritisedModeControlView, RelativeColorView, RgbView, RgbwView, ScalingTimeView,
-    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View, StatusHVAView,
-    StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View, U16View, U32View,
-    VersionView, XYYColorTransitionView, XyyView,
+    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
+    ConverterStatusView, DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView,
+    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
+    GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
+    MeteringValueView, ModeNextView, PrioritisedModeControlView, RelativeColorView, RgbView,
+    RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View,
+    Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView,
+    U8View, U16View, U32View, VersionView, XYYColorTransitionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -278,6 +278,7 @@ pub enum DptType {
     AlarmInfo = 21_900_001,
     BatteryInfo = 24_600_600,
     ConverterStatus = 24_400_600,
+    ConverterInfoFix = 24_800_600,
     ColorTemperatureTransition = 24_900_600,
     XYYColorTransition = 24_300_600,
     ColorTemperatureControl = 25_000_600,
@@ -523,7 +524,7 @@ impl DptType {
             1..=6 | 17 | 18 | 20 | 21 | 25 | 26 | 236 | 238 => 1,
             7..=9 | 22 | 207 | 217 | 234 | 237 | 244 | 246 => 2,
             10 | 11 | 30 | 206 | 225 | 232 | 240 | 250 | 254 => 3,
-            252 => 5,
+            248 | 252 => 5,
             12..=15 | 27 | 241 | 253 => 4,
             16 => 14,
             19 | 29 | 230 | 243 | 255 | 273 | 275 => 8,
@@ -754,6 +755,12 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            248 => {
+                super::dpt248::ConverterInfoFix::decode(
+                    bytes.try_into().expect("validated length"),
+                )?;
+                Ok(DptView::ConverterInfoFix(ConverterInfoFixView(bytes)))
+            }
             246 => Ok(DptView::BatteryInfo(BatteryInfoView(bytes))),
             244 => {
                 super::dpt244::ConverterStatus::decode([bytes[0], bytes[1]])?;
@@ -1116,6 +1123,7 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (248, DptPayload::ConverterInfoFix(value)) => Ok(value.encode()?.to_vec()),
             (246, DptPayload::BatteryInfo(value)) => Ok(value.encode()?.to_vec()),
             (244, DptPayload::ConverterStatus(value)) => Ok(value.encode()?.to_vec()),
             (250, DptPayload::ColorTemperatureControl(value)) => Ok(value.encode().to_vec()),

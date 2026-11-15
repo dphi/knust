@@ -45,6 +45,7 @@ pub mod dpt242;
 pub mod dpt243; // XYY Color
 pub mod dpt244;
 pub mod dpt246;
+pub mod dpt248;
 pub mod dpt249;
 pub mod dpt25;
 pub mod dpt251;
@@ -119,6 +120,7 @@ pub use dpt242::*;
 pub use dpt243::*;
 pub use dpt244::*;
 pub use dpt246::*;
+pub use dpt248::*;
 pub use dpt249::*;
 pub use dpt251::*;
 pub use dpt255::*;
@@ -129,14 +131,14 @@ pub use unit::Unit;
 pub use view::{
     AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView,
     ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
-    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterStatusView,
-    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
-    DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
-    PrioritisedModeControlView, RelativeColorView, RgbView, RgbwView, ScalingTimeView,
-    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View, StatusHVAView,
-    StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View, U16View, U32View,
-    VersionView, XYYColorTransitionView, XyyView,
+    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
+    ConverterStatusView, DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView,
+    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
+    GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
+    MeteringValueView, ModeNextView, PrioritisedModeControlView, RelativeColorView, RgbView,
+    RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View,
+    Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView,
+    U8View, U16View, U32View, VersionView, XYYColorTransitionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -717,6 +719,7 @@ impl DptRegistry {
         registry.register::<DPTAlarmInfo>();
         registry.register::<DPTBatteryInfo>();
         registry.register::<DPTConverterStatus>();
+        registry.register::<DPTConverterInfoFix>();
         registry.register::<DPTColorTemperatureTransition>();
         registry.register::<DPTColorXYYTransition>();
         registry.register::<DPTColorTemperatureControl>();
