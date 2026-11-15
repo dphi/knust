@@ -42,6 +42,7 @@ pub mod dpt238;
 pub mod dpt240;
 pub mod dpt241; // Tariff Active Energy
 pub mod dpt242; // XYY Color
+pub mod dpt249;
 pub mod dpt25;
 pub mod dpt251;
 pub mod dpt255;
@@ -110,6 +111,7 @@ pub use dpt238::*;
 pub use dpt240::*;
 pub use dpt241::*;
 pub use dpt242::*;
+pub use dpt249::*;
 pub use dpt251::*;
 pub use dpt255::*;
 pub use dpt273::*;
@@ -118,13 +120,14 @@ pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
     AccessDataView, ActuatorView, AlarmInfoView, BoolView, ChannelActivation24View, CharacterView,
-    CodeView, CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
-    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
-    DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
-    PrioritisedModeControlView, RgbView, RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView,
-    SceneView, Setpoints3View, Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView,
-    StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
+    CodeView, ColorTemperatureTransitionView, CombinedInfoOnOffView, CombinedPositionView,
+    Control2View, ControlView, DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView,
+    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
+    GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
+    MeteringValueView, ModeNextView, PrioritisedModeControlView, RgbView, RgbwView,
+    ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
+    StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View,
+    U16View, U32View, VersionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -703,6 +706,7 @@ impl DptRegistry {
         registry.register::<DPTScalingStepTime>();
         registry.register::<DPTMeteringValue>();
         registry.register::<DPTAlarmInfo>();
+        registry.register::<DPTColorTemperatureTransition>();
         registry.register::<DPTCombinedStatusRTSM>();
         registry.register::<DPTCombinedStatusHVA>();
         registry.register::<DPTCombinedStatusRTC>();

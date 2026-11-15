@@ -2,13 +2,14 @@ use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
     AccessDataView, ActuatorView, AlarmInfoView, BoolView, ChannelActivation24View, CharacterView,
-    CodeView, CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
-    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
-    DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
-    PrioritisedModeControlView, RgbView, RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView,
-    SceneView, Setpoints3View, Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView,
-    StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView, XyyView,
+    CodeView, ColorTemperatureTransitionView, CombinedInfoOnOffView, CombinedPositionView,
+    Control2View, ControlView, DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView,
+    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
+    GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
+    MeteringValueView, ModeNextView, PrioritisedModeControlView, RgbView, RgbwView,
+    ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
+    StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View,
+    U16View, U32View, VersionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -274,6 +275,7 @@ pub enum DptType {
     ScalingStepTime = 22_500_002,
     MeteringValue = 22_900_001,
     AlarmInfo = 21_900_001,
+    ColorTemperatureTransition = 24_900_600,
     CombinedStatusRTSM = 2_100_107,
     CombinedStatusHVA = 2_200_102,
     CombinedStatusRTC = 2_200_103,
@@ -516,7 +518,7 @@ impl DptType {
             12..=15 | 27 | 241 => 4,
             16 => 14,
             19 | 29 | 230 | 255 | 273 | 275 => 8,
-            219 | 222 | 229 | 235 | 242 | 251 => 6,
+            219 | 222 | 229 | 235 | 242 | 249 | 251 => 6,
             _ => 0,
         }
     }
@@ -743,6 +745,9 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            249 => Ok(DptView::ColorTemperatureTransition(
+                ColorTemperatureTransitionView(bytes),
+            )),
             219 => {
                 super::dpt219::AlarmInfo::decode(bytes.try_into().expect("validated length"))?;
                 Ok(DptView::AlarmInfo(AlarmInfoView(bytes)))
@@ -1092,6 +1097,7 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (249, DptPayload::ColorTemperatureTransition(value)) => Ok(value.encode()?.to_vec()),
             (219, DptPayload::AlarmInfo(value)) => Ok(value.encode()?.to_vec()),
             (207, DptPayload::BurnerControllerStatus(value)) if self.sub() == 100 => {
                 Ok(value.encode()?.to_vec())
