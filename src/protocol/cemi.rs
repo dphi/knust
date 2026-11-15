@@ -372,6 +372,16 @@ impl CemiFrame {
             }
             .into());
         }
+        if self.apci_data.len() != usize::from(self.data_length) {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "CEMI APDU length mismatch: header says {}, payload has {} bytes",
+                    self.data_length,
+                    self.apci_data.len()
+                ),
+            }
+            .into());
+        }
 
         let timer = Timer::start(Component::Protocol, "cemi_serialize");
         log_protocol!(
@@ -1158,6 +1168,18 @@ mod tests {
             assert_eq!(frame.tpci, tpci);
             assert_eq!(frame.serialize().unwrap(), wire);
         }
+    }
+
+    #[test]
+    fn rejects_apdu_length_mismatch_and_u8_overflow() {
+        let source = IndividualAddress::new(1, 1, 1);
+        let destination = Address::Group(GroupAddress::try_from_raw(1).unwrap());
+        let mut mismatched = CemiFrame::new(MessageCode::LDataReq, source, destination, vec![0x00]);
+        mismatched.data_length = 2;
+        assert!(mismatched.serialize().is_err());
+
+        let oversized = CemiFrame::new(MessageCode::LDataReq, source, destination, vec![0; 256]);
+        assert!(oversized.serialize().is_err());
     }
 
     #[test]
