@@ -26,7 +26,6 @@ use tokio::sync::{RwLock, broadcast, oneshot};
 use crate::error::{Result, TransportError};
 use crate::log_transport;
 use crate::logging::LogLevel;
-use crate::protocol::GroupValueService;
 use crate::protocol::address::IndividualAddress;
 use crate::protocol::cemi::{CemiFrame, MessageCode};
 use crate::protocol::knxip::{
@@ -36,7 +35,9 @@ use crate::protocol::knxip::{
 };
 #[cfg(feature = "secure")]
 use crate::protocol::knxip::{SessionAuthenticate, SessionRequest, SessionResponse, SessionStatus};
-use crate::protocol::telegram::{Direction, Priority, Telegram, TelegramType};
+use crate::protocol::telegram::Telegram;
+#[cfg(test)]
+use crate::protocol::telegram::TelegramType;
 #[cfg(feature = "secure")]
 use crate::security::{SecureSession, SessionConfig};
 
@@ -949,7 +950,7 @@ fn build_tunnelling_frame_with_code(
         message_code,
         telegram.source,
         telegram.destination,
-        telegram.encode_group_service(),
+        telegram.encode_apdu(),
     );
     let request = TunnellingRequest::new(channel_id, sequence, cemi.serialize()?);
     Ok(KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize())
@@ -967,37 +968,8 @@ fn build_tunnel_crd(addr: IndividualAddress) -> Vec<u8> {
     vec![4, ConnectionRequestInfo::TUNNEL_CONNECTION, hi, lo]
 }
 
-/// Decode a raw CEMI frame (as carried by a `TunnellingRequest`) into a
-/// `Telegram`. Mirrors the equivalent client-side decode used when a `Tunnel`
-/// receives a frame from a real gateway.
 fn parse_cemi_to_telegram(cemi_data: &[u8]) -> Result<Telegram> {
-    let cemi_frame = CemiFrame::parse(cemi_data)?;
-    let service = GroupValueService::decode(cemi_frame.tpci, &cemi_frame.apci_data).ok();
-    let payload = service
-        .as_ref()
-        .and_then(|s| s.payload().map(<[u8]>::to_vec))
-        .unwrap_or_else(|| cemi_frame.apci_data.clone());
-    let telegram_type = match &service {
-        Some(GroupValueService::Read) => TelegramType::GroupValueRead,
-        Some(GroupValueService::Response(_)) => TelegramType::GroupValueResponse,
-        Some(GroupValueService::Write(_)) | None => TelegramType::GroupValueWrite,
-    };
-
-    Ok(Telegram {
-        source: cemi_frame.source_addr,
-        destination: cemi_frame.dest_addr,
-        payload,
-        priority: match cemi_frame.control_field.priority {
-            crate::protocol::cemi::Priority::System => Priority::System,
-            crate::protocol::cemi::Priority::Normal => Priority::Normal,
-            crate::protocol::cemi::Priority::Urgent => Priority::Urgent,
-            crate::protocol::cemi::Priority::Low => Priority::Low,
-        },
-        direction: Direction::Incoming,
-        telegram_type,
-        compact_payload: cemi_frame.apci_data.len() == 1,
-        timestamp: std::time::SystemTime::now(),
-    })
+    Telegram::from_cemi_frame(CemiFrame::parse(cemi_data)?)
 }
 
 #[cfg(test)]

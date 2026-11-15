@@ -2680,48 +2680,10 @@ impl Knx {
         );
     }
 
-    /// Parse CEMI data to telegram (extracted from `parse_telegram`)
     fn parse_cemi_to_telegram(cemi_data: &[u8]) -> Result<Telegram> {
-        use crate::protocol::cemi::CemiFrame;
-        use crate::protocol::telegram::{Direction, Priority, TelegramType};
-
-        // Parse CEMI frame
-        let cemi_frame = CemiFrame::parse(cemi_data)?;
-
-        let service =
-            crate::protocol::GroupValueService::decode(cemi_frame.tpci, &cemi_frame.apci_data).ok();
-        let payload = service
-            .as_ref()
-            .and_then(|service| service.payload().map(<[u8]>::to_vec))
-            .unwrap_or_else(|| cemi_frame.apci_data.clone());
-        let telegram_type = match &service {
-            Some(crate::protocol::GroupValueService::Read) => TelegramType::GroupValueRead,
-            Some(crate::protocol::GroupValueService::Response(_)) => {
-                TelegramType::GroupValueResponse
-            }
-            Some(crate::protocol::GroupValueService::Write(_)) | None => {
-                TelegramType::GroupValueWrite
-            }
-        };
-
-        // Convert CEMI frame to Telegram
-        let telegram = Telegram {
-            source: cemi_frame.source_addr,
-            destination: cemi_frame.dest_addr,
-            payload,
-            priority: match cemi_frame.control_field.priority {
-                crate::protocol::cemi::Priority::System => Priority::System,
-                crate::protocol::cemi::Priority::Normal => Priority::Normal,
-                crate::protocol::cemi::Priority::Urgent => Priority::Urgent,
-                crate::protocol::cemi::Priority::Low => Priority::Low,
-            },
-            direction: Direction::Incoming,
-            telegram_type,
-            compact_payload: cemi_frame.apci_data.len() == 1,
-            timestamp: std::time::SystemTime::now(),
-        };
-
-        Ok(telegram)
+        crate::protocol::telegram::Telegram::from_cemi_frame(
+            crate::protocol::cemi::CemiFrame::parse(cemi_data)?,
+        )
     }
 
     fn build_outgoing_frame_for_connection(
@@ -2732,7 +2694,7 @@ impl Knx {
         use crate::protocol::knxip::{KnxIpFrame, ServiceType, TunnellingRequest};
         use crate::transport::Tunnel;
 
-        let apci_data = telegram.encode_group_service();
+        let apci_data = telegram.encode_apdu();
         let message_code = if connection.as_any().is::<Tunnel>() {
             MessageCode::LDataReq
         } else {
@@ -2902,6 +2864,30 @@ mod integration_tests {
         assert_ne!(telegram.telegram_type, TelegramType::GroupValueResponse);
     }
 
+    #[test]
+    fn connectionless_individual_apdu_round_trips_as_raw_service_data() {
+        use crate::protocol::knxip::{KnxIpFrame, TunnellingRequest};
+        let destination = crate::protocol::IndividualAddress::new(1, 2, 3);
+        let apdu = vec![0x02, 0xC8, 1, 2, 0x42];
+        let telegram = Telegram::individual_data(destination, apdu.clone());
+        let connection: Arc<dyn Connection> =
+            Arc::new(Tunnel::new_udp("127.0.0.1:3671".parse().unwrap()));
+        let wire = Knx::build_outgoing_frame_for_connection(&telegram, &connection).unwrap();
+        let frame = KnxIpFrame::parse(&wire).unwrap();
+        let request = TunnellingRequest::parse(&frame.body).unwrap();
+        let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
+        assert_eq!(cemi.dest_addr, Address::Individual(destination));
+        assert_eq!(cemi.tpci, 0);
+        assert_eq!(cemi.apci_data, apdu);
+        let received = Knx::parse_cemi_to_telegram(&request.raw_cemi).unwrap();
+        assert_eq!(received.telegram_type, TelegramType::IndividualData);
+        assert_eq!(received.payload, apdu);
+
+        let mut connected = cemi;
+        connected.tpci = 0x40;
+        assert!(Telegram::from_cemi_frame(connected).is_err());
+    }
+
     #[cfg(feature = "dpt")]
     #[test]
     fn octet_telegrams_preserve_full_octets_and_service_on_wire() {
@@ -2937,8 +2923,8 @@ mod integration_tests {
         }
         let switch = Telegram::group_write_value::<DPTSwitch>(address, true).unwrap();
         assert!(switch.compact_payload);
-        assert_eq!(switch.encode_group_service(), [0x81]);
-        assert_eq!(Telegram::group_read(address).encode_group_service(), [0]);
+        assert_eq!(switch.encode_apdu(), [0x81]);
+        assert_eq!(Telegram::group_read(address).encode_apdu(), [0]);
     }
 
     #[tokio::test]

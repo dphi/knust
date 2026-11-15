@@ -12,6 +12,8 @@ pub enum TelegramType {
     GroupValueResponse,
     /// `A_GroupValue_Write` — writing/commanding a new value
     GroupValueWrite,
+    /// Connectionless individual-address APDU; payload includes the APCI service bytes.
+    IndividualData,
 }
 
 impl std::fmt::Display for TelegramType {
@@ -20,6 +22,7 @@ impl std::fmt::Display for TelegramType {
             Self::GroupValueRead => write!(f, "GroupValueRead"),
             Self::GroupValueResponse => write!(f, "GroupValueResponse"),
             Self::GroupValueWrite => write!(f, "GroupValueWrite"),
+            Self::IndividualData => write!(f, "IndividualData"),
         }
     }
 }
@@ -95,15 +98,83 @@ impl Telegram {
         }
     }
 
-    /// Encode the service and the payload's compact/octet wire format together.
-    pub(crate) fn encode_group_service(&self) -> Vec<u8> {
+    pub(crate) fn from_cemi_frame(frame: super::CemiFrame) -> crate::Result<Self> {
+        let individual = matches!(frame.dest_addr, Address::Individual(_));
+        let individual_data =
+            individual && super::TpciFrame::decode(frame.tpci) == super::TpciFrame::DataUnconnected;
+        if individual && (!individual_data || frame.apci_data.is_empty()) {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "Unsupported or empty individual-address data frame".to_owned(),
+            }
+            .into());
+        }
+
+        let service = (!individual_data)
+            .then(|| super::GroupValueService::decode(frame.tpci, &frame.apci_data).ok())
+            .flatten();
+        let payload = if individual_data {
+            frame.apci_data.clone()
+        } else {
+            service
+                .as_ref()
+                .and_then(|service| service.payload().map(<[u8]>::to_vec))
+                .unwrap_or_else(|| frame.apci_data.clone())
+        };
+        let telegram_type = if individual_data {
+            TelegramType::IndividualData
+        } else {
+            match &service {
+                Some(super::GroupValueService::Read) => TelegramType::GroupValueRead,
+                Some(super::GroupValueService::Response(_)) => TelegramType::GroupValueResponse,
+                Some(super::GroupValueService::Write(_)) | None => TelegramType::GroupValueWrite,
+            }
+        };
+        Ok(Self {
+            source: frame.source_addr,
+            destination: frame.dest_addr,
+            payload,
+            priority: match frame.control_field.priority {
+                super::cemi::Priority::System => Priority::System,
+                super::cemi::Priority::Normal => Priority::Normal,
+                super::cemi::Priority::Urgent => Priority::Urgent,
+                super::cemi::Priority::Low => Priority::Low,
+            },
+            direction: Direction::Incoming,
+            telegram_type,
+            compact_payload: frame.apci_data.len() == 1,
+            timestamp: std::time::SystemTime::now(),
+        })
+    }
+
+    /// Encode the raw individual APDU or a group-value service with its payload format.
+    pub(crate) fn encode_apdu(&self) -> Vec<u8> {
+        if self.telegram_type == TelegramType::IndividualData {
+            return self.payload.clone();
+        }
         use super::GroupValueService;
         let service = match self.telegram_type {
             TelegramType::GroupValueRead => GroupValueService::Read,
             TelegramType::GroupValueResponse => GroupValueService::Response(self.payload.clone()),
             TelegramType::GroupValueWrite => GroupValueService::Write(self.payload.clone()),
+            TelegramType::IndividualData => unreachable!("handled above"),
         };
         service.encode_with_compact_payload(self.compact_payload)
+    }
+
+    /// Build an outgoing connectionless APDU for an individual address.
+    /// The payload contains the complete APCI and service data.
+    #[must_use]
+    pub fn individual_data(destination: IndividualAddress, apdu: Vec<u8>) -> Self {
+        Self {
+            source: IndividualAddress::default(),
+            destination: Address::Individual(destination),
+            payload: apdu,
+            priority: Priority::Normal,
+            direction: Direction::Outgoing,
+            telegram_type: TelegramType::IndividualData,
+            compact_payload: false,
+            timestamp: std::time::SystemTime::now(),
+        }
     }
 
     /// Build a telegram as if it arrived from `source` on the bus — for
@@ -351,6 +422,18 @@ mod value_tests {
 
     fn ga() -> GroupAddress {
         GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3)
+    }
+
+    #[test]
+    fn individual_data_keeps_the_complete_apdu() {
+        let destination = IndividualAddress::new(1, 2, 3);
+        let apdu = vec![0x02, 0xC8, 1, 2, 0x42];
+        let telegram = Telegram::individual_data(destination, apdu.clone());
+        assert_eq!(telegram.destination, Address::Individual(destination));
+        assert_eq!(telegram.telegram_type, TelegramType::IndividualData);
+        assert_eq!(telegram.encode_apdu(), apdu);
+        assert!(telegram.is_individual_telegram());
+        assert!(!telegram.is_group_telegram());
     }
 
     #[test]
