@@ -66,6 +66,20 @@ impl DeviceDescriptorRead {
     }
 }
 
+/// `A_PropertyDescription_Response` — metadata for one interface-object property.
+///
+/// The `type_` and `access` octets are retained verbatim so unknown PDT values
+/// and access bits remain available to callers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PropertyDescriptionResponse {
+    pub object_index: u8,
+    pub property_id: u8,
+    pub property_index: u8,
+    pub type_: u8,
+    pub max_count: u16,
+    pub access: u8,
+}
+
 /// `A_DeviceDescriptor_Response` — a device descriptor answer (APCI `0x0340`).
 ///
 /// Sent by the device in reply to a [`DeviceDescriptorRead`]. It echoes the
@@ -149,18 +163,86 @@ impl DeviceDescriptorResponse {
     }
 }
 
+impl PropertyDescriptionResponse {
+    /// Encode the response as APCI bytes, including service `0x03D9`.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut result = Vec::with_capacity(9);
+        result.extend_from_slice(&[
+            0x03,
+            0xD9,
+            self.object_index,
+            self.property_id,
+            self.property_index,
+            self.type_,
+        ]);
+        result.extend_from_slice(&(self.max_count & 0x0FFF).to_be_bytes());
+        result.push(self.access);
+        result
+    }
+
+    /// Decode a nine-byte `A_PropertyDescription_Response` APCI frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::InvalidFrame`] for a different APCI service or
+    /// a frame whose length is not exactly nine bytes.
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        if apci_bytes.len() != 9 || apci_bytes[..2] != [0x03, 0xD9] {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "Expected 9-byte PropertyDescriptionResponse APCI 0x03D9, got {} bytes",
+                    apci_bytes.len()
+                ),
+            }
+            .into());
+        }
+
+        Ok(Self {
+            object_index: apci_bytes[2],
+            property_id: apci_bytes[3],
+            property_index: apci_bytes[4],
+            type_: apci_bytes[5],
+            max_count: u16::from_be_bytes([apci_bytes[6], apci_bytes[7]]) & 0x0FFF,
+            access: apci_bytes[8],
+        })
+    }
+
+    /// Whether the property is writable.
+    #[must_use]
+    pub const fn writable(self) -> bool {
+        self.type_ & 0x80 != 0
+    }
+
+    /// Raw six-bit property data type code, including reserved codes.
+    #[must_use]
+    pub const fn pdt(self) -> u8 {
+        self.type_ & 0x3F
+    }
+
+    /// Required read access level.
+    #[must_use]
+    pub const fn read_level(self) -> u8 {
+        self.access >> 4
+    }
+
+    /// Required write access level.
+    #[must_use]
+    pub const fn write_level(self) -> u8 {
+        self.access & 0x0F
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DeviceDescriptorRead, DeviceDescriptorResponse};
+    use super::{DeviceDescriptorRead, DeviceDescriptorResponse, PropertyDescriptionResponse};
 
     #[test]
     fn device_descriptor_read_encodes_to_apci_0x0300() {
-        // Descriptor 0 -> [0x03, 0x00] (APCI 0x0300).
         assert_eq!(
             DeviceDescriptorRead { descriptor: 0 }.encode(),
             vec![0x03, 0x00]
         );
-        // Descriptor bits live in the low six bits of the second byte.
         assert_eq!(
             DeviceDescriptorRead { descriptor: 0x3F }.encode(),
             vec![0x03, 0x3F]
@@ -169,7 +251,6 @@ mod tests {
 
     #[test]
     fn device_descriptor_read_masks_descriptor_to_six_bits() {
-        // High bits of the descriptor must not bleed into the APCI service bits.
         assert_eq!(
             DeviceDescriptorRead { descriptor: 0xFF }.encode(),
             vec![0x03, 0x3F]
@@ -192,7 +273,6 @@ mod tests {
 
     #[test]
     fn device_descriptor_response_decodes_known_bytes() {
-        // [0x03, 0x40, 0x07, 0xB0] is a descriptor-0 response carrying 0x07B0.
         let decoded = DeviceDescriptorResponse::decode(&[0x03, 0x40, 0x07, 0xB0]).unwrap();
         assert_eq!(decoded.descriptor, 0);
         assert_eq!(decoded.data, vec![0x07, 0xB0]);
@@ -200,7 +280,6 @@ mod tests {
 
     #[test]
     fn device_descriptor_response_preserves_descriptor_bits() {
-        // Second byte 0x42 -> response bits 0x40 + descriptor 0x02.
         let decoded = DeviceDescriptorResponse::decode(&[0x03, 0x42]).unwrap();
         assert_eq!(decoded.descriptor, 0x02);
         assert_eq!(decoded.data, [] as [u8; 0]);
@@ -208,9 +287,7 @@ mod tests {
 
     #[test]
     fn device_descriptor_response_rejects_non_0x0340_pattern() {
-        // A read pattern (APCI 0x0300) must not decode as a response.
         assert!(DeviceDescriptorResponse::decode(&[0x03, 0x00]).is_err());
-        // An unrelated APCI high-bit pattern must also be rejected.
         assert!(DeviceDescriptorResponse::decode(&[0x00, 0x40]).is_err());
     }
 
@@ -218,5 +295,49 @@ mod tests {
     fn device_descriptor_response_rejects_short_input() {
         assert!(DeviceDescriptorResponse::decode(&[]).is_err());
         assert!(DeviceDescriptorResponse::decode(&[0x03]).is_err());
+    }
+
+    #[test]
+    fn property_description_response_round_trip_and_accessors() {
+        let response = PropertyDescriptionResponse {
+            object_index: 1,
+            property_id: 2,
+            property_index: 3,
+            type_: 0xB5,
+            max_count: 0x123,
+            access: 0xA7,
+        };
+        let encoded = response.encode();
+        assert_eq!(encoded, [0x03, 0xD9, 1, 2, 3, 0xB5, 0x01, 0x23, 0xA7]);
+        assert_eq!(
+            PropertyDescriptionResponse::decode(&encoded).unwrap(),
+            response
+        );
+        assert!(response.writable());
+        assert_eq!(response.pdt(), 0x35);
+        assert_eq!(response.read_level(), 0x0A);
+        assert_eq!(response.write_level(), 0x07);
+    }
+
+    #[test]
+    fn property_description_response_masks_count_and_preserves_unknown_pdt() {
+        let encoded = [0x03, 0xD9, 0, 1, 2, 0xFF, 0xF1, 0x23, 0x4D];
+        let decoded = PropertyDescriptionResponse::decode(&encoded).unwrap();
+        assert_eq!(decoded.max_count, 0x0123);
+        assert_eq!(decoded.pdt(), 0x3F);
+        assert_eq!(decoded.type_, 0xFF);
+        assert_eq!(
+            decoded.encode(),
+            [0x03, 0xD9, 0, 1, 2, 0xFF, 0x01, 0x23, 0x4D]
+        );
+    }
+
+    #[test]
+    fn property_description_response_rejects_wrong_service_and_length() {
+        assert!(PropertyDescriptionResponse::decode(&[0x03, 0xD8, 0, 1, 2, 3, 0, 1, 0]).is_err());
+        assert!(PropertyDescriptionResponse::decode(&[0x03, 0xD9]).is_err());
+        assert!(
+            PropertyDescriptionResponse::decode(&[0x03, 0xD9, 0, 1, 2, 3, 0, 1, 0, 0]).is_err()
+        );
     }
 }
