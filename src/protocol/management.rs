@@ -246,6 +246,18 @@ pub struct PropertyValueWrite {
     pub data: Vec<u8>,
 }
 
+/// `A_Authorize_Request` carrying a device access key.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthorizeRequest {
+    pub key: u32,
+}
+
+/// `A_Authorize_Response` reporting the granted access level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthorizeResponse {
+    pub level: u8,
+}
+
 /// `A_Restart_Master_Reset` request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RestartMasterReset {
@@ -526,6 +538,42 @@ fn decode_user_memory(apdu: &[u8], service: u8, read: bool) -> Result<(u32, u8, 
         apdu[2] & 0x0F,
         &apdu[5..],
     ))
+}
+
+impl AuthorizeRequest {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut apdu = vec![0x03, 0xD1, 0];
+        apdu.extend_from_slice(&self.key.to_be_bytes());
+        apdu
+    }
+
+    pub fn decode(apdu: &[u8]) -> Result<Self> {
+        if apdu.len() != 7 || apdu[..2] != [0x03, 0xD1] {
+            return Err(ProtocolError::InvalidFrame {
+                details: "Expected 7-byte AuthorizeRequest APCI 0x03D1".to_owned(),
+            }
+            .into());
+        }
+        Ok(Self {
+            key: u32::from_be_bytes([apdu[3], apdu[4], apdu[5], apdu[6]]),
+        })
+    }
+}
+
+impl AuthorizeResponse {
+    pub fn encode(self) -> Vec<u8> {
+        vec![0x03, 0xD2, self.level]
+    }
+
+    pub fn decode(apdu: &[u8]) -> Result<Self> {
+        if apdu.len() != 3 || apdu[..2] != [0x03, 0xD2] {
+            return Err(ProtocolError::InvalidFrame {
+                details: "Expected 3-byte AuthorizeResponse APCI 0x03D2".to_owned(),
+            }
+            .into());
+        }
+        Ok(Self { level: apdu[2] })
+    }
 }
 
 impl RestartMasterReset {
@@ -1047,13 +1095,13 @@ impl PropertyDescriptionRead {
 #[cfg(test)]
 mod tests {
     use super::{
-        DeviceDescriptorRead, DeviceDescriptorResponse, FunctionPropertyCommand,
-        FunctionPropertyExtCommand, FunctionPropertyExtStateRead, FunctionPropertyExtStateResponse,
-        FunctionPropertyService, FunctionPropertyStateRead, FunctionPropertyStateResponse,
-        MemoryRead, MemoryResponse, MemoryWrite, PropertyDescriptionRead,
-        PropertyDescriptionResponse, PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
-        RestartMasterReset, RestartMasterResetResponse, UserMemoryRead, UserMemoryResponse,
-        UserMemoryWrite,
+        AuthorizeRequest, AuthorizeResponse, DeviceDescriptorRead, DeviceDescriptorResponse,
+        FunctionPropertyCommand, FunctionPropertyExtCommand, FunctionPropertyExtStateRead,
+        FunctionPropertyExtStateResponse, FunctionPropertyService, FunctionPropertyStateRead,
+        FunctionPropertyStateResponse, MemoryRead, MemoryResponse, MemoryWrite,
+        PropertyDescriptionRead, PropertyDescriptionResponse, PropertyValueRead,
+        PropertyValueResponse, PropertyValueWrite, RestartMasterReset, RestartMasterResetResponse,
+        UserMemoryRead, UserMemoryResponse, UserMemoryWrite,
     };
 
     #[test]
@@ -1366,6 +1414,23 @@ mod tests {
         let encoded_write = write.encode().unwrap();
         assert_eq!(encoded_write, [0x03, 0xD7, 3, 4, 0x1A, 0xBC, 0x55]);
         assert_eq!(PropertyValueWrite::decode(&encoded_write).unwrap(), write);
+    }
+
+    #[test]
+    fn authorize_apci_codecs_match_wire_vectors_without_debugging_the_key() {
+        let request = AuthorizeRequest { key: 0x1234_5678 };
+        let encoded = request.encode();
+        assert_eq!(encoded, [0x03, 0xD1, 0, 0x12, 0x34, 0x56, 0x78]);
+        assert_eq!(AuthorizeRequest::decode(&encoded).unwrap().key, request.key);
+
+        let response = AuthorizeResponse { level: 2 };
+        assert_eq!(response.encode(), [0x03, 0xD2, 2]);
+        assert_eq!(
+            AuthorizeResponse::decode(&response.encode()).unwrap(),
+            response
+        );
+        assert!(AuthorizeRequest::decode(&[0x03, 0xD1]).is_err());
+        assert!(AuthorizeResponse::decode(&[0x03, 0xD1, 2]).is_err());
     }
 
     #[test]

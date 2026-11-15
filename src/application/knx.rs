@@ -4013,6 +4013,22 @@ impl P2pConnection {
         Ok(response)
     }
 
+    /// Authorize this P2P session with a device access key.
+    pub async fn authorize(
+        &mut self,
+        key: u32,
+        timeout: std::time::Duration,
+    ) -> Result<crate::protocol::management::AuthorizeResponse> {
+        let response = self
+            .request(
+                crate::protocol::management::AuthorizeRequest { key }.encode(),
+                [0x03, 0xD2],
+                timeout,
+            )
+            .await?;
+        crate::protocol::management::AuthorizeResponse::decode(&response)
+    }
+
     /// Read one device descriptor over this P2P session.
     pub async fn read_device_descriptor(
         &mut self,
@@ -6162,6 +6178,44 @@ mod integration_tests {
         assert_eq!(
             descriptor_response_ack.tpci,
             TpciFrame::Ack { sequence: 1 }.encode()
+        );
+
+        let authorizing = tokio::spawn(async move {
+            let response = p2p.authorize(0x1234_5678, Duration::from_secs(2)).await?;
+            Ok::<_, KnxError>((p2p, response))
+        });
+        let authorize_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::AuthorizeRequest::decode(&authorize_request.payload)
+                .unwrap()
+                .key,
+            0x1234_5678
+        );
+        let mut authorize_ack = Telegram::individual_data(client_address, Vec::new());
+        authorize_ack.source = device_address;
+        authorize_ack.telegram_type = TelegramType::IndividualControl;
+        authorize_ack.tpci = TpciFrame::Ack { sequence: 3 }.encode();
+        server.send(authorize_ack).await.unwrap();
+        let mut authorize_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::AuthorizeResponse { level: 2 }.encode(),
+        );
+        authorize_response.source = device_address;
+        authorize_response.tpci = TpciFrame::DataConnected { sequence: 2 }.encode();
+        server.send(authorize_response).await.unwrap();
+        let (mut p2p, authorize_response) = authorizing.await.unwrap().unwrap();
+        assert_eq!(authorize_response.level, 2);
+        let authorize_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            authorize_response_ack.tpci,
+            TpciFrame::Ack { sequence: 2 }.encode()
         );
 
         p2p.close().await.unwrap();
