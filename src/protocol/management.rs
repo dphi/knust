@@ -154,6 +154,47 @@ pub struct FunctionPropertyExtStateResponse {
     pub data: Vec<u8>,
 }
 
+/// One of the standard or extended function-property APDU services.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionPropertyService {
+    Command(FunctionPropertyCommand),
+    StateRead(FunctionPropertyStateRead),
+    StateResponse(FunctionPropertyStateResponse),
+    ExtCommand(FunctionPropertyExtCommand),
+    ExtStateRead(FunctionPropertyExtStateRead),
+    ExtStateResponse(FunctionPropertyExtStateResponse),
+}
+
+impl FunctionPropertyService {
+    /// Decode one function-property APDU by its APCI service code.
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        match apci_bytes.get(..2) {
+            Some(code) if code == APCI_FUNCTION_PROPERTY_COMMAND => {
+                FunctionPropertyCommand::decode(apci_bytes).map(Self::Command)
+            }
+            Some(code) if code == APCI_FUNCTION_PROPERTY_STATE_READ => {
+                FunctionPropertyStateRead::decode(apci_bytes).map(Self::StateRead)
+            }
+            Some(code) if code == APCI_FUNCTION_PROPERTY_STATE_RESPONSE => {
+                FunctionPropertyStateResponse::decode(apci_bytes).map(Self::StateResponse)
+            }
+            Some(code) if code == APCI_FUNCTION_PROPERTY_EXT_COMMAND => {
+                FunctionPropertyExtCommand::decode(apci_bytes).map(Self::ExtCommand)
+            }
+            Some(code) if code == APCI_FUNCTION_PROPERTY_EXT_STATE_READ => {
+                FunctionPropertyExtStateRead::decode(apci_bytes).map(Self::ExtStateRead)
+            }
+            Some(code) if code == APCI_FUNCTION_PROPERTY_EXT_STATE_RESPONSE => {
+                FunctionPropertyExtStateResponse::decode(apci_bytes).map(Self::ExtStateResponse)
+            }
+            _ => Err(ProtocolError::InvalidFrame {
+                details: "Unknown function-property APCI service".to_owned(),
+            }
+            .into()),
+        }
+    }
+}
+
 /// `A_PropertyDescription_Response` — metadata for one interface-object property.
 ///
 /// The `type_` and `access` octets are retained verbatim so unknown PDT values
@@ -752,9 +793,35 @@ mod tests {
     use super::{
         DeviceDescriptorRead, DeviceDescriptorResponse, FunctionPropertyCommand,
         FunctionPropertyExtCommand, FunctionPropertyExtStateRead, FunctionPropertyExtStateResponse,
-        FunctionPropertyStateRead, FunctionPropertyStateResponse, PropertyDescriptionRead,
-        PropertyDescriptionResponse, PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
+        FunctionPropertyService, FunctionPropertyStateRead, FunctionPropertyStateResponse,
+        PropertyDescriptionRead, PropertyDescriptionResponse, PropertyValueRead,
+        PropertyValueResponse, PropertyValueWrite,
     };
+
+    #[test]
+    fn function_property_service_dispatches_all_six_apci_codes() {
+        for (apdu, expected) in [
+            (&[0x02, 0xC7, 1, 2][..], 0),
+            (&[0x02, 0xC8, 1, 2][..], 1),
+            (&[0x02, 0xC9, 1, 2][..], 2),
+            (&[0x01, 0xD4, 0, 1, 0, 0, 2][..], 3),
+            (&[0x01, 0xD5, 0, 1, 0, 0, 2][..], 4),
+            (&[0x01, 0xD6, 0, 1, 0, 0, 2, 0x42][..], 5),
+        ] {
+            let service = FunctionPropertyService::decode(apdu).unwrap();
+            let actual = match service {
+                FunctionPropertyService::Command(_) => 0,
+                FunctionPropertyService::StateRead(_) => 1,
+                FunctionPropertyService::StateResponse(_) => 2,
+                FunctionPropertyService::ExtCommand(_) => 3,
+                FunctionPropertyService::ExtStateRead(_) => 4,
+                FunctionPropertyService::ExtStateResponse(_) => 5,
+            };
+            assert_eq!(actual, expected);
+        }
+        assert!(FunctionPropertyService::decode(&[]).is_err());
+        assert!(FunctionPropertyService::decode(&[0x01, 0xD7]).is_err());
+    }
 
     #[test]
     fn function_property_request_codecs_round_trip_standard_and_extended_services() {
