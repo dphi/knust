@@ -66,8 +66,74 @@ impl DeviceDescriptorRead {
     }
 }
 
+const APCI_FUNCTION_PROPERTY_COMMAND: [u8; 2] = [0x02, 0xC7];
+const APCI_FUNCTION_PROPERTY_STATE_READ: [u8; 2] = [0x02, 0xC8];
 const APCI_FUNCTION_PROPERTY_STATE_RESPONSE: [u8; 2] = [0x02, 0xC9];
+const APCI_FUNCTION_PROPERTY_EXT_COMMAND: [u8; 2] = [0x01, 0xD4];
+const APCI_FUNCTION_PROPERTY_EXT_STATE_READ: [u8; 2] = [0x01, 0xD5];
 const APCI_FUNCTION_PROPERTY_EXT_STATE_RESPONSE: [u8; 2] = [0x01, 0xD6];
+
+fn encode_function_property_ext_header(
+    interface_object_type: u16,
+    object_instance: u16,
+    property_id: u16,
+) -> Result<[u8; 5]> {
+    if object_instance > 0x0FFF || property_id > 0x0FFF {
+        return Err(ProtocolError::InvalidFrame {
+            details: "Function-property object instance or property ID exceeds 12 bits".to_owned(),
+        }
+        .into());
+    }
+    Ok([
+        (interface_object_type >> 8) as u8,
+        interface_object_type as u8,
+        (object_instance >> 4) as u8,
+        ((object_instance << 4) as u8) | (property_id >> 8) as u8,
+        property_id as u8,
+    ])
+}
+
+fn decode_function_property_ext_header(apci_bytes: &[u8]) -> (u16, u16, u16) {
+    (
+        u16::from_be_bytes([apci_bytes[2], apci_bytes[3]]),
+        (u16::from(apci_bytes[4]) << 4) | u16::from(apci_bytes[5] >> 4),
+        (u16::from(apci_bytes[5] & 0x0F) << 8) | u16::from(apci_bytes[6]),
+    )
+}
+
+/// Function-specific state response; None is the KNX negative response without a return code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionPropertyCommand {
+    pub object_index: u8,
+    pub property_id: u8,
+    pub data: Vec<u8>,
+}
+
+/// Function-property state read request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionPropertyStateRead {
+    pub object_index: u8,
+    pub property_id: u8,
+    pub data: Vec<u8>,
+}
+
+/// Extended function-property command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionPropertyExtCommand {
+    pub interface_object_type: u16,
+    pub object_instance: u16,
+    pub property_id: u16,
+    pub data: Vec<u8>,
+}
+
+/// Extended function-property state read request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionPropertyExtStateRead {
+    pub interface_object_type: u16,
+    pub object_instance: u16,
+    pub property_id: u16,
+    pub data: Vec<u8>,
+}
 
 /// Function-specific state response; None is the KNX negative response without a return code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -433,6 +499,126 @@ impl PropertyValueWrite {
     }
 }
 
+impl FunctionPropertyCommand {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut result = APCI_FUNCTION_PROPERTY_COMMAND.to_vec();
+        result.extend_from_slice(&[self.object_index, self.property_id]);
+        result.extend_from_slice(&self.data);
+        result
+    }
+
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        if apci_bytes.len() < 4 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_COMMAND {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "Expected FunctionPropertyCommand APCI 0x02C7, got {} bytes",
+                    apci_bytes.len()
+                ),
+            }
+            .into());
+        }
+        Ok(Self {
+            object_index: apci_bytes[2],
+            property_id: apci_bytes[3],
+            data: apci_bytes[4..].to_vec(),
+        })
+    }
+}
+
+impl FunctionPropertyStateRead {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut result = APCI_FUNCTION_PROPERTY_STATE_READ.to_vec();
+        result.extend_from_slice(&[self.object_index, self.property_id]);
+        result.extend_from_slice(&self.data);
+        result
+    }
+
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        if apci_bytes.len() < 4 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_STATE_READ {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "Expected FunctionPropertyStateRead APCI 0x02C8, got {} bytes",
+                    apci_bytes.len()
+                ),
+            }
+            .into());
+        }
+        Ok(Self {
+            object_index: apci_bytes[2],
+            property_id: apci_bytes[3],
+            data: apci_bytes[4..].to_vec(),
+        })
+    }
+}
+
+impl FunctionPropertyExtCommand {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let header = encode_function_property_ext_header(
+            self.interface_object_type,
+            self.object_instance,
+            self.property_id,
+        )?;
+        let mut result = APCI_FUNCTION_PROPERTY_EXT_COMMAND.to_vec();
+        result.extend_from_slice(&header);
+        result.extend_from_slice(&self.data);
+        Ok(result)
+    }
+
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        if apci_bytes.len() < 7 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_EXT_COMMAND {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "Expected FunctionPropertyExtCommand APCI 0x01D4, got {} bytes",
+                    apci_bytes.len()
+                ),
+            }
+            .into());
+        }
+        let (interface_object_type, object_instance, property_id) =
+            decode_function_property_ext_header(apci_bytes);
+        Ok(Self {
+            interface_object_type,
+            object_instance,
+            property_id,
+            data: apci_bytes[7..].to_vec(),
+        })
+    }
+}
+
+impl FunctionPropertyExtStateRead {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let header = encode_function_property_ext_header(
+            self.interface_object_type,
+            self.object_instance,
+            self.property_id,
+        )?;
+        let mut result = APCI_FUNCTION_PROPERTY_EXT_STATE_READ.to_vec();
+        result.extend_from_slice(&header);
+        result.extend_from_slice(&self.data);
+        Ok(result)
+    }
+
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        if apci_bytes.len() < 7 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_EXT_STATE_READ {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "Expected FunctionPropertyExtStateRead APCI 0x01D5, got {} bytes",
+                    apci_bytes.len()
+                ),
+            }
+            .into());
+        }
+        let (interface_object_type, object_instance, property_id) =
+            decode_function_property_ext_header(apci_bytes);
+        Ok(Self {
+            interface_object_type,
+            object_instance,
+            property_id,
+            data: apci_bytes[7..].to_vec(),
+        })
+    }
+}
+
 impl FunctionPropertyStateResponse {
     /// Encode A_FunctionPropertyState_Response.
     pub fn encode(&self) -> Result<Vec<u8>> {
@@ -489,23 +675,14 @@ impl FunctionPropertyStateResponse {
 impl FunctionPropertyExtStateResponse {
     /// Encode A_FunctionPropertyExtState_Response.
     pub fn encode(&self) -> Result<Vec<u8>> {
-        if self.object_instance > 0x0FFF || self.property_id > 0x0FFF {
-            return Err(ProtocolError::InvalidFrame {
-                details: "Function-property object instance or property ID exceeds 12 bits"
-                    .to_owned(),
-            }
-            .into());
-        }
-        let mut result = vec![
-            APCI_FUNCTION_PROPERTY_EXT_STATE_RESPONSE[0],
-            APCI_FUNCTION_PROPERTY_EXT_STATE_RESPONSE[1],
-            (self.interface_object_type >> 8) as u8,
-            self.interface_object_type as u8,
-            (self.object_instance >> 4) as u8,
-            ((self.object_instance << 4) as u8) | (self.property_id >> 8) as u8,
-            self.property_id as u8,
-            self.return_code,
-        ];
+        let header = encode_function_property_ext_header(
+            self.interface_object_type,
+            self.object_instance,
+            self.property_id,
+        )?;
+        let mut result = APCI_FUNCTION_PROPERTY_EXT_STATE_RESPONSE.to_vec();
+        result.extend_from_slice(&header);
+        result.push(self.return_code);
         result.extend_from_slice(&self.data);
         Ok(result)
     }
@@ -521,10 +698,12 @@ impl FunctionPropertyExtStateResponse {
             }
             .into());
         }
+        let (interface_object_type, object_instance, property_id) =
+            decode_function_property_ext_header(apci_bytes);
         Ok(Self {
-            interface_object_type: u16::from_be_bytes([apci_bytes[2], apci_bytes[3]]),
-            object_instance: (u16::from(apci_bytes[4]) << 4) | u16::from(apci_bytes[5] >> 4),
-            property_id: (u16::from(apci_bytes[5] & 0x0F) << 8) | u16::from(apci_bytes[6]),
+            interface_object_type,
+            object_instance,
+            property_id,
             return_code: apci_bytes[7],
             data: apci_bytes[8..].to_vec(),
         })
@@ -571,10 +750,71 @@ impl PropertyDescriptionRead {
 #[cfg(test)]
 mod tests {
     use super::{
-        DeviceDescriptorRead, DeviceDescriptorResponse, FunctionPropertyExtStateResponse,
-        FunctionPropertyStateResponse, PropertyDescriptionRead, PropertyDescriptionResponse,
-        PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
+        DeviceDescriptorRead, DeviceDescriptorResponse, FunctionPropertyCommand,
+        FunctionPropertyExtCommand, FunctionPropertyExtStateRead, FunctionPropertyExtStateResponse,
+        FunctionPropertyStateRead, FunctionPropertyStateResponse, PropertyDescriptionRead,
+        PropertyDescriptionResponse, PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
     };
+
+    #[test]
+    fn function_property_request_codecs_round_trip_standard_and_extended_services() {
+        let command = FunctionPropertyCommand {
+            object_index: 2,
+            property_id: 7,
+            data: vec![0xAA],
+        };
+        assert_eq!(command.encode(), [0x02, 0xC7, 2, 7, 0xAA]);
+        assert_eq!(
+            FunctionPropertyCommand::decode(&command.encode()).unwrap(),
+            command
+        );
+
+        let read = FunctionPropertyStateRead {
+            object_index: 2,
+            property_id: 7,
+            data: vec![0xBB],
+        };
+        assert_eq!(read.encode(), [0x02, 0xC8, 2, 7, 0xBB]);
+        assert_eq!(
+            FunctionPropertyStateRead::decode(&read.encode()).unwrap(),
+            read
+        );
+
+        let command = FunctionPropertyExtCommand {
+            interface_object_type: 0x1234,
+            object_instance: 0xABC,
+            property_id: 0xDEF,
+            data: vec![0x55],
+        };
+        assert_eq!(
+            command.encode().unwrap(),
+            [0x01, 0xD4, 0x12, 0x34, 0xAB, 0xCD, 0xEF, 0x55]
+        );
+        assert_eq!(
+            FunctionPropertyExtCommand::decode(&command.encode().unwrap()).unwrap(),
+            command
+        );
+
+        let read = FunctionPropertyExtStateRead {
+            interface_object_type: 0x1234,
+            object_instance: 0xABC,
+            property_id: 0xDEF,
+            data: vec![0x66],
+        };
+        assert_eq!(
+            read.encode().unwrap(),
+            [0x01, 0xD5, 0x12, 0x34, 0xAB, 0xCD, 0xEF, 0x66]
+        );
+        assert_eq!(
+            FunctionPropertyExtStateRead::decode(&read.encode().unwrap()).unwrap(),
+            read
+        );
+
+        assert!(FunctionPropertyCommand::decode(&[0x02, 0xC7, 1]).is_err());
+        assert!(FunctionPropertyStateRead::decode(&[0x02, 0xC7, 1, 2]).is_err());
+        assert!(FunctionPropertyExtCommand::decode(&[0x01, 0xD4, 1, 2, 3, 4]).is_err());
+        assert!(FunctionPropertyExtStateRead::decode(&[0x01, 0xD4, 1, 2, 3, 4, 5]).is_err());
+    }
 
     #[test]
     fn function_property_state_response_distinguishes_missing_and_zero_return_codes() {
