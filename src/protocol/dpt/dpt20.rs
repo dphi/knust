@@ -1,9 +1,4 @@
-//! DPT 20.xxx - HVAC values
-//!
-// TODO: DPTHVACStatus (the DPT 20 status type, a bitfield of
-// fault/alarm/warning/etc. flags) is not implemented here — only HVACMode
-// (20.102) and HVACControllerMode (20.105) are. A device/config reading a
-// group address typed as this DPT will fail to decode.
+//! DPT 20.xxx - HVAC values, including the legacy Eberle status octet.
 
 use super::{DptValue, Result};
 use crate::error::ProtocolError;
@@ -166,6 +161,98 @@ impl DptValue for HVACControllerMode {
     }
 }
 
+/// Legacy, non-standard Eberle HVAC status octet (DPT 20.60102).
+///
+/// KNX DPT 21.107 and 22.103 replace this format. It remains supported for
+/// decoding installations that still use the Eberle status octet.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HVACStatus {
+    pub mode: HVACMode,
+    pub dew_point: bool,
+    /// The wire bit is set for heating and clear for cooling.
+    pub heat_cool: bool,
+    pub inactive: bool,
+    pub frost_alarm: bool,
+}
+
+/// DPT 20.60102 - Legacy HVAC status byte.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DPTHVACStatus([u8; 1]);
+
+impl DPTHVACStatus {
+    #[must_use]
+    pub fn new(value: HVACStatus) -> Self {
+        let mode_bit = match value.mode.value() {
+            1 => 0x01,
+            2 => 0x02,
+            3 => 0x04,
+            4 => 0x08,
+            _ => 0,
+        };
+        Self([mode_bit
+            | (u8::from(value.dew_point) << 4)
+            | (u8::from(value.heat_cool) << 5)
+            | (u8::from(value.inactive) << 6)
+            | (u8::from(value.frost_alarm) << 7)])
+    }
+
+    #[must_use]
+    pub fn value(&self) -> HVACStatus {
+        let raw = self.0[0];
+        let mode = if raw & 0x01 != 0 {
+            1
+        } else if raw & 0x02 != 0 {
+            2
+        } else if raw & 0x04 != 0 {
+            3
+        } else if raw & 0x08 != 0 {
+            4
+        } else {
+            0
+        };
+        HVACStatus {
+            mode: HVACMode::new(mode).expect("decoded HVAC mode is in range"),
+            dew_point: raw & 0x10 != 0,
+            heat_cool: raw & 0x20 != 0,
+            inactive: raw & 0x40 != 0,
+            frost_alarm: raw & 0x80 != 0,
+        }
+    }
+}
+
+impl DptValue for DPTHVACStatus {
+    const DPT_NUMBER: &'static str = "20.60102";
+    const VALUE_TYPE: &'static str = "hvac_status";
+    const BYTE_LENGTH: usize = 1;
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        Ok(Self(bytes.try_into().map_err(|_| {
+            ProtocolError::DptError {
+                dpt_type: Self::DPT_NUMBER.into(),
+                details: format!("Invalid length: expected 1, got {}", bytes.len()),
+            }
+        })?))
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn value_range() -> (f64, f64) {
+        (0.0, 255.0)
+    }
+}
+
+impl super::WriteValue<DPTHVACStatus> for HVACStatus {
+    fn resolve(self, _: super::DptType) -> Result<DPTHVACStatus> {
+        Ok(DPTHVACStatus::new(self))
+    }
+}
+
 // Helper trait for aliases
 use super::DptInnerType;
 
@@ -186,6 +273,70 @@ impl DptInnerType for HVACControllerMode {
     }
     fn into_inner(self) -> u8 {
         self.value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::dpt::{DptPayload, DptRegistry, DptType};
+
+    #[test]
+    fn legacy_hvac_status_decodes_and_encodes_all_octets() {
+        let dpt = DptType::from_number(20, 60_102).unwrap();
+
+        for raw in u8::MIN..=u8::MAX {
+            let decoded = DPTHVACStatus::from_bytes(&[raw]).unwrap();
+            let value = decoded.value();
+            let mode_bit = if raw & 0x01 != 0 {
+                0x01
+            } else if raw & 0x02 != 0 {
+                0x02
+            } else if raw & 0x04 != 0 {
+                0x04
+            } else if raw & 0x08 != 0 {
+                0x08
+            } else {
+                0
+            };
+            assert_eq!(
+                DPTHVACStatus::new(value).as_bytes(),
+                &[raw & 0xf0 | mode_bit]
+            );
+            assert_eq!(dpt.parse(&raw.to_string()).unwrap(), [raw]);
+            assert_eq!(
+                dpt.encode(&DptPayload::UnsignedInt(u64::from(raw)))
+                    .unwrap(),
+                [raw]
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_hvac_status_is_registered_and_rejects_bad_lengths() {
+        let registry = DptRegistry::new();
+        let metadata = registry.metadata("20.60102").unwrap();
+        assert_eq!(metadata.value_type, "hvac_status");
+
+        let decoded = registry.decode("20.60102", &[0xF1]).unwrap();
+        assert_eq!(
+            decoded
+                .downcast::<DPTHVACStatus>()
+                .unwrap()
+                .value()
+                .mode
+                .value(),
+            1
+        );
+
+        assert!(DPTHVACStatus::from_bytes(&[]).is_err());
+        assert!(DPTHVACStatus::from_bytes(&[0, 1]).is_err());
+        assert!(
+            DptType::from_number(20, 60_102)
+                .unwrap()
+                .parse("256")
+                .is_err()
+        );
     }
 }
 

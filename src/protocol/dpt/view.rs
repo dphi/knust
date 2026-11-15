@@ -1690,6 +1690,11 @@ impl DptType {
                 .ok_or_else(|| bad(format!("cannot parse {s:?} as a scene number (1-64)"))),
             18 => parse_scene_control(s)
                 .ok_or_else(|| bad(format!("cannot parse {s:?} as a scene control value"))),
+            20 if self.sub() == 60_102 => s
+                .parse::<u8>()
+                .map(u64::from)
+                .map(DptPayload::UnsignedInt)
+                .map_err(|_| bad(format!("cannot parse {s:?} as an HVAC status byte"))),
             20 => parse_enum(s, self)
                 .map(DptPayload::Enum)
                 .ok_or_else(|| bad(format!("cannot parse {s:?} as an enum value"))),

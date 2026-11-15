@@ -705,6 +705,7 @@ impl DptRegistry {
         registry.register::<DPTHVACContrMode>();
         registry.register::<DPTChangeoverMode>();
         registry.register::<DPTEnableHCStage>();
+        registry.register::<DPTHVACStatus>();
         registry.register::<DPTDoubleNibble>();
         registry.register::<DPTSceneInfo>();
         registry.register::<DPTCombinedInfoOnOff>();

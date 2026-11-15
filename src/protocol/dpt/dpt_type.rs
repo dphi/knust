@@ -348,6 +348,7 @@ pub enum DptType {
     // DPT 20.xxx - HVAC
     HVACMode = 2_000_102,
     HVACContrMode = 2_000_105,
+    HVACStatus = 2_060_102,
     ChangeoverMode = 2_000_107,
     EnableHCStage = 2_000_116,
 
@@ -975,6 +976,7 @@ impl DptType {
                 );
                 Ok(DptView::DateTime(DateTimeView(bytes)))
             }
+            20 if self.sub() == 60_102 => Ok(DptView::U8(U8View(bytes))),
             20 => {
                 self.validate_mode(bytes[0])?;
                 log_protocol!(
@@ -1198,6 +1200,9 @@ impl DptType {
             (18, DptPayload::SceneControl { scene, learn }) => Ok(vec![
                 (if *learn { 0x80 } else { 0 }) | (scene.saturating_sub(1) & 0x3F),
             ]),
+            (20, DptPayload::UnsignedInt(v)) if self.sub() == 60_102 && *v <= 255 => {
+                Ok(vec![*v as u8])
+            }
             (20, DptPayload::Enum(v)) => {
                 self.validate_mode(*v)?;
                 Ok(vec![*v])
