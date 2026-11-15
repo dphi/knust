@@ -10,6 +10,7 @@ pub mod cemi;
 pub mod dpt;
 pub mod knxip;
 pub mod management;
+pub mod profile;
 pub mod telegram;
 pub mod tpci;
 
@@ -82,5 +83,6 @@ pub use dpt::{
 };
 pub use knxip::{ConnectRequest, ConnectResponse, Hpai, KnxIpFrame, ServiceType};
 pub use management::{DeviceDescriptorRead, DeviceDescriptorResponse};
+pub use profile::PropertyDataType;
 pub use telegram::{Priority as TelegramPriority, Telegram, TelegramType};
 pub use tpci::TpciFrame;
