@@ -11,12 +11,10 @@ use crate::protocol::Telegram;
 #[cfg(feature = "dpt")]
 use crate::protocol::TelegramPriority;
 #[cfg(feature = "dpt")]
-use crate::protocol::TelegramType;
-#[cfg(feature = "dpt")]
 use crate::protocol::dpt::{
     DptType, DptValue, DptView, GroupAddressRegistry, GroupAddressState, WriteValue,
 };
-use crate::protocol::{Address, GroupAddress};
+use crate::protocol::{Address, GroupAddress, TelegramType};
 use crate::transport::{
     Connection, ConnectionConfig, ConnectionType, ReceiveLimitConfig, ReceiveRateLimiter,
     ReceiveStats, RoutingConnection, Tunnel, queue::TelegramQueue,
@@ -128,6 +126,7 @@ pub struct Knx {
     shutdown_started: Arc<Notify>,
     receiving_stop: Arc<AtomicBool>,
     lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
+    individual_request_lock: Arc<tokio::sync::Mutex<()>>,
 
     /// Handle to the telegram processing task
     processing_task: TaskSlot,
@@ -201,6 +200,13 @@ enum StoredCallback {
 
 struct GroupValueReadCallback {
     address: GroupAddress,
+    tx: mpsc::Sender<Vec<u8>>,
+}
+
+struct IndividualResponseCallback {
+    source: crate::protocol::IndividualAddress,
+    destination: crate::protocol::IndividualAddress,
+    expected_service: [u8; 2],
     tx: mpsc::Sender<Vec<u8>>,
 }
 
@@ -334,6 +340,18 @@ impl<T: DptValue> TypedGroupAddress<T> {
 impl TelegramCallbackFn for GroupValueReadCallback {
     async fn call(&self, telegram: &Telegram) {
         if telegram.destination == Address::Group(self.address) && !telegram.payload.is_empty() {
+            let _ = self.tx.try_send(telegram.payload.clone());
+        }
+    }
+}
+#[async_trait::async_trait]
+impl TelegramCallbackFn for IndividualResponseCallback {
+    async fn call(&self, telegram: &Telegram) {
+        if telegram.telegram_type == TelegramType::IndividualData
+            && telegram.source == self.source
+            && telegram.destination == Address::Individual(self.destination)
+            && telegram.payload.starts_with(&self.expected_service)
+        {
             let _ = self.tx.try_send(telegram.payload.clone());
         }
     }
@@ -680,6 +698,7 @@ impl Knx {
             shutdown_started: Arc::new(Notify::new()),
             receiving_stop: Arc::new(AtomicBool::new(false)),
             lifecycle_lock: Arc::new(tokio::sync::Mutex::new(())),
+            individual_request_lock: Arc::new(tokio::sync::Mutex::new(())),
             processing_task: Arc::new(RwLock::new(None)),
             receiving_task: Arc::new(RwLock::new(None)),
             sending_task: Arc::new(RwLock::new(None)),
@@ -1193,6 +1212,87 @@ impl Knx {
         telegram.source = self.config.individual_address;
         self.telegram_queue.enqueue_outgoing(telegram).await?;
         Ok(())
+    }
+
+    /// Send a connectionless individual-address request and await its matching response.
+    ///
+    /// The two-byte APCI service prefix identifies the expected response. Requests are
+    /// serialized because connectionless responses do not carry a request sequence.
+    pub async fn request_individual(
+        &self,
+        destination: crate::protocol::IndividualAddress,
+        request_apdu: Vec<u8>,
+        expected_service: [u8; 2],
+        timeout_duration: std::time::Duration,
+    ) -> Result<Vec<u8>> {
+        if request_apdu.len() < 2 {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "Individual-address APDU must include an APCI service".to_owned(),
+            }
+            .into());
+        }
+        let _request_guard = self.individual_request_lock.lock().await;
+        let stopping = self.shutdown_started.notified();
+        tokio::pin!(stopping);
+        stopping.as_mut().enable();
+        if self.shutdown_flag.load(Ordering::SeqCst) {
+            return Err(crate::error::TransportError::QueueClosed.into());
+        }
+
+        let local_address = self.config.individual_address;
+        let (tx, mut rx) = mpsc::channel(1);
+        let callback = IndividualResponseCallback {
+            source: destination,
+            destination: local_address,
+            expected_service,
+            tx,
+        };
+        let filter = TelegramFilter::Custom(Arc::new(move |telegram| {
+            telegram.telegram_type == TelegramType::IndividualData
+                && telegram.source == destination
+                && telegram.destination == Address::Individual(local_address)
+                && telegram.payload.starts_with(&expected_service)
+        }));
+        let handle = self
+            .register_telegram_callback_filtered(callback, filter, false)
+            .await;
+        let mut callback_guard = ReadCallbackGuard {
+            handler: self.event_handler.clone(),
+            handle: Some(handle),
+        };
+
+        let operation = async {
+            let telegram = Telegram::individual_data(destination, request_apdu);
+            let (sent, completed) = self
+                .telegram_queue
+                .enqueue_outgoing_tracked(telegram)
+                .await?;
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                tokio::select! {
+                    sent = sent => sent.map_err(|_| crate::error::TransportError::QueueClosed.into()),
+                    result = completed => result.map_err(|_| crate::error::TransportError::QueueClosed)?,
+
+                }
+            })
+            .await
+            .map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })??;
+
+            match tokio::time::timeout(timeout_duration, rx.recv()).await {
+                Ok(Some(response)) => Ok(response),
+                _ => Err(DeviceError::CommunicationTimeout {
+                    device: format!("individual address {destination}"),
+                    timeout_ms: timeout_duration.as_millis() as u64,
+                }
+                .into()),
+            }
+        };
+        let result = tokio::select! {
+            result = operation => result,
+            _ = &mut stopping => Err(crate::error::TransportError::QueueClosed.into()),
+        };
+        self.unregister_callback(handle).await;
+        callback_guard.handle = None;
+        result
     }
 
     /// Read a group value, starting the response deadline after transmission.
@@ -2862,6 +2962,65 @@ mod integration_tests {
             &[0x0c, 0x3f],
         );
         assert_ne!(telegram.telegram_type, TelegramType::GroupValueResponse);
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn individual_request_matches_device_and_response_service() {
+        use crate::transport::TunnelServer;
+
+        let client_address = IndividualAddress::new(1, 1, 10);
+        let device_address = IndividualAddress::new(1, 1, 11);
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let server_addr = server.local_addr();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server_addr.ip())
+            .gateway_port(server_addr.port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut received = server.subscribe();
+
+        let knx_for_request = knx.clone();
+        let request = tokio::spawn(async move {
+            knx_for_request
+                .request_individual(
+                    device_address,
+                    vec![0x02, 0xC8, 0xAA],
+                    [0x02, 0xC9],
+                    Duration::from_secs(2),
+                )
+                .await
+        });
+        let outgoing = tokio::time::timeout(Duration::from_secs(2), received.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(outgoing.telegram_type, TelegramType::IndividualData);
+        assert_eq!(outgoing.destination, Address::Individual(device_address));
+        assert_eq!(outgoing.payload, [0x02, 0xC8, 0xAA]);
+
+        let mut wrong_service = Telegram::individual_data(client_address, vec![0x02, 0xC8, 0xBB]);
+        wrong_service.source = device_address;
+        server.send(wrong_service).await.unwrap();
+
+        let mut wrong_sender = Telegram::individual_data(client_address, vec![0x02, 0xC9, 0x11]);
+        wrong_sender.source = IndividualAddress::new(1, 1, 12);
+        server.send(wrong_sender).await.unwrap();
+
+        let mut response = Telegram::individual_data(client_address, vec![0x02, 0xC9, 0x42, 0x55]);
+        response.source = device_address;
+        server.send(response).await.unwrap();
+
+        assert_eq!(request.await.unwrap().unwrap(), [0x02, 0xC9, 0x42, 0x55]);
+        knx.shutdown().await.unwrap();
+        server.shutdown();
     }
 
     #[test]
