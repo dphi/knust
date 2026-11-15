@@ -10,7 +10,7 @@ use tokio::fs;
 use crate::config::{escape_xml, unescape_xml};
 use crate::error::{ConfigurationError, Result};
 use crate::protocol::address::{GroupAddress, IndividualAddress};
-use crate::security::SecurityKey;
+use crate::security::{KeyRing, SecurityKey};
 
 /// Parsed keyring configuration data.
 #[derive(Debug, Clone)]
@@ -23,6 +23,26 @@ pub struct KeyringConfig {
     pub devices: Vec<KeyringDevice>,
     /// Group addresses with their security keys
     pub group_addresses: Vec<KeyringGroupAddress>,
+}
+
+impl KeyringConfig {
+    /// Build the Data Secure keyring used by the application.
+    #[must_use]
+    pub fn into_data_secure_keyring(&self) -> KeyRing {
+        let mut keyring = KeyRing::new();
+        for group in &self.group_addresses {
+            keyring.add_group_key(group.address, group.key.clone());
+        }
+        for interface in &self.interfaces {
+            for sender in &interface.data_secure_senders {
+                keyring.set_sequence_number(*sender, 0);
+            }
+        }
+        for device in &self.devices {
+            keyring.set_sequence_number(device.individual_address, device.sequence_number);
+        }
+        keyring
+    }
 }
 
 /// Keyring metadata information.
@@ -55,6 +75,8 @@ pub struct KeyringInterface {
     pub device_authentication: Option<SecurityKey>,
     /// Backbone key for routing
     pub backbone_key: Option<SecurityKey>,
+    /// Individual addresses permitted to send Data Secure group telegrams
+    pub data_secure_senders: Vec<IndividualAddress>,
 }
 
 /// KNX device with security information.
@@ -70,6 +92,8 @@ pub struct KeyringDevice {
     pub management_password: Option<SecurityKey>,
     /// Authentication code
     pub authentication_code: Option<SecurityKey>,
+    /// Last known Data Secure sequence number
+    pub sequence_number: u64,
 }
 
 /// Group address with security key.
@@ -284,6 +308,19 @@ impl KeyringParser {
         let backbone_key = Self::extract_xml_attribute(xml, "BackboneKey")
             .and_then(|key| SecurityKey::from_hex(&key).ok());
 
+        let data_secure_senders = xml
+            .split("<Group ")
+            .skip(1)
+            .filter_map(|group| group.split('>').next())
+            .filter_map(|group| Self::extract_xml_attribute(group, "Senders"))
+            .flat_map(|senders| {
+                senders
+                    .split_whitespace()
+                    .filter_map(|sender| sender.parse().ok())
+                    .collect::<Vec<IndividualAddress>>()
+            })
+            .collect();
+
         Ok(KeyringInterface {
             individual_address,
             interface_type,
@@ -292,6 +329,7 @@ impl KeyringParser {
             user_password,
             device_authentication,
             backbone_key,
+            data_secure_senders,
         })
     }
 
@@ -349,12 +387,17 @@ impl KeyringParser {
         let authentication_code = Self::extract_xml_attribute(xml, "AuthenticationCode")
             .and_then(|auth| SecurityKey::from_hex(&auth).ok());
 
+        let sequence_number = Self::extract_xml_attribute(xml, "SequenceNumber")
+            .and_then(|sequence| sequence.parse().ok())
+            .unwrap_or(0);
+
         Ok(KeyringDevice {
             individual_address,
             serial_number,
             tool_key,
             management_password,
             authentication_code,
+            sequence_number,
         })
     }
 

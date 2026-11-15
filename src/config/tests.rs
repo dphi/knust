@@ -76,6 +76,27 @@ mod unit_tests {
 
     #[cfg(feature = "secure")]
     #[test]
+    fn keyring_config_builds_data_secure_runtime_keyring() {
+        let xml = br#"<Keyring>
+            <Interface IndividualAddress="1.1.1" Type="Tunneling" Host="localhost" UserID="1" UserPassword="00000000000000000000000000000000">
+                <Group Address="0/0/1" Senders="1.1.2 1.1.3" />
+            </Interface>
+            <Device IndividualAddress="1.1.3" SequenceNumber="42" />
+            <GroupAddress Address="0/0/1" Key="0102030405060708090a0b0c0d0e0f10" />
+        </Keyring>"#;
+        let config = KeyringParser::parse_bytes(xml).unwrap();
+        let keyring = config.into_data_secure_keyring();
+        let group = GroupAddress::try_from_raw(1).unwrap();
+        let sender_default: IndividualAddress = "1.1.2".parse().unwrap();
+        let sender_override: IndividualAddress = "1.1.3".parse().unwrap();
+
+        assert_eq!(keyring.get_group_key(&group).unwrap().as_bytes()[0], 1);
+        assert_eq!(keyring.get_sequence_number(&sender_default), Some(0));
+        assert_eq!(keyring.get_sequence_number(&sender_override), Some(42));
+    }
+
+    #[cfg(feature = "secure")]
+    #[test]
     fn test_validation_result() {
         let result = ValidationResult {
             is_valid: true,
@@ -174,6 +195,7 @@ mod property_tests {
                     user_password: SecurityKey::new(vec![i as u8; 16]),
                     device_authentication: None,
                     backbone_key: None,
+                    data_secure_senders: vec![],
                 };
                 keyring.interfaces.push(interface);
             }
@@ -186,6 +208,7 @@ mod property_tests {
                     tool_key: Some(SecurityKey::new(vec![i as u8; 16])),
                     management_password: None,
                     authentication_code: None,
+                    sequence_number: 0,
                 };
                 keyring.devices.push(device);
             }
@@ -269,6 +292,7 @@ mod property_tests {
                     user_password: SecurityKey::new(vec![1; 16]),
                     device_authentication: None,
                     backbone_key: None,
+                    data_secure_senders: vec![],
                 };
                 keyring.interfaces.push(interface);
             }
@@ -282,6 +306,7 @@ mod property_tests {
                     tool_key: Some(SecurityKey::new(vec![1; 16])),
                     management_password: None,
                     authentication_code: None,
+                    sequence_number: 0,
                 };
                 keyring.devices.push(device);
             }
