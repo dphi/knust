@@ -48,7 +48,7 @@ pub use receive_limiter::{ReceiveLimitConfig, ReceiveRateLimiter, ReceiveResult,
 pub use router::FrameRouter;
 pub use routing::RoutingConnection;
 #[cfg(feature = "server")]
-pub use server::TunnelServer;
+pub use server::{DeviceManagementHandler, TunnelServer};
 pub use tunnel::{SequenceValidationResult, Tunnel};
 
 /// Configuration for KNX/IP connections

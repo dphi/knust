@@ -23,11 +23,14 @@ use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{RwLock, broadcast, oneshot};
 
-use crate::error::{Result, TransportError};
+use crate::error::{ProtocolError, Result, TransportError};
 use crate::log_transport;
 use crate::logging::LogLevel;
 use crate::protocol::address::IndividualAddress;
-use crate::protocol::cemi::{CemiFrame, MessageCode};
+use crate::protocol::cemi::{
+    CemiFrame, CemiPropertyInfo, CemiPropertyReadRequest, CemiPropertyReadResponse,
+    CemiPropertyWriteRequest, CemiPropertyWriteResponse, MessageCode,
+};
 use crate::protocol::knxip::{
     ConnectRequest, ConnectResponse, ConnectionRequestInfo, ConnectionstateRequest,
     ConnectionstateResponse, DisconnectRequest, DisconnectResponse, Hpai, KnxIpFrame, ServiceType,
@@ -88,29 +91,49 @@ impl ClientLink {
     }
 }
 
-/// Per-client session state: sequence counters, heartbeat, and the one
-/// outstanding-ack correlator (only one send is ever in flight per client at
-/// a time, matching the spec's request/ack turn-taking).
+/// Application supplied handler for KNXnet/IP M_PropRead and M_PropWrite
+/// requests. Return KNX cEMI error codes for unsupported or inaccessible
+/// properties.
+pub trait DeviceManagementHandler: Send + Sync {
+    fn read_property(&self, property: CemiPropertyInfo) -> std::result::Result<Vec<u8>, u8>;
+
+    fn write_property(
+        &self,
+        property: CemiPropertyInfo,
+        data: &[u8],
+    ) -> std::result::Result<(), u8>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClientSessionKind {
+    Tunnel,
+    DeviceManagement,
+}
+
 struct ClientSession {
     channel_id: u8,
     link: ClientLink,
+    kind: ClientSessionKind,
     send_seq: AtomicU8,
     recv_seq: AtomicU8,
     last_heartbeat: std::sync::Mutex<Instant>,
     send_lock: tokio::sync::Mutex<()>,
     pending_ack: std::sync::Mutex<Option<(u8, oneshot::Sender<TunnellingAck>)>>,
+    last_device_response: std::sync::Mutex<Option<(u8, u8, Vec<u8>)>>,
 }
 
 impl ClientSession {
-    fn new(channel_id: u8, link: ClientLink) -> Self {
+    fn new(channel_id: u8, link: ClientLink, kind: ClientSessionKind) -> Self {
         Self {
             channel_id,
             link,
+            kind,
             send_seq: AtomicU8::new(0),
             recv_seq: AtomicU8::new(0),
             last_heartbeat: std::sync::Mutex::new(Instant::now()),
             send_lock: tokio::sync::Mutex::new(()),
             pending_ack: std::sync::Mutex::new(None),
+            last_device_response: std::sync::Mutex::new(None),
         }
     }
 
@@ -151,6 +174,7 @@ pub struct TunnelServer {
     local_addr: SocketAddr,
     individual_address: IndividualAddress,
     sessions: RwLock<HashMap<u8, Arc<ClientSession>>>,
+    device_management_handler: RwLock<Option<Arc<dyn DeviceManagementHandler>>>,
     /// Present only if this endpoint requires KNX IP Secure; if so, plain
     /// ConnectRequest/TunnellingRequest/etc. are rejected and clients must
     /// complete a SessionRequest/Response/Authenticate/Status handshake
@@ -246,6 +270,7 @@ impl TunnelServer {
             local_addr,
             individual_address,
             sessions: RwLock::new(HashMap::new()),
+            device_management_handler: RwLock::new(None),
             #[cfg(feature = "secure")]
             secure_config,
             #[cfg(feature = "secure")]
@@ -268,6 +293,11 @@ impl TunnelServer {
             local_addr
         );
         Ok(server)
+    }
+
+    /// Configure the property handler used by device-management clients.
+    pub async fn set_device_management_handler(&self, handler: Arc<dyn DeviceManagementHandler>) {
+        *self.device_management_handler.write().await = Some(handler);
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -464,11 +494,8 @@ impl TunnelServer {
         }
     }
 
-    /// Dispatch a frame that's either genuinely plaintext (`was_encrypted =
-    /// false`) or the inner frame unwrapped from a `SecureWrapper`
-    /// (`was_encrypted = true`). Rejects plaintext when this endpoint
-    /// requires secure — matches a real secure gateway not falling back to
-    /// plaintext.
+    /// Dispatches plaintext frames and frames unwrapped from a SecureWrapper.
+    /// Secure-only endpoints reject plaintext to avoid transport fallback.
     async fn dispatch_plain_frame(
         self: &Arc<Self>,
         frame: KnxIpFrame,
@@ -491,7 +518,12 @@ impl TunnelServer {
                 self.handle_tunnelling_request(&frame.body, link).await?;
                 Ok(None)
             }
-            ServiceType::TunnellingAck => {
+            ServiceType::DeviceConfigurationRequest => {
+                self.handle_device_configuration_request(&frame.body)
+                    .await?;
+                Ok(None)
+            }
+            ServiceType::TunnellingAck | ServiceType::DeviceConfigurationAck => {
                 self.handle_tunnelling_ack(&frame.body).await?;
                 Ok(None)
             }
@@ -654,12 +686,42 @@ impl TunnelServer {
 
     async fn handle_connect_request(&self, body: &[u8], link: ClientLink) -> Result<Option<u8>> {
         let request = ConnectRequest::parse(body)?;
+        let kind = match request.cri.connection_type {
+            ConnectionRequestInfo::TUNNEL_CONNECTION => ClientSessionKind::Tunnel,
+            ConnectionRequestInfo::DEVICE_MANAGEMENT_CONNECTION => {
+                if self.device_management_handler.read().await.is_none() {
+                    let response = ConnectResponse {
+                        channel_id: 0,
+                        status: ConnectResponse::STATUS_ERROR_CONNECTION_TYPE,
+                        data_endpoint: Hpai::new(self.local_addr),
+                        crd: Vec::new(),
+                        assigned_address: None,
+                    };
+                    self.send_reply(ServiceType::ConnectResponse, &response.serialize(), &link)
+                        .await?;
+                    return Ok(None);
+                }
+                ClientSessionKind::DeviceManagement
+            }
+            _ => {
+                let response = ConnectResponse {
+                    channel_id: 0,
+                    status: ConnectResponse::STATUS_ERROR_CONNECTION_TYPE,
+                    data_endpoint: Hpai::new(self.local_addr),
+                    crd: Vec::new(),
+                    assigned_address: None,
+                };
+                self.send_reply(ServiceType::ConnectResponse, &response.serialize(), &link)
+                    .await?;
+                return Ok(None);
+            }
+        };
         let link = Self::resolve_link(&request.data_endpoint, &link);
 
         let channel_id = {
             let mut sessions = self.sessions.write().await;
             if let Some(id) = Self::allocate_channel_id(&sessions) {
-                sessions.insert(id, Arc::new(ClientSession::new(id, link.clone())));
+                sessions.insert(id, Arc::new(ClientSession::new(id, link.clone(), kind)));
                 id
             } else {
                 let response = ConnectResponse {
@@ -675,12 +737,27 @@ impl TunnelServer {
             }
         };
 
+        let (data_endpoint, crd, assigned_address) = match kind {
+            ClientSessionKind::Tunnel => (
+                Hpai::new(self.local_addr),
+                build_tunnel_crd(self.individual_address),
+                Some(self.individual_address),
+            ),
+            ClientSessionKind::DeviceManagement => (
+                match link {
+                    ClientLink::Tcp { .. } => Hpai::new_tcp_route_back(),
+                    ClientLink::Udp { .. } => Hpai::new(self.local_addr),
+                },
+                ConnectionRequestInfo::new_device_management().serialize(),
+                None,
+            ),
+        };
         let response = ConnectResponse {
             channel_id,
             status: ConnectResponse::STATUS_OK,
-            data_endpoint: Hpai::new(self.local_addr),
-            crd: build_tunnel_crd(self.individual_address),
-            assigned_address: Some(self.individual_address),
+            data_endpoint,
+            crd,
+            assigned_address,
         };
         self.send_reply(ServiceType::ConnectResponse, &response.serialize(), &link)
             .await?;
@@ -691,6 +768,163 @@ impl TunnelServer {
             channel_id
         );
         Ok(Some(channel_id))
+    }
+
+    async fn handle_device_configuration_request(self: &Arc<Self>, body: &[u8]) -> Result<()> {
+        let request = TunnellingRequest::parse(body)?;
+        let session = self
+            .sessions
+            .read()
+            .await
+            .get(&request.communication_channel_id)
+            .cloned();
+        let Some(session) = session else {
+            return Ok(());
+        };
+        if session.kind != ClientSessionKind::DeviceManagement {
+            return Ok(());
+        }
+        session.touch();
+
+        match session.validate_recv_seq(request.sequence_counter) {
+            SequenceValidationResult::Valid => {
+                let ack = TunnellingAck::new_ok(
+                    request.communication_channel_id,
+                    request.sequence_counter,
+                );
+                self.send_reply(
+                    ServiceType::DeviceConfigurationAck,
+                    &ack.serialize(),
+                    &session.link,
+                )
+                .await?;
+
+                let response = build_device_management_response(
+                    self.device_management_handler.read().await.as_deref(),
+                    &request.raw_cemi,
+                )?;
+                let server = self.clone();
+                let client_sequence = request.sequence_counter;
+                tokio::spawn(async move {
+                    if let Err(error) = server
+                        .send_device_configuration_response(
+                            &session,
+                            client_sequence,
+                            None,
+                            &response,
+                        )
+                        .await
+                    {
+                        log_transport!(
+                            LogLevel::Warn,
+                            "TunnelServer: failed to send device-configuration response: {}",
+                            error
+                        );
+                    }
+                });
+            }
+            SequenceValidationResult::Duplicate => {
+                let ack = TunnellingAck::new_ok(
+                    request.communication_channel_id,
+                    request.sequence_counter,
+                );
+                self.send_reply(
+                    ServiceType::DeviceConfigurationAck,
+                    &ack.serialize(),
+                    &session.link,
+                )
+                .await?;
+                let cached = session.last_device_response.lock().unwrap().clone();
+                if let Some((client_sequence, server_sequence, response)) = cached
+                    && client_sequence == request.sequence_counter
+                {
+                    let server = self.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = server
+                            .send_device_configuration_response(
+                                &session,
+                                client_sequence,
+                                Some(server_sequence),
+                                &response,
+                            )
+                            .await
+                        {
+                            log_transport!(
+                                LogLevel::Warn,
+                                "TunnelServer: failed to resend device-configuration response: {}",
+                                error
+                            );
+                        }
+                    });
+                }
+            }
+            SequenceValidationResult::Invalid { .. } => {
+                let ack = TunnellingAck::new_sequence_error(
+                    request.communication_channel_id,
+                    request.sequence_counter,
+                );
+                self.send_reply(
+                    ServiceType::DeviceConfigurationAck,
+                    &ack.serialize(),
+                    &session.link,
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn send_device_configuration_response(
+        &self,
+        session: &Arc<ClientSession>,
+        client_sequence: u8,
+        replay_sequence: Option<u8>,
+        cemi: &[u8],
+    ) -> Result<()> {
+        let _guard = session.send_lock.lock().await;
+        let sequence = replay_sequence.unwrap_or_else(|| session.send_seq.load(Ordering::SeqCst));
+        if replay_sequence.is_none() {
+            *session.last_device_response.lock().unwrap() =
+                Some((client_sequence, sequence, cemi.to_vec()));
+        }
+        let request = TunnellingRequest::new(session.channel_id, sequence, cemi.to_vec());
+        let frame = KnxIpFrame::new(ServiceType::DeviceConfigurationRequest, request.serialize())
+            .serialize();
+        let frame = self.maybe_encrypt(frame, session.link.peer_addr()).await?;
+
+        for attempt in 0..2u8 {
+            let (tx, rx) = oneshot::channel();
+            *session.pending_ack.lock().unwrap() = Some((sequence, tx));
+            session.link.send_frame(&frame).await?;
+            match tokio::time::timeout(ACK_TIMEOUT, rx).await {
+                Ok(Ok(ack)) if ack.status_code == TunnellingAck::STATUS_OK => {
+                    if session.send_seq.load(Ordering::SeqCst) == sequence {
+                        session
+                            .send_seq
+                            .store(sequence.wrapping_add(1), Ordering::SeqCst);
+                    }
+                    return Ok(());
+                }
+                Ok(Ok(_)) => {
+                    return Err(TransportError::InvalidConfiguration {
+                        details: "client rejected device-configuration response".into(),
+                    }
+                    .into());
+                }
+                _ if attempt == 0 => {
+                    log_transport!(
+                        LogLevel::Warn,
+                        "TunnelServer: device-configuration ACK timeout for channel {}, retrying once",
+                        session.channel_id
+                    );
+                }
+                _ => {}
+            }
+        }
+        Err(TransportError::Timeout {
+            timeout_ms: ACK_TIMEOUT.as_millis() as u64,
+        }
+        .into())
     }
 
     async fn handle_tunnelling_request(
@@ -1023,6 +1257,61 @@ fn build_tunnelling_frame(telegram: &Telegram, channel_id: u8, sequence: u8) -> 
 fn build_tunnel_crd(addr: IndividualAddress) -> Vec<u8> {
     let [hi, lo] = addr.raw().to_be_bytes();
     vec![4, ConnectionRequestInfo::TUNNEL_CONNECTION, hi, lo]
+}
+
+fn build_device_management_response(
+    handler: Option<&dyn DeviceManagementHandler>,
+    cemi: &[u8],
+) -> Result<Vec<u8>> {
+    match cemi.first().copied() {
+        Some(code) if code == MessageCode::MPropReadReq.to_u8() => {
+            let request = CemiPropertyReadRequest::decode(cemi)?;
+            let (property, data, error_code) = match handler {
+                Some(handler) => match handler.read_property(request.property) {
+                    Ok(data) if !data.is_empty() => (request.property, data, None),
+                    Ok(_) => (request.property, Vec::new(), Some(0x01)),
+                    Err(error_code) => {
+                        let property = CemiPropertyInfo {
+                            number_of_elements: 0,
+                            ..request.property
+                        };
+                        (property, Vec::new(), Some(error_code))
+                    }
+                },
+                None => {
+                    let property = CemiPropertyInfo {
+                        number_of_elements: 0,
+                        ..request.property
+                    };
+                    (property, Vec::new(), Some(0x01))
+                }
+            };
+            CemiPropertyReadResponse {
+                property,
+                data,
+                error_code,
+            }
+            .encode()
+        }
+        Some(code) if code == MessageCode::MPropWriteReq.to_u8() => {
+            let request = CemiPropertyWriteRequest::decode(cemi)?;
+            let error_code = match handler {
+                Some(handler) => handler
+                    .write_property(request.property, &request.data)
+                    .err(),
+                None => Some(0x01),
+            };
+            CemiPropertyWriteResponse {
+                property: request.property,
+                error_code,
+            }
+            .encode()
+        }
+        _ => Err(ProtocolError::InvalidFrame {
+            details: "unsupported device-management cEMI request".into(),
+        }
+        .into()),
+    }
 }
 
 fn parse_cemi_to_telegram(cemi_data: &[u8]) -> Result<Telegram> {
@@ -1372,6 +1661,82 @@ mod tests {
         tunnel.disconnect().await;
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(server.client_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn device_management_server_serves_udp_and_tcp_clients() {
+        use crate::protocol::cemi::CemiPropertyInfo;
+        use crate::transport::DeviceManagementConnection;
+
+        struct Handler;
+
+        impl DeviceManagementHandler for Handler {
+            fn read_property(
+                &self,
+                property: CemiPropertyInfo,
+            ) -> std::result::Result<Vec<u8>, u8> {
+                if property.property_id == 2 {
+                    Ok(vec![0x42])
+                } else {
+                    Err(0x01)
+                }
+            }
+
+            fn write_property(
+                &self,
+                property: CemiPropertyInfo,
+                data: &[u8],
+            ) -> std::result::Result<(), u8> {
+                if property.property_id == 2 && data == [0x12, 0x34] {
+                    Ok(())
+                } else {
+                    Err(0x01)
+                }
+            }
+        }
+
+        let server = bind_server().await;
+        server
+            .set_device_management_handler(Arc::new(Handler))
+            .await;
+        let gateway = server.local_addr();
+
+        for tcp in [false, true] {
+            let mut connection = if tcp {
+                DeviceManagementConnection::connect_tcp(gateway, Duration::from_secs(2))
+                    .await
+                    .unwrap()
+            } else {
+                DeviceManagementConnection::connect(
+                    gateway,
+                    "127.0.0.1:0".parse().unwrap(),
+                    Duration::from_secs(2),
+                )
+                .await
+                .unwrap()
+            };
+            let property = CemiPropertyInfo {
+                object_type: 0x0011,
+                object_instance: 1,
+                property_id: 2,
+                number_of_elements: 1,
+                start_index: 1,
+            };
+            assert_eq!(
+                connection
+                    .read_property(property, Duration::from_secs(2))
+                    .await
+                    .unwrap(),
+                [0x42]
+            );
+            connection
+                .write_property(property, &[0x12, 0x34], Duration::from_secs(2))
+                .await
+                .unwrap();
+            connection.disconnect(Duration::from_secs(2)).await.unwrap();
+        }
+
+        server.shutdown();
     }
 
     #[tokio::test]
