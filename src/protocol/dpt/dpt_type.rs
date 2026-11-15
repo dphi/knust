@@ -3,7 +3,7 @@ use super::unit::Unit;
 use super::view::{
     AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView,
     ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
-    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
+    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterStatusView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
@@ -277,6 +277,7 @@ pub enum DptType {
     MeteringValue = 22_900_001,
     AlarmInfo = 21_900_001,
     BatteryInfo = 24_600_600,
+    ConverterStatus = 24_400_600,
     ColorTemperatureTransition = 24_900_600,
     XYYColorTransition = 24_300_600,
     ColorTemperatureControl = 25_000_600,
@@ -520,7 +521,7 @@ impl DptType {
     pub fn byte_length(&self) -> usize {
         match self.main() {
             1..=6 | 17 | 18 | 20 | 21 | 25 | 26 | 236 | 238 => 1,
-            7..=9 | 22 | 207 | 217 | 234 | 237 | 246 => 2,
+            7..=9 | 22 | 207 | 217 | 234 | 237 | 244 | 246 => 2,
             10 | 11 | 30 | 206 | 225 | 232 | 240 | 250 | 254 => 3,
             252 => 5,
             12..=15 | 27 | 241 | 253 => 4,
@@ -754,6 +755,10 @@ impl DptType {
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
             246 => Ok(DptView::BatteryInfo(BatteryInfoView(bytes))),
+            244 => {
+                super::dpt244::ConverterStatus::decode([bytes[0], bytes[1]])?;
+                Ok(DptView::ConverterStatus(ConverterStatusView(bytes)))
+            }
             250 | 252..=254 => Ok(DptView::RelativeColor(RelativeColorView(
                 bytes,
                 self.main(),
@@ -1112,6 +1117,7 @@ impl DptType {
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
             (246, DptPayload::BatteryInfo(value)) => Ok(value.encode()?.to_vec()),
+            (244, DptPayload::ConverterStatus(value)) => Ok(value.encode()?.to_vec()),
             (250, DptPayload::ColorTemperatureControl(value)) => Ok(value.encode().to_vec()),
             (252, DptPayload::RelativeControlRGBW(value)) => Ok(value.encode().to_vec()),
             (253, DptPayload::RelativeControlXYY(value)) => Ok(value.encode().to_vec()),

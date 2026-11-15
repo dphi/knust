@@ -43,6 +43,7 @@ pub mod dpt240;
 pub mod dpt241; // Tariff Active Energy
 pub mod dpt242;
 pub mod dpt243; // XYY Color
+pub mod dpt244;
 pub mod dpt246;
 pub mod dpt249;
 pub mod dpt25;
@@ -116,6 +117,7 @@ pub use dpt240::*;
 pub use dpt241::*;
 pub use dpt242::*;
 pub use dpt243::*;
+pub use dpt244::*;
 pub use dpt246::*;
 pub use dpt249::*;
 pub use dpt251::*;
@@ -127,7 +129,7 @@ pub use unit::Unit;
 pub use view::{
     AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView,
     ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
-    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView,
+    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterStatusView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
     DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
@@ -714,6 +716,7 @@ impl DptRegistry {
         registry.register::<DPTMeteringValue>();
         registry.register::<DPTAlarmInfo>();
         registry.register::<DPTBatteryInfo>();
+        registry.register::<DPTConverterStatus>();
         registry.register::<DPTColorTemperatureTransition>();
         registry.register::<DPTColorXYYTransition>();
         registry.register::<DPTColorTemperatureControl>();
