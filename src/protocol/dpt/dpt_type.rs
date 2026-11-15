@@ -9,7 +9,7 @@ use super::view::{
     MeteringValueView, ModeNextView, PrioritisedModeControlView, RgbView, RgbwView,
     ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
     StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View,
-    U16View, U32View, VersionView, XyyView,
+    U16View, U32View, VersionView, XYYColorTransitionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -276,6 +276,7 @@ pub enum DptType {
     MeteringValue = 22_900_001,
     AlarmInfo = 21_900_001,
     ColorTemperatureTransition = 24_900_600,
+    XYYColorTransition = 24_300_600,
     CombinedStatusRTSM = 2_100_107,
     CombinedStatusHVA = 2_200_102,
     CombinedStatusRTC = 2_200_103,
@@ -517,7 +518,7 @@ impl DptType {
             10 | 11 | 30 | 206 | 225 | 232 | 240 => 3,
             12..=15 | 27 | 241 => 4,
             16 => 14,
-            19 | 29 | 230 | 255 | 273 | 275 => 8,
+            19 | 29 | 230 | 243 | 255 | 273 | 275 => 8,
             219 | 222 | 229 | 235 | 242 | 249 | 251 => 6,
             _ => 0,
         }
@@ -745,6 +746,7 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            243 => Ok(DptView::XYYColorTransition(XYYColorTransitionView(bytes))),
             249 => Ok(DptView::ColorTemperatureTransition(
                 ColorTemperatureTransitionView(bytes),
             )),
@@ -1097,6 +1099,7 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (243, DptPayload::XYYColorTransition(value)) => Ok(value.encode()?.to_vec()),
             (249, DptPayload::ColorTemperatureTransition(value)) => Ok(value.encode()?.to_vec()),
             (219, DptPayload::AlarmInfo(value)) => Ok(value.encode()?.to_vec()),
             (207, DptPayload::BurnerControllerStatus(value)) if self.sub() == 100 => {

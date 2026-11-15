@@ -41,7 +41,8 @@ pub mod dpt237;
 pub mod dpt238;
 pub mod dpt240;
 pub mod dpt241; // Tariff Active Energy
-pub mod dpt242; // XYY Color
+pub mod dpt242;
+pub mod dpt243; // XYY Color
 pub mod dpt249;
 pub mod dpt25;
 pub mod dpt251;
@@ -111,6 +112,7 @@ pub use dpt238::*;
 pub use dpt240::*;
 pub use dpt241::*;
 pub use dpt242::*;
+pub use dpt243::*;
 pub use dpt249::*;
 pub use dpt251::*;
 pub use dpt255::*;
@@ -127,7 +129,7 @@ pub use view::{
     MeteringValueView, ModeNextView, PrioritisedModeControlView, RgbView, RgbwView,
     ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
     StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View,
-    U16View, U32View, VersionView, XyyView,
+    U16View, U32View, VersionView, XYYColorTransitionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -707,6 +709,7 @@ impl DptRegistry {
         registry.register::<DPTMeteringValue>();
         registry.register::<DPTAlarmInfo>();
         registry.register::<DPTColorTemperatureTransition>();
+        registry.register::<DPTColorXYYTransition>();
         registry.register::<DPTCombinedStatusRTSM>();
         registry.register::<DPTCombinedStatusHVA>();
         registry.register::<DPTCombinedStatusRTC>();
