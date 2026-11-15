@@ -43,6 +43,9 @@ pub struct Telegram {
     /// Set to false for octet payloads, including DPT 4 and DPT 5.
     pub compact_payload: bool,
 
+    /// Raw transport-layer control byte; normally zero for group and unconnected data.
+    pub tpci: u8,
+
     /// Message priority
     pub priority: Priority,
 
@@ -74,6 +77,7 @@ impl Telegram {
             direction: Direction::Outgoing,
             telegram_type: TelegramType::GroupValueRead,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         }
     }
@@ -94,14 +98,18 @@ impl Telegram {
             direction: Direction::Outgoing,
             telegram_type: TelegramType::GroupValueWrite,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         }
     }
 
     pub(crate) fn from_cemi_frame(frame: super::CemiFrame) -> crate::Result<Self> {
         let individual = matches!(frame.dest_addr, Address::Individual(_));
-        let individual_data =
-            individual && super::TpciFrame::decode(frame.tpci) == super::TpciFrame::DataUnconnected;
+        let individual_data = individual
+            && matches!(
+                super::TpciFrame::decode(frame.tpci),
+                super::TpciFrame::DataUnconnected | super::TpciFrame::DataConnected { .. }
+            );
         if individual && (!individual_data || frame.apci_data.is_empty()) {
             return Err(crate::error::ProtocolError::InvalidFrame {
                 details: "Unsupported or empty individual-address data frame".to_owned(),
@@ -142,6 +150,7 @@ impl Telegram {
             direction: Direction::Incoming,
             telegram_type,
             compact_payload: frame.apci_data.len() == 1,
+            tpci: frame.tpci,
             timestamp: std::time::SystemTime::now(),
         })
     }
@@ -173,6 +182,7 @@ impl Telegram {
             direction: Direction::Outgoing,
             telegram_type: TelegramType::IndividualData,
             compact_payload: false,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         }
     }
@@ -198,6 +208,7 @@ impl Telegram {
             direction: Direction::Incoming,
             telegram_type,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         }
     }

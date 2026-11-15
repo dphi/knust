@@ -941,6 +941,7 @@ mod tests {
                     direction,
                     telegram_type: TelegramType::GroupValueWrite,
                     compact_payload: true,
+            tpci: 0,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1044,6 +1045,7 @@ mod tests {
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
                     compact_payload: true,
+            tpci: 0,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1146,6 +1148,7 @@ mod tests {
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
                     compact_payload: true,
+            tpci: 0,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1222,6 +1225,7 @@ mod tests {
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
                     compact_payload: true,
+            tpci: 0,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1419,6 +1423,7 @@ mod tests {
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
                     compact_payload: true,
+            tpci: 0,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1590,6 +1595,7 @@ mod tests {
                             direction: Direction::Incoming,
                             telegram_type: TelegramType::GroupValueWrite,
                             compact_payload: true,
+            tpci: 0,
                             timestamp: std::time::SystemTime::now(),
                         };
 
@@ -1801,6 +1807,7 @@ mod tests {
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
                     compact_payload: true,
+            tpci: 0,
                     timestamp: std::time::SystemTime::now(),
                 };
 
@@ -1962,6 +1969,7 @@ mod tests {
                     direction: Direction::Incoming,
                     telegram_type: TelegramType::GroupValueWrite,
                     compact_payload: true,
+            tpci: 0,
                     timestamp: std::time::SystemTime::now(),
                 };
 

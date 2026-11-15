@@ -165,6 +165,7 @@ async fn test_concurrent_mixed_operations() {
         direction: Direction::Incoming,
         telegram_type: TelegramType::GroupValueWrite,
         compact_payload: true,
+        tpci: 0,
         timestamp: std::time::SystemTime::now(),
     };
 
@@ -313,6 +314,7 @@ async fn test_concurrent_filter_operations() {
         direction: Direction::Incoming,
         telegram_type: TelegramType::GroupValueWrite,
         compact_payload: true,
+        tpci: 0,
         timestamp: std::time::SystemTime::now(),
     };
 

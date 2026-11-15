@@ -463,6 +463,7 @@ mod tests {
             direction: Direction::Outgoing,
             telegram_type: TelegramType::GroupValueWrite,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         }
     }
@@ -493,6 +494,7 @@ mod tests {
                 direction: Direction::Outgoing,
                 telegram_type: TelegramType::GroupValueWrite,
                 compact_payload: true,
+            tpci: 0,
                 timestamp: std::time::SystemTime::now(),
             }
         }

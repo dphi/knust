@@ -2939,12 +2939,16 @@ impl Knx {
         } else {
             MessageCode::LDataInd
         };
-        CemiFrame::new(
+        let mut frame = CemiFrame::new(
             message_code,
             telegram.source,
             telegram.destination,
             telegram.encode_apdu(),
-        )
+        );
+        if telegram.telegram_type == TelegramType::IndividualData {
+            frame.tpci = telegram.tpci;
+        }
+        frame
     }
 
     fn serialize_outgoing_cemi(
@@ -3205,7 +3209,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn connectionless_individual_apdu_round_trips_as_raw_service_data() {
+    fn individual_apdus_preserve_connectionless_and_connected_tpci() {
         use crate::protocol::knxip::{KnxIpFrame, TunnellingRequest};
         let destination = crate::protocol::IndividualAddress::new(1, 2, 3);
         let apdu = vec![0x02, 0xC8, 1, 2, 0x42];
@@ -3221,11 +3225,20 @@ mod integration_tests {
         assert_eq!(cemi.apci_data, apdu);
         let received = Knx::parse_cemi_to_telegram(&request.raw_cemi).unwrap();
         assert_eq!(received.telegram_type, TelegramType::IndividualData);
+        assert_eq!(received.tpci, 0);
         assert_eq!(received.payload, apdu);
 
         let mut connected = cemi;
-        connected.tpci = 0x40;
-        assert!(Telegram::from_cemi_frame(connected).is_err());
+        connected.tpci = 0x44;
+        let received = Telegram::from_cemi_frame(connected).unwrap();
+        assert_eq!(received.tpci, 0x44);
+        assert_eq!(received.payload, apdu);
+        let wire = Knx::build_outgoing_frame_for_connection(&received, &connection).unwrap();
+        let frame = KnxIpFrame::parse(&wire).unwrap();
+        let request = TunnellingRequest::parse(&frame.body).unwrap();
+        let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
+        assert_eq!(cemi.tpci, 0x44);
+        assert_eq!(cemi.apci_data, apdu);
     }
 
     #[cfg(feature = "dpt")]
@@ -3379,6 +3392,7 @@ mod integration_tests {
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -3438,6 +3452,7 @@ mod integration_tests {
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -3466,6 +3481,7 @@ mod integration_tests {
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         };
         assert!(
@@ -3804,6 +3820,7 @@ mod integration_tests {
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -3854,6 +3871,7 @@ mod integration_tests {
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -3869,6 +3887,7 @@ mod integration_tests {
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -3917,6 +3936,7 @@ mod integration_tests {
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         };
 
@@ -3981,6 +4001,7 @@ mod integration_tests {
             direction: Direction::Incoming,
             telegram_type: TelegramType::GroupValueWrite,
             compact_payload: true,
+            tpci: 0,
             timestamp: std::time::SystemTime::now(),
         };
 
