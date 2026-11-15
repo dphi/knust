@@ -368,6 +368,13 @@ macro_rules! status_view {
     };
 }
 status_view!(StatusRTSMView, CombinedStatusRTSM);
+status_view!(ForcingSignalView, ForcingSignal);
+status_view!(ForcingSignalCoolView, ForcingSignalCool);
+status_view!(RoomHeatingControllerStatusView, RoomHeatingControllerStatus);
+status_view!(SolarDHWControllerStatusView, SolarDHWControllerStatus);
+status_view!(FuelTypeSetView, FuelTypeSet);
+status_view!(RoomCoolingControllerStatusView, RoomCoolingControllerStatus);
+status_view!(VentilationControllerStatusView, VentilationControllerStatus);
 status_view!(GeneralStatusView, GeneralStatus);
 status_view!(DeviceControlView, DeviceControl);
 status_view!(StatusHVAView, CombinedStatusHVA);
@@ -943,6 +950,13 @@ pub enum DptView<'a> {
     ColorTemperatureTransition(ColorTemperatureTransitionView<'a>),
     RelativeColor(RelativeColorView<'a>),
     XYYColorTransition(XYYColorTransitionView<'a>),
+    ForcingSignal(ForcingSignalView<'a>),
+    ForcingSignalCool(ForcingSignalCoolView<'a>),
+    RoomHeatingControllerStatus(RoomHeatingControllerStatusView<'a>),
+    SolarDHWControllerStatus(SolarDHWControllerStatusView<'a>),
+    FuelTypeSet(FuelTypeSetView<'a>),
+    RoomCoolingControllerStatus(RoomCoolingControllerStatusView<'a>),
+    VentilationControllerStatus(VentilationControllerStatusView<'a>),
     StatusRTSM(StatusRTSMView<'a>),
     GeneralStatus(GeneralStatusView<'a>),
     DeviceControl(DeviceControlView<'a>),
@@ -1010,6 +1024,13 @@ impl<'a> DptView<'a> {
             | Self::ColorTemperatureTransition(_)
             | Self::RelativeColor(_)
             | Self::XYYColorTransition(_)
+            | Self::ForcingSignal(_)
+            | Self::ForcingSignalCool(_)
+            | Self::RoomHeatingControllerStatus(_)
+            | Self::SolarDHWControllerStatus(_)
+            | Self::FuelTypeSet(_)
+            | Self::RoomCoolingControllerStatus(_)
+            | Self::VentilationControllerStatus(_)
             | Self::StatusRTSM(_)
             | Self::GeneralStatus(_)
             | Self::DeviceControl(_)
@@ -1081,6 +1102,13 @@ impl<'a> DptView<'a> {
             Self::ColorTemperatureTransition(v) => v.raw(),
             Self::RelativeColor(v) => v.raw(),
             Self::XYYColorTransition(v) => v.raw(),
+            Self::ForcingSignal(v) => v.raw(),
+            Self::ForcingSignalCool(v) => v.raw(),
+            Self::RoomHeatingControllerStatus(v) => v.raw(),
+            Self::SolarDHWControllerStatus(v) => v.raw(),
+            Self::FuelTypeSet(v) => v.raw(),
+            Self::RoomCoolingControllerStatus(v) => v.raw(),
+            Self::VentilationControllerStatus(v) => v.raw(),
             Self::StatusRTSM(v) => v.raw(),
             Self::GeneralStatus(v) => v.raw(),
             Self::DeviceControl(v) => v.raw(),
@@ -1159,6 +1187,13 @@ impl DptView<'_> {
             Self::ColorTemperatureTransition(v) => v.value().to_string(),
             Self::RelativeColor(v) => v.value().formatted(None),
             Self::XYYColorTransition(v) => v.value().to_string(),
+            Self::ForcingSignal(v) => v.value().to_string(),
+            Self::ForcingSignalCool(v) => v.value().to_string(),
+            Self::RoomHeatingControllerStatus(v) => v.value().to_string(),
+            Self::SolarDHWControllerStatus(v) => v.value().to_string(),
+            Self::FuelTypeSet(v) => v.value().to_string(),
+            Self::RoomCoolingControllerStatus(v) => v.value().to_string(),
+            Self::VentilationControllerStatus(v) => v.value().to_string(),
             Self::StatusRTSM(v) => v.value().to_string(),
             Self::GeneralStatus(v) => v.value().to_string(),
             Self::DeviceControl(v) => v.value().to_string(),
@@ -1627,6 +1662,13 @@ impl DptType {
             250 | 252..=254 => super::dpt_relative_color::parse_payload(s,self.main()),
             243 => s.parse().map(DptPayload::XYYColorTransition),
             21 if self.sub() == 1 => s.parse().map(DptPayload::GeneralStatus),
+            21 if self.sub() == 100 => s.parse().map(DptPayload::ForcingSignal),
+            21 if self.sub() == 101 => s.parse().map(DptPayload::ForcingSignalCool),
+            21 if self.sub() == 102 => s.parse().map(DptPayload::RoomHeatingControllerStatus),
+            21 if self.sub() == 103 => s.parse().map(DptPayload::SolarDHWControllerStatus),
+            21 if self.sub() == 104 => s.parse().map(DptPayload::FuelTypeSet),
+            21 if self.sub() == 105 => s.parse().map(DptPayload::RoomCoolingControllerStatus),
+            21 if self.sub() == 106 => s.parse().map(DptPayload::VentilationControllerStatus),
             21 if self.sub() == 2 => s.parse().map(DptPayload::DeviceControl),
             21 => s.parse().map(DptPayload::StatusRTSM),
             22 if self.sub() == 102 => s.parse().map(DptPayload::StatusHVA),

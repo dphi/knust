@@ -6,12 +6,14 @@ use super::view::{
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
     ConverterInfoView, ConverterStatusView, ConverterTestInfoView, ConverterTestResultView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DeviceControlView,
-    DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
-    GeneralStatusView, GeographicalLocationView, I8View, I16View, I32View, I64View,
-    MBusAddressView, MeteringValueView, ModeNextView, PrioritisedModeControlView,
-    RelativeColorView, RgbView, RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView,
-    SceneView, Setpoints3View, Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView,
-    StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView,
+    DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForcingSignalCoolView,
+    ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
+    I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
+    PrioritisedModeControlView, RelativeColorView, RgbView, RgbwView,
+    RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
+    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
+    SolarDHWControllerStatusView, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView,
+    StrView, TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
     XYYColorTransitionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
@@ -290,6 +292,13 @@ pub enum DptType {
     RelativeControlRGBW = 25_200_600,
     RelativeControlXYY = 25_300_600,
     RelativeControlRGB = 25_400_600,
+    ForcingSignal = 2_100_100,
+    ForcingSignalCool = 2_100_101,
+    RoomHeatingControllerStatus = 2_100_102,
+    SolarDHWControllerStatus = 2_100_103,
+    FuelTypeSet = 2_100_104,
+    RoomCoolingControllerStatus = 2_100_105,
+    VentilationControllerStatus = 2_100_106,
     CombinedStatusRTSM = 2_100_107,
     GeneralStatus = 2_100_001,
     DeviceControl = 2_100_002,
@@ -810,6 +819,21 @@ impl DptType {
                 Ok(DptView::MeteringValue(MeteringValueView(bytes)))
             }
             21 if self.sub() == 1 => Ok(DptView::GeneralStatus(GeneralStatusView(bytes))),
+            21 if self.sub() == 100 => Ok(DptView::ForcingSignal(ForcingSignalView(bytes))),
+            21 if self.sub() == 101 => Ok(DptView::ForcingSignalCool(ForcingSignalCoolView(bytes))),
+            21 if self.sub() == 102 => Ok(DptView::RoomHeatingControllerStatus(
+                RoomHeatingControllerStatusView(bytes),
+            )),
+            21 if self.sub() == 103 => Ok(DptView::SolarDHWControllerStatus(
+                SolarDHWControllerStatusView(bytes),
+            )),
+            21 if self.sub() == 104 => Ok(DptView::FuelTypeSet(FuelTypeSetView(bytes))),
+            21 if self.sub() == 105 => Ok(DptView::RoomCoolingControllerStatus(
+                RoomCoolingControllerStatusView(bytes),
+            )),
+            21 if self.sub() == 106 => Ok(DptView::VentilationControllerStatus(
+                VentilationControllerStatusView(bytes),
+            )),
             21 if self.sub() == 2 => Ok(DptView::DeviceControl(DeviceControlView(bytes))),
             21 => Ok(DptView::StatusRTSM(StatusRTSMView(bytes))),
             22 if self.sub() == 102 => Ok(DptView::StatusHVA(StatusHVAView(bytes))),
@@ -1181,6 +1205,27 @@ impl DptType {
             }
             (229, DptPayload::MeteringValue(value)) => Ok(value.encode()?.to_vec()),
             (21, DptPayload::StatusRTSM(value)) if self.sub() == 107 => Ok(value.encode().to_vec()),
+            (21, DptPayload::ForcingSignal(value)) if self.sub() == 100 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::ForcingSignalCool(value)) if self.sub() == 101 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::RoomHeatingControllerStatus(value)) if self.sub() == 102 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::SolarDHWControllerStatus(value)) if self.sub() == 103 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::FuelTypeSet(value)) if self.sub() == 104 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::RoomCoolingControllerStatus(value)) if self.sub() == 105 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::VentilationControllerStatus(value)) if self.sub() == 106 => {
+                Ok(value.encode().to_vec())
+            }
             (21, DptPayload::GeneralStatus(value)) if self.sub() == 1 => {
                 Ok(value.encode().to_vec())
             }

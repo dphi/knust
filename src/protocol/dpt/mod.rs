@@ -140,12 +140,14 @@ pub use view::{
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
     ConverterInfoView, ConverterStatusView, ConverterTestInfoView, ConverterTestResultView,
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DeviceControlView,
-    DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
-    GeneralStatusView, GeographicalLocationView, I8View, I16View, I32View, I64View,
-    MBusAddressView, MeteringValueView, ModeNextView, PrioritisedModeControlView,
-    RelativeColorView, RgbView, RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView,
-    SceneView, Setpoints3View, Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView,
-    StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView,
+    DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForcingSignalCoolView,
+    ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
+    I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
+    PrioritisedModeControlView, RelativeColorView, RgbView, RgbwView,
+    RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
+    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
+    SolarDHWControllerStatusView, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView,
+    StrView, TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
     XYYColorTransitionView, XyyView,
 };
 
@@ -738,6 +740,13 @@ impl DptRegistry {
         registry.register::<DPTRelativeControlXYY>();
         registry.register::<DPTRelativeControlRGB>();
         registry.register::<DPTCombinedStatusRTSM>();
+        registry.register::<DPTForceSign>();
+        registry.register::<DPTForceSignCool>();
+        registry.register::<DPTStatusRHC>();
+        registry.register::<DPTStatusSDHWC>();
+        registry.register::<DPTFuelTypeSet>();
+        registry.register::<DPTStatusRCC>();
+        registry.register::<DPTStatusAHU>();
         registry.register::<DPTStatusGen>();
         registry.register::<DPTDeviceControl>();
         registry.register::<DPTCombinedStatusHVA>();

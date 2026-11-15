@@ -50,6 +50,13 @@ macro_rules! status {
         impl WriteValue<$dpt> for $value { fn resolve(self, _: DptType) -> Result<$dpt> { Ok($dpt::new(self)) } }
     };
 }
+status!(ForcingSignal,DPTForceSign,1,"21.100","forcing_signal",force_request:0,protection:1,oversupply:2,overrun:3,dhw_norm:4,dhw_legio:5,room_h_comf:6,room_h_max:7);
+status!(ForcingSignalCool,DPTForceSignCool,1,"21.101","forcing_signal_cool",force_request:0);
+status!(RoomHeatingControllerStatus,DPTStatusRHC,1,"21.102","room_heating_controller_status",fault:0,status_eco:1,temp_flow_limit:2,temp_return_limit:3,status_morning_boost:4,status_start_optim:5,status_stop_optim:6,summer_mode:7);
+status!(SolarDHWControllerStatus,DPTStatusSDHWC,1,"21.103","solar_dhw_controller_status",fault:0,sdhw_load_active:1,solar_load_sufficient:2);
+status!(FuelTypeSet,DPTFuelTypeSet,1,"21.104","fuel_type_set",oil:0,gas:1,solid_state:2);
+status!(RoomCoolingControllerStatus,DPTStatusRCC,1,"21.105","room_cooling_controller_status",fault:0);
+status!(VentilationControllerStatus,DPTStatusAHU,1,"21.106","ventilation_controller_status",fault:0,fan_active:1,heat:2,cool:3);
 status!(GeneralStatus,DPTStatusGen,1,"21.001","general_status",out_of_service:0,fault:1,overridden:2,in_alarm:3,alarm_un_ack:4);
 status!(DeviceControl,DPTDeviceControl,1,"21.002","device_control",user_stopped:0,own_ia:1,verify_mode:2);
 status!(CombinedStatusRTSM,DPTCombinedStatusRTSM,1,"21.107","combined_status_rtsm",window_open:0,presence:1,comfort_push_button:2,comfort_prolongation_user:3,hvac_mode_user:4);
