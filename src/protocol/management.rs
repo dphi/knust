@@ -104,6 +104,62 @@ fn decode_function_property_ext_header(apci_bytes: &[u8]) -> (u16, u16, u16) {
     )
 }
 
+const APCI_INDIVIDUAL_ADDRESS_SERIAL_READ: [u8; 2] = [0x03, 0xDC];
+const APCI_INDIVIDUAL_ADDRESS_SERIAL_RESPONSE: [u8; 2] = [0x03, 0xDD];
+
+/// `A_IndividualAddressSerial_Read` request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndividualAddressSerialRead {
+    pub serial: [u8; 6],
+}
+
+impl IndividualAddressSerialRead {
+    #[must_use]
+    pub fn encode(self) -> Vec<u8> {
+        [APCI_INDIVIDUAL_ADDRESS_SERIAL_READ.as_slice(), &self.serial].concat()
+    }
+}
+
+/// `A_IndividualAddressSerial_Response` response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndividualAddressSerialResponse {
+    pub serial: [u8; 6],
+    pub address: crate::protocol::IndividualAddress,
+}
+
+impl IndividualAddressSerialResponse {
+    pub fn encode(self) -> Vec<u8> {
+        [
+            APCI_INDIVIDUAL_ADDRESS_SERIAL_RESPONSE.as_slice(),
+            &self.serial,
+            &self.address.raw().to_be_bytes(),
+            &[0, 0],
+        ]
+        .concat()
+    }
+
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        if apci_bytes.len() != 12 || apci_bytes[..2] != APCI_INDIVIDUAL_ADDRESS_SERIAL_RESPONSE {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "Expected 12-byte IndividualAddressSerialResponse APCI 0x03DD, got {} bytes",
+                    apci_bytes.len()
+                ),
+            }
+            .into());
+        }
+        Ok(Self {
+            serial: apci_bytes[2..8]
+                .try_into()
+                .expect("validated serial length"),
+            address: crate::protocol::IndividualAddress::from_raw(u16::from_be_bytes([
+                apci_bytes[8],
+                apci_bytes[9],
+            ])),
+        })
+    }
+}
+
 /// Function-specific state response; None is the KNX negative response without a return code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionPropertyCommand {
@@ -1101,7 +1157,8 @@ mod tests {
         AuthorizeRequest, AuthorizeResponse, DeviceDescriptorRead, DeviceDescriptorResponse,
         FunctionPropertyCommand, FunctionPropertyExtCommand, FunctionPropertyExtStateRead,
         FunctionPropertyExtStateResponse, FunctionPropertyService, FunctionPropertyStateRead,
-        FunctionPropertyStateResponse, MemoryRead, MemoryResponse, MemoryWrite,
+        FunctionPropertyStateResponse, IndividualAddressSerialRead,
+        IndividualAddressSerialResponse, MemoryRead, MemoryResponse, MemoryWrite,
         PropertyDescriptionRead, PropertyDescriptionResponse, PropertyValueRead,
         PropertyValueResponse, PropertyValueWrite, RestartMasterReset, RestartMasterResetResponse,
         UserMemoryRead, UserMemoryResponse, UserMemoryWrite,
@@ -1567,5 +1624,25 @@ mod tests {
         );
         assert!(PropertyValueResponse::decode(&[0x03, 0xD5, 0, 1, 0x10, 0]).is_err());
         assert!(PropertyValueWrite::decode(&[0x03, 0xD7, 0, 1, 0x10]).is_err());
+    }
+
+    #[test]
+    fn individual_address_serial_read_and_response_match_wire_layout() {
+        let serial = [1, 2, 3, 4, 5, 6];
+        assert_eq!(
+            IndividualAddressSerialRead { serial }.encode(),
+            [0x03, 0xDC, 1, 2, 3, 4, 5, 6]
+        );
+        let response = IndividualAddressSerialResponse {
+            serial,
+            address: crate::protocol::IndividualAddress::new(1, 2, 3),
+        };
+        let encoded = [0x03, 0xDD, 1, 2, 3, 4, 5, 6, 0x12, 0x03, 0, 0];
+        assert_eq!(response.encode(), encoded);
+        assert_eq!(
+            IndividualAddressSerialResponse::decode(&encoded).unwrap(),
+            response
+        );
+        assert!(IndividualAddressSerialResponse::decode(&encoded[..11]).is_err());
     }
 }

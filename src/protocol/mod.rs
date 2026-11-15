@@ -82,7 +82,10 @@ pub use dpt::{
     Version,
 };
 pub use knxip::{ConnectRequest, ConnectResponse, Hpai, KnxIpFrame, ServiceType};
-pub use management::{DeviceDescriptorRead, DeviceDescriptorResponse};
+pub use management::{
+    DeviceDescriptorRead, DeviceDescriptorResponse, IndividualAddressSerialRead,
+    IndividualAddressSerialResponse,
+};
 pub use profile::PropertyDataType;
 pub use telegram::{Priority as TelegramPriority, Telegram, TelegramType};
 pub use tpci::TpciFrame;

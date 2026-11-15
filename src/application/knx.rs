@@ -1444,6 +1444,62 @@ impl Knx {
         timeout_duration: std::time::Duration,
         raise_if_multiple: bool,
     ) -> Result<Vec<crate::protocol::IndividualAddress>> {
+        let responses = self
+            .collect_broadcast_responses(
+                vec![0x01, 0x00],
+                vec![0x01, 0x40],
+                timeout_duration,
+                raise_if_multiple.then_some(2),
+            )
+            .await?;
+        let addresses = responses
+            .iter()
+            .map(|response| response.source)
+            .collect::<Vec<_>>();
+        if raise_if_multiple && addresses.len() > 1 {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "More than one KNX device is in programming mode".to_owned(),
+            }
+            .into());
+        }
+        Ok(addresses)
+    }
+
+    /// Read the address assigned to a device with the given serial number.
+    pub async fn read_individual_address_by_serial_number(
+        &self,
+        serial: [u8; 6],
+        timeout_duration: std::time::Duration,
+    ) -> Result<Option<crate::protocol::IndividualAddress>> {
+        let request = crate::protocol::IndividualAddressSerialRead { serial }.encode();
+        let mut response_prefix = vec![0x03, 0xDD];
+        response_prefix.extend_from_slice(&serial);
+        let response = self
+            .collect_broadcast_responses(request, response_prefix, timeout_duration, Some(1))
+            .await?
+            .into_iter()
+            .next();
+        let Some(response) = response else {
+            return Ok(None);
+        };
+        let decoded = crate::protocol::IndividualAddressSerialResponse::decode(&response.payload)?;
+        if decoded.serial != serial || decoded.address != response.source {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "IndividualAddressSerialResponse does not match its sender or request"
+                    .to_owned(),
+            }
+            .into());
+        }
+        Ok(Some(response.source))
+    }
+
+    async fn collect_broadcast_responses(
+        &self,
+        request_apdu: Vec<u8>,
+        response_prefix: Vec<u8>,
+        timeout_duration: std::time::Duration,
+        max_responses: Option<usize>,
+    ) -> Result<Vec<Telegram>> {
         let _request_guard = self.individual_request_lock.lock().await;
         let stopping = self.shutdown_started.notified();
         tokio::pin!(stopping);
@@ -1456,7 +1512,7 @@ impl Knx {
         let (tx, mut rx) = mpsc::channel(16);
         let filter = TelegramFilter::Custom(Arc::new(move |telegram| {
             telegram.destination == Address::Group(broadcast)
-                && telegram.payload.starts_with(&[0x01, 0x40])
+                && telegram.payload.starts_with(&response_prefix)
         }));
         let handle = self
             .register_telegram_callback_filtered(P2pTelegramCallback { tx }, filter, false)
@@ -1467,7 +1523,7 @@ impl Knx {
         };
 
         let operation = async {
-            let mut telegram = Telegram::group_write(broadcast, vec![0x01, 0x00]);
+            let mut telegram = Telegram::group_write(broadcast, request_apdu);
             telegram.telegram_type = TelegramType::IndividualData;
             telegram.compact_payload = false;
             let (sent, completed) = self
@@ -1483,18 +1539,23 @@ impl Knx {
             .await
             .map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })??;
 
-            let deadline = tokio::time::Instant::now() + timeout_duration;
-            let mut addresses = Vec::new();
-            while let Ok(Some(response)) = tokio::time::timeout_at(deadline, rx.recv()).await {
-                addresses.push(response.source);
-                if raise_if_multiple && addresses.len() > 1 {
-                    return Err(crate::error::ProtocolError::InvalidFrame {
-                        details: "More than one KNX device is in programming mode".to_owned(),
+            let mut responses = Vec::new();
+            let deadline = tokio::time::sleep(timeout_duration);
+            tokio::pin!(deadline);
+            loop {
+                tokio::select! {
+                    _ = &mut deadline => return Ok(responses),
+                    response = rx.recv() => match response {
+                        Some(response) => {
+                            responses.push(response);
+                            if max_responses.is_some_and(|limit| responses.len() >= limit) {
+                                return Ok(responses);
+                            }
+                        }
+                        None => return Ok(responses),
                     }
-                    .into());
                 }
             }
-            Ok(addresses)
         };
         let result = tokio::select! {
             result = operation => result,
@@ -4608,6 +4669,38 @@ mod integration_tests {
                 .unwrap();
         }
         assert_eq!(scan.await.unwrap().unwrap(), [first, second]);
+
+        let serial = [1, 2, 3, 4, 5, 6];
+        let knx_for_serial_read = knx.clone();
+        let serial_read = tokio::spawn(async move {
+            knx_for_serial_read
+                .read_individual_address_by_serial_number(serial, Duration::from_secs(2))
+                .await
+        });
+        let serial_request = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serial_request.payload,
+            crate::protocol::IndividualAddressSerialRead { serial }.encode()
+        );
+        for (reply_serial, address) in [([6, 5, 4, 3, 2, 1], second), (serial, first)] {
+            server
+                .send(Telegram::received(
+                    address,
+                    broadcast,
+                    TelegramType::IndividualData,
+                    crate::protocol::IndividualAddressSerialResponse {
+                        serial: reply_serial,
+                        address,
+                    }
+                    .encode(),
+                ))
+                .await
+                .unwrap();
+        }
+        assert_eq!(serial_read.await.unwrap().unwrap(), Some(first));
 
         let knx_for_scan = knx.clone();
         let strict_scan = tokio::spawn(async move {
