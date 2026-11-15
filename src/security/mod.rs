@@ -11,7 +11,9 @@ pub mod session;
 #[cfg(test)]
 mod tests;
 
-pub use group::{decrypt_group_payload, encrypt_group_payload};
+pub use group::{
+    decrypt_group_frame, decrypt_group_payload, encrypt_group_frame, encrypt_group_payload,
+};
 pub use keys::{KeyRing, SecurityCredentials, SecurityKey};
 pub use primitives::{
     byte_pad, bytes_xor, calculate_mac_cbc, decrypt_ctr, derive_device_authentication_password,

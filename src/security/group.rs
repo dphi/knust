@@ -218,6 +218,72 @@ pub fn decrypt_group_payload(
     Ok(decrypted_payload)
 }
 
+/// Build the secure APDU fields for a group CEMI frame.
+pub fn encrypt_group_frame(
+    keyring: &KeyRing,
+    frame: &CemiFrame,
+    sequence_number: u64,
+) -> Result<CemiFrame> {
+    if frame.apci_data.is_empty() || frame.apci_data.len() != usize::from(frame.data_length) {
+        return Err(SecurityError::CryptographicError {
+            operation: "group encrypt".to_string(),
+            reason: "CEMI frame has an invalid APDU length".to_string(),
+        }
+        .into());
+    }
+
+    let mut apdu = Vec::with_capacity(frame.apci_data.len() + 1);
+    apdu.push((frame.tpci & 0x03) << 6);
+    apdu.extend_from_slice(&frame.apci_data);
+    let secured = encrypt_group_payload(keyring, frame, &apdu, sequence_number)?;
+
+    let mut secure_frame = frame.clone();
+    secure_frame.tpci = (frame.tpci & 0xFC) | 0x03;
+    secure_frame.apci_data.clear();
+    secure_frame.apci_data.extend_from_slice(&[0xF1, 0x10]);
+    secure_frame.apci_data.extend_from_slice(&secured);
+    if secure_frame.apci_data.len() > u8::MAX as usize {
+        return Err(SecurityError::CryptographicError {
+            operation: "group encrypt".to_string(),
+            reason: "Secured APDU exceeds the CEMI length field".to_string(),
+        }
+        .into());
+    }
+    secure_frame.data_length = secure_frame.apci_data.len() as u8;
+    Ok(secure_frame)
+}
+
+/// Restore a group CEMI frame from a secured APDU.
+pub fn decrypt_group_frame(keyring: &KeyRing, frame: &CemiFrame) -> Result<CemiFrame> {
+    if frame.apci_data.len() < 2 || frame.apci_data[0] != 0xF1 || frame.apci_data[1] != 0x10 {
+        return Err(SecurityError::CryptographicError {
+            operation: "group decrypt".to_string(),
+            reason: "Unsupported Data Secure service or algorithm".to_string(),
+        }
+        .into());
+    }
+
+    let apdu = decrypt_group_payload(keyring, frame, &frame.apci_data[2..])?;
+    if apdu.is_empty() {
+        return Err(SecurityError::CryptographicError {
+            operation: "group decrypt".to_string(),
+            reason: "Decrypted APDU is empty".to_string(),
+        }
+        .into());
+    }
+
+    let mut plain_frame = frame.clone();
+    plain_frame.tpci = (frame.tpci & 0xFC) | (apdu[0] >> 6);
+    plain_frame.apci_data = apdu[1..].to_vec();
+    plain_frame.data_length = u8::try_from(plain_frame.apci_data.len()).map_err(|_| {
+        SecurityError::CryptographicError {
+            operation: "group decrypt".to_string(),
+            reason: "Decrypted APDU exceeds the CEMI length field".to_string(),
+        }
+    })?;
+    Ok(plain_frame)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,6 +322,29 @@ mod tests {
         assert_eq!(&secured[..6], &[0x00, 0x25, 0x4a, 0xe1, 0xcb, 0x67]);
         assert_eq!(&secured[6..8], &[0xcd, 0x18]);
         assert_eq!(&secured[8..], &[0x4a, 0xfe, 0x57, 0x44]);
+    }
+
+    #[test]
+    fn wraps_and_restores_secure_cemi_apdu() {
+        let plain = CemiFrame::new(
+            MessageCode::LDataReq,
+            "5.0.1".parse::<IndividualAddress>().unwrap(),
+            Address::Group("0/4/0".parse::<GroupAddress>().unwrap()),
+            vec![0x00],
+        );
+        let keyring = reference_keyring();
+        let secure = encrypt_group_frame(&keyring, &plain, 160170101607).unwrap();
+
+        assert_eq!(secure.tpci, 0x03);
+        assert_eq!(secure.data_length, 14);
+        assert_eq!(&secure.apci_data[..2], &[0xF1, 0x10]);
+        assert_eq!(&secure.apci_data[8..10], &[0xCD, 0x18]);
+        assert_eq!(&secure.apci_data[10..], &[0x4A, 0xFE, 0x57, 0x44]);
+
+        let restored = decrypt_group_frame(&keyring, &secure).unwrap();
+        assert_eq!(restored.tpci, plain.tpci);
+        assert_eq!(restored.apci_data, plain.apci_data);
+        assert_eq!(restored.data_length, plain.data_length);
     }
 
     #[test]
