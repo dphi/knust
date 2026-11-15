@@ -72,7 +72,12 @@ impl GroupValueService {
         );
 
         match service {
-            0x0000 => Ok(Self::Read),
+            0x0000 if first_apci == 0 && apci_data.len() == 1 => Ok(Self::Read),
+            0x0000 => Err(ProtocolError::DptError {
+                dpt_type: "APCI".to_string(),
+                details: "Malformed GroupValueRead APCI data".to_string(),
+            }
+            .into()),
             0x0040 => Ok(Self::Response(decode_payload(first_apci, apci_data))),
             0x0080 => Ok(Self::Write(decode_payload(first_apci, apci_data))),
             _ => {
@@ -146,5 +151,11 @@ mod tests {
             GroupValueService::decode(0x00, &encoded).unwrap(),
             GroupValueService::Response(vec![0x0c, 0x3f])
         );
+    }
+
+    #[test]
+    fn group_value_read_rejects_reserved_bits_and_trailing_payload() {
+        assert!(GroupValueService::decode(0x00, &[0x01]).is_err());
+        assert!(GroupValueService::decode(0x00, &[0x00, 0x01]).is_err());
     }
 }
