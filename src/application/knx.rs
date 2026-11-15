@@ -3470,6 +3470,15 @@ mod integration_tests {
         }
     }
 
+    struct LoopbackCallback(tokio::sync::mpsc::Sender<Telegram>);
+
+    #[async_trait::async_trait]
+    impl crate::application::callbacks::TelegramCallbackFn for LoopbackCallback {
+        async fn call(&self, telegram: &Telegram) {
+            let _ = self.0.send(telegram.clone()).await;
+        }
+    }
+
     fn assert_parsed_group_service(
         service: &GroupValueService,
         expected_type: TelegramType,
@@ -3522,6 +3531,63 @@ mod integration_tests {
             &[0x0c, 0x3f],
         );
         assert_ne!(telegram.telegram_type, TelegramType::GroupValueResponse);
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn tunnel_server_loopback_round_trips_group_telegrams() {
+        use crate::transport::TunnelServer;
+
+        let client_address = IndividualAddress::new(1, 1, 8);
+        let device_address = IndividualAddress::new(1, 1, 9);
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut server_traffic = server.subscribe();
+        let group = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+
+        knx.send_telegram(&Telegram::group_write(group, vec![7]))
+            .await
+            .unwrap();
+        let sent = tokio::time::timeout(Duration::from_secs(2), server_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(sent.destination, Address::Group(group));
+        assert_eq!(sent.payload, [7]);
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let callback = knx
+            .register_telegram_callback_filtered(
+                LoopbackCallback(tx),
+                TelegramFilter::default(),
+                false,
+            )
+            .await;
+        let mut received = Telegram::group_write(group, vec![9]);
+        received.source = device_address;
+        server.send(received).await.unwrap();
+        let received = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received.source, device_address);
+        assert_eq!(received.destination, Address::Group(group));
+        assert_eq!(received.payload, [9]);
+
+        knx.unregister_callback(callback).await;
+        knx.shutdown().await.unwrap();
+        server.shutdown();
     }
 
     #[cfg(feature = "server")]
