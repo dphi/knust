@@ -577,6 +577,80 @@ impl MessageCode {
     }
 }
 
+/// A spontaneous property read response announced by a KNXnet/IP server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CemiPropertyInfoIndication {
+    pub object_type: u16,
+    pub object_instance: u8,
+    pub property_id: u8,
+    pub element_count: u8,
+    pub start_index: u16,
+    pub data: Vec<u8>,
+}
+
+impl CemiPropertyInfoIndication {
+    /// Decode a complete M_PropInfo.ind cEMI message.
+    ///
+    /// # Errors
+    ///
+    /// Returns ProtocolError::ParseError if the message code is not
+    /// M_PropInfo.ind or the fixed property header is truncated.
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.first() != Some(&MessageCode::MPropInfoInd.to_u8()) {
+            return Err(ProtocolError::ParseError {
+                offset: 0,
+                reason: "Expected M_PropInfo.ind".to_string(),
+            }
+            .into());
+        }
+        if bytes.len() < 7 {
+            return Err(ProtocolError::ParseError {
+                offset: bytes.len(),
+                reason: "Truncated M_PropInfo.ind property header".to_string(),
+            }
+            .into());
+        }
+
+        let element_index = u16::from_be_bytes([bytes[5], bytes[6]]);
+        Ok(Self {
+            object_type: u16::from_be_bytes([bytes[1], bytes[2]]),
+            object_instance: bytes[3],
+            property_id: bytes[4],
+            element_count: (element_index >> 12) as u8,
+            start_index: element_index & 0x0fff,
+            data: bytes[7..].to_vec(),
+        })
+    }
+
+    /// Encode this property indication as a complete cEMI message.
+    ///
+    /// # Errors
+    ///
+    /// Returns ProtocolError::InvalidFrame if the element count or start
+    /// index do not fit their wire fields.
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        if self.element_count > 0x0f || self.start_index > 0x0fff {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "M_PropInfo.ind element count/index out of range: {}/{}",
+                    self.element_count, self.start_index
+                ),
+            }
+            .into());
+        }
+
+        let mut bytes = Vec::with_capacity(7 + self.data.len());
+        bytes.push(MessageCode::MPropInfoInd.to_u8());
+        bytes.extend_from_slice(&self.object_type.to_be_bytes());
+        bytes.push(self.object_instance);
+        bytes.push(self.property_id);
+        let element_index = (u16::from(self.element_count) << 12) | self.start_index;
+        bytes.extend_from_slice(&element_index.to_be_bytes());
+        bytes.extend_from_slice(&self.data);
+        Ok(bytes)
+    }
+}
+
 /// Frame type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameType {
@@ -1072,6 +1146,29 @@ mod tests {
         let wire = frame.serialize().unwrap();
         assert_eq!(wire[0], 0xF7);
         assert_eq!(CemiFrame::parse(&wire).unwrap(), frame);
+    }
+
+    #[test]
+    fn property_info_indication_decodes_knx_property_fields() {
+        let wire = [
+            0xF7, 0x00, 0x00, 0x01, 0x36, 0x10, 0x01, 0x00, 0xC5, 0, 0, 0, 0,
+        ];
+        let indication = CemiPropertyInfoIndication::parse(&wire).unwrap();
+
+        assert_eq!(indication.object_type, 0);
+        assert_eq!(indication.object_instance, 1);
+        assert_eq!(indication.property_id, 0x36);
+        assert_eq!(indication.element_count, 1);
+        assert_eq!(indication.start_index, 1);
+        assert_eq!(indication.data, [0x00, 0xC5, 0, 0, 0, 0]);
+        assert_eq!(indication.serialize().unwrap(), wire);
+
+        assert!(CemiPropertyInfoIndication::parse(&wire[1..]).is_err());
+        assert!(CemiPropertyInfoIndication::parse(&wire[..6]).is_err());
+
+        let mut invalid = indication;
+        invalid.element_count = 16;
+        assert!(invalid.serialize().is_err());
     }
 
     #[test]
