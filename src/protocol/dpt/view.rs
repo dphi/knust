@@ -413,6 +413,20 @@ impl<'a> ColorTemperatureTransitionView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct ConverterTestResultView<'a>(pub(crate) &'a [u8]);
+impl<'a> ConverterTestResultView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt245::ConverterTestResult {
+        super::dpt245::ConverterTestResult::decode(self.0.try_into().expect("validated length"))
+            .expect("validated result")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct ConverterInfoView<'a>(pub(crate) &'a [u8]);
 impl<'a> ConverterInfoView<'a> {
     #[must_use]
@@ -909,6 +923,7 @@ pub enum DptView<'a> {
     ConverterStatus(ConverterStatusView<'a>),
     ConverterInfoFix(ConverterInfoFixView<'a>),
     ConverterInfo(ConverterInfoView<'a>),
+    ConverterTestResult(ConverterTestResultView<'a>),
     ColorTemperatureTransition(ColorTemperatureTransitionView<'a>),
     RelativeColor(RelativeColorView<'a>),
     XYYColorTransition(XYYColorTransitionView<'a>),
@@ -972,6 +987,7 @@ impl<'a> DptView<'a> {
             | Self::ConverterStatus(_)
             | Self::ConverterInfoFix(_)
             | Self::ConverterInfo(_)
+            | Self::ConverterTestResult(_)
             | Self::ColorTemperatureTransition(_)
             | Self::RelativeColor(_)
             | Self::XYYColorTransition(_)
@@ -1039,6 +1055,7 @@ impl<'a> DptView<'a> {
             Self::ConverterStatus(v) => v.raw(),
             Self::ConverterInfoFix(v) => v.raw(),
             Self::ConverterInfo(v) => v.raw(),
+            Self::ConverterTestResult(v) => v.raw(),
             Self::ColorTemperatureTransition(v) => v.raw(),
             Self::RelativeColor(v) => v.raw(),
             Self::XYYColorTransition(v) => v.raw(),
@@ -1113,6 +1130,7 @@ impl DptView<'_> {
             Self::ConverterStatus(v) => v.value().to_string(),
             Self::ConverterInfoFix(v) => v.value().to_string(),
             Self::ConverterInfo(v) => v.value().to_string(),
+            Self::ConverterTestResult(v) => v.value().to_string(),
             Self::ColorTemperatureTransition(v) => v.value().to_string(),
             Self::RelativeColor(v) => v.value().formatted(None),
             Self::XYYColorTransition(v) => v.value().to_string(),
@@ -1576,6 +1594,7 @@ impl DptType {
             244 => s.parse().map(DptPayload::ConverterStatus),
             248 => s.parse().map(DptPayload::ConverterInfoFix),
             272 => s.parse().map(DptPayload::ConverterInfo),
+            245 => s.parse().map(DptPayload::ConverterTestResult),
             249 => s.parse().map(DptPayload::ColorTemperatureTransition),
             250 | 252..=254 => super::dpt_relative_color::parse_payload(s,self.main()),
             243 => s.parse().map(DptPayload::XYYColorTransition),
