@@ -413,6 +413,19 @@ impl<'a> ColorTemperatureTransitionView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct BatteryInfoView<'a>(pub(crate) &'a [u8]);
+impl<'a> BatteryInfoView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::dpt246::BatteryInfo {
+        super::dpt246::BatteryInfo::decode([self.0[0], self.0[1]])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct AlarmInfoView<'a>(pub(crate) &'a [u8]);
 impl<'a> AlarmInfoView<'a> {
     #[must_use]
@@ -851,6 +864,7 @@ pub enum DptView<'a> {
     Actuator(ActuatorView<'a>),
     MeteringValue(MeteringValueView<'a>),
     AlarmInfo(AlarmInfoView<'a>),
+    BatteryInfo(BatteryInfoView<'a>),
     ColorTemperatureTransition(ColorTemperatureTransitionView<'a>),
     RelativeColor(RelativeColorView<'a>),
     XYYColorTransition(XYYColorTransitionView<'a>),
@@ -910,6 +924,7 @@ impl<'a> DptView<'a> {
             | Self::Actuator(_)
             | Self::MeteringValue(_)
             | Self::AlarmInfo(_)
+            | Self::BatteryInfo(_)
             | Self::ColorTemperatureTransition(_)
             | Self::RelativeColor(_)
             | Self::XYYColorTransition(_)
@@ -973,6 +988,7 @@ impl<'a> DptView<'a> {
             Self::Actuator(v) => v.raw(),
             Self::MeteringValue(v) => v.raw(),
             Self::AlarmInfo(v) => v.raw(),
+            Self::BatteryInfo(v) => v.raw(),
             Self::ColorTemperatureTransition(v) => v.raw(),
             Self::RelativeColor(v) => v.raw(),
             Self::XYYColorTransition(v) => v.raw(),
@@ -1043,6 +1059,7 @@ impl DptView<'_> {
             Self::Actuator(v) => v.value().formatted(None),
             Self::MeteringValue(v) => v.value().to_string(),
             Self::AlarmInfo(v) => v.value().to_string(),
+            Self::BatteryInfo(v) => v.value().to_string(),
             Self::ColorTemperatureTransition(v) => v.value().to_string(),
             Self::RelativeColor(v) => v.value().formatted(None),
             Self::XYYColorTransition(v) => v.value().to_string(),
@@ -1502,6 +1519,7 @@ impl DptType {
             207 => super::dpt207::parse_payload(s,self.sub()),
             229 => s.parse().map(DptPayload::MeteringValue),
             219 => s.parse().map(DptPayload::AlarmInfo),
+            246 => s.parse().map(DptPayload::BatteryInfo),
             249 => s.parse().map(DptPayload::ColorTemperatureTransition),
             250 | 252..=254 => super::dpt_relative_color::parse_payload(s,self.main()),
             243 => s.parse().map(DptPayload::XYYColorTransition),
