@@ -371,6 +371,8 @@ status_view!(LightActuatorErrorInfoView, LightActuatorErrorInfo);
 status_view!(RFFilterInfoView, RFFilterInfo);
 status_view!(SecurityReportView, SecurityReport);
 status_view!(ChannelActivation8View, ChannelActivation8);
+status_view!(VirtualDryContactView, VirtualDryContact);
+status_view!(PhasesStatusView, PhasesStatus);
 status_view!(StatusRTSMView, CombinedStatusRTSM);
 status_view!(ForcingSignalView, ForcingSignal);
 status_view!(ForcingSignalCoolView, ForcingSignalCool);
@@ -965,6 +967,8 @@ pub enum DptView<'a> {
     RFFilterInfo(RFFilterInfoView<'a>),
     SecurityReport(SecurityReportView<'a>),
     ChannelActivation8(ChannelActivation8View<'a>),
+    VirtualDryContact(VirtualDryContactView<'a>),
+    PhasesStatus(PhasesStatusView<'a>),
     StatusRTSM(StatusRTSMView<'a>),
     GeneralStatus(GeneralStatusView<'a>),
     DeviceControl(DeviceControlView<'a>),
@@ -1043,6 +1047,8 @@ impl<'a> DptView<'a> {
             | Self::RFFilterInfo(_)
             | Self::SecurityReport(_)
             | Self::ChannelActivation8(_)
+            | Self::VirtualDryContact(_)
+            | Self::PhasesStatus(_)
             | Self::StatusRTSM(_)
             | Self::GeneralStatus(_)
             | Self::DeviceControl(_)
@@ -1125,6 +1131,8 @@ impl<'a> DptView<'a> {
             Self::RFFilterInfo(v) => v.raw(),
             Self::SecurityReport(v) => v.raw(),
             Self::ChannelActivation8(v) => v.raw(),
+            Self::VirtualDryContact(v) => v.raw(),
+            Self::PhasesStatus(v) => v.raw(),
             Self::StatusRTSM(v) => v.raw(),
             Self::GeneralStatus(v) => v.raw(),
             Self::DeviceControl(v) => v.raw(),
@@ -1214,6 +1222,8 @@ impl DptView<'_> {
             Self::RFFilterInfo(v) => v.value().to_string(),
             Self::SecurityReport(v) => v.value().to_string(),
             Self::ChannelActivation8(v) => v.value().to_string(),
+            Self::VirtualDryContact(v) => v.value().to_string(),
+            Self::PhasesStatus(v) => v.value().to_string(),
             Self::StatusRTSM(v) => v.value().to_string(),
             Self::GeneralStatus(v) => v.value().to_string(),
             Self::DeviceControl(v) => v.value().to_string(),
@@ -1682,6 +1692,8 @@ impl DptType {
             250 | 252..=254 => super::dpt_relative_color::parse_payload(s,self.main()),
             243 => s.parse().map(DptPayload::XYYColorTransition),
             21 if self.sub() == 1 => s.parse().map(DptPayload::GeneralStatus),
+            21 if self.sub() == 1200 => s.parse().map(DptPayload::VirtualDryContact),
+            21 if self.sub() == 1201 => s.parse().map(DptPayload::PhasesStatus),
             21 if self.sub() == 1001 => s.parse().map(DptPayload::RFFilterInfo),
             21 if self.sub() == 1002 => s.parse().map(DptPayload::SecurityReport),
             21 if self.sub() == 1010 => s.parse().map(DptPayload::ChannelActivation8),

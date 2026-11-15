@@ -1,8 +1,9 @@
 #![cfg(feature = "dpt")]
 use knust::protocol::dpt::{
     DPTChannelActivation8, DPTForceSign, DPTForceSignCool, DPTFuelTypeSet,
-    DPTLightActuatorErrorInfo, DPTRFFilterInfo, DPTSecurityReport, DPTStatusAHU, DPTStatusRCC,
-    DPTStatusRHC, DPTStatusSDHWC, DptPayload, DptRegistry, DptType, DptValue,
+    DPTLightActuatorErrorInfo, DPTPhasesStatus, DPTRFFilterInfo, DPTSecurityReport, DPTStatusAHU,
+    DPTStatusRCC, DPTStatusRHC, DPTStatusSDHWC, DPTVirtualDryContact, DptPayload, DptRegistry,
+    DptType, DptValue,
 };
 use knust::protocol::{Telegram, address::GroupAddress};
 
@@ -61,4 +62,10 @@ fn rf_filter_security_and_channel_activation_preserve_defined_bits() {
     check_typed_status!(DPTRFFilterInfo, "21.1001", 0x07);
     check_typed_status!(DPTSecurityReport, "21.1002", 0x01);
     check_typed_status!(DPTChannelActivation8, "21.1010", 0xff);
+}
+
+#[test]
+fn dry_contact_and_phases_status_preserve_defined_bits() {
+    check_typed_status!(DPTVirtualDryContact, "21.1200", 0xff);
+    check_typed_status!(DPTPhasesStatus, "21.1201", 0x07);
 }

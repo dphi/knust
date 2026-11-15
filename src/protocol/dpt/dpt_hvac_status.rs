@@ -61,6 +61,8 @@ status!(LightActuatorErrorInfo,DPTLightActuatorErrorInfo,1,"21.601","light_actua
 status!(RFFilterInfo,DPTRFFilterInfo,1,"21.1001","rf_filter_info",doa:0,knx_sn:1,doa_and_knx_sn:2);
 status!(SecurityReport,DPTSecurityReport,1,"21.1002","security_report",security_failure:0);
 status!(ChannelActivation8,DPTChannelActivation8,1,"21.1010","channel_activation_8",channel_1:0,channel_2:1,channel_3:2,channel_4:3,channel_5:4,channel_6:5,channel_7:6,channel_8:7);
+status!(VirtualDryContact,DPTVirtualDryContact,1,"21.1200","virtual_dry_contact",contact_1:0,contact_2:1,contact_3:2,contact_4:3,contact_5:4,contact_6:5,contact_7:6,contact_8:7);
+status!(PhasesStatus,DPTPhasesStatus,1,"21.1201","phases_status",phase_1:0,phase_2:1,phase_3:2);
 status!(GeneralStatus,DPTStatusGen,1,"21.001","general_status",out_of_service:0,fault:1,overridden:2,in_alarm:3,alarm_un_ack:4);
 status!(DeviceControl,DPTDeviceControl,1,"21.002","device_control",user_stopped:0,own_ia:1,verify_mode:2);
 status!(CombinedStatusRTSM,DPTCombinedStatusRTSM,1,"21.107","combined_status_rtsm",window_open:0,presence:1,comfort_push_button:2,comfort_prolongation_user:3,hvac_mode_user:4);

@@ -9,13 +9,13 @@ use super::view::{
     DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForcingSignalCoolView,
     ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
-    MeteringValueView, ModeNextView, PrioritisedModeControlView, RFFilterInfoView,
-    RelativeColorView, RgbView, RgbwView, RoomCoolingControllerStatusView,
+    MeteringValueView, ModeNextView, PhasesStatusView, PrioritisedModeControlView,
+    RFFilterInfoView, RelativeColorView, RgbView, RgbwView, RoomCoolingControllerStatusView,
     RoomHeatingControllerStatusView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView,
     SecurityReportView, Setpoints3View, Setpoints4View, SolarDHWControllerStatusView,
     StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View,
-    U16View, U32View, VentilationControllerStatusView, VersionView, XYYColorTransitionView,
-    XyyView,
+    U16View, U32View, VentilationControllerStatusView, VersionView, VirtualDryContactView,
+    XYYColorTransitionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -304,6 +304,8 @@ pub enum DptType {
     RFFilterInfo = 2_101_001,
     SecurityReport = 2_101_002,
     ChannelActivation8 = 2_101_010,
+    VirtualDryContact = 2_101_200,
+    PhasesStatus = 2_101_201,
     CombinedStatusRTSM = 2_100_107,
     GeneralStatus = 2_100_001,
     DeviceControl = 2_100_002,
@@ -824,6 +826,10 @@ impl DptType {
                 Ok(DptView::MeteringValue(MeteringValueView(bytes)))
             }
             21 if self.sub() == 1 => Ok(DptView::GeneralStatus(GeneralStatusView(bytes))),
+            21 if self.sub() == 1200 => {
+                Ok(DptView::VirtualDryContact(VirtualDryContactView(bytes)))
+            }
+            21 if self.sub() == 1201 => Ok(DptView::PhasesStatus(PhasesStatusView(bytes))),
             21 if self.sub() == 1001 => Ok(DptView::RFFilterInfo(RFFilterInfoView(bytes))),
             21 if self.sub() == 1002 => Ok(DptView::SecurityReport(SecurityReportView(bytes))),
             21 if self.sub() == 1010 => {
@@ -1227,6 +1233,12 @@ impl DptType {
                 Ok(value.encode().to_vec())
             }
             (21, DptPayload::ChannelActivation8(value)) if self.sub() == 1010 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::VirtualDryContact(value)) if self.sub() == 1200 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::PhasesStatus(value)) if self.sub() == 1201 => {
                 Ok(value.encode().to_vec())
             }
             (21, DptPayload::StatusRTSM(value)) if self.sub() == 107 => Ok(value.encode().to_vec()),

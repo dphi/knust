@@ -143,13 +143,13 @@ pub use view::{
     DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForcingSignalCoolView,
     ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
-    MeteringValueView, ModeNextView, PrioritisedModeControlView, RFFilterInfoView,
-    RelativeColorView, RgbView, RgbwView, RoomCoolingControllerStatusView,
+    MeteringValueView, ModeNextView, PhasesStatusView, PrioritisedModeControlView,
+    RFFilterInfoView, RelativeColorView, RgbView, RgbwView, RoomCoolingControllerStatusView,
     RoomHeatingControllerStatusView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView,
     SecurityReportView, Setpoints3View, Setpoints4View, SolarDHWControllerStatusView,
     StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View,
-    U16View, U32View, VentilationControllerStatusView, VersionView, XYYColorTransitionView,
-    XyyView,
+    U16View, U32View, VentilationControllerStatusView, VersionView, VirtualDryContactView,
+    XYYColorTransitionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -744,6 +744,8 @@ impl DptRegistry {
         registry.register::<DPTRFFilterInfo>();
         registry.register::<DPTSecurityReport>();
         registry.register::<DPTChannelActivation8>();
+        registry.register::<DPTVirtualDryContact>();
+        registry.register::<DPTPhasesStatus>();
         registry.register::<DPTCombinedStatusRTSM>();
         registry.register::<DPTForceSign>();
         registry.register::<DPTForceSignCool>();
