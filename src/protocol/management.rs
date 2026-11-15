@@ -80,6 +80,35 @@ pub struct PropertyDescriptionResponse {
     pub access: u8,
 }
 
+/// `A_PropertyValue_Read` request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PropertyValueRead {
+    pub object_index: u8,
+    pub property_id: u8,
+    pub count: u8,
+    pub start_index: u16,
+}
+
+/// `A_PropertyValue_Response` response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PropertyValueResponse {
+    pub object_index: u8,
+    pub property_id: u8,
+    pub count: u8,
+    pub start_index: u16,
+    pub data: Vec<u8>,
+}
+
+/// `A_PropertyValue_Write` request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PropertyValueWrite {
+    pub object_index: u8,
+    pub property_id: u8,
+    pub count: u8,
+    pub start_index: u16,
+    pub data: Vec<u8>,
+}
+
 /// `A_DeviceDescriptor_Response` — a device descriptor answer (APCI `0x0340`).
 ///
 /// Sent by the device in reply to a [`DeviceDescriptorRead`]. It echoes the
@@ -233,9 +262,153 @@ impl PropertyDescriptionResponse {
     }
 }
 
+const APCI_PROPERTY_VALUE_READ: u8 = 0xD5;
+const APCI_PROPERTY_VALUE_RESPONSE: u8 = 0xD6;
+const APCI_PROPERTY_VALUE_WRITE: u8 = 0xD7;
+
+fn encode_property_value(
+    service: u8,
+    object_index: u8,
+    property_id: u8,
+    count: u8,
+    start_index: u16,
+    data: &[u8],
+) -> Result<Vec<u8>> {
+    if count > 0x0F || start_index > 0x0FFF {
+        return Err(ProtocolError::InvalidFrame {
+            details: format!(
+                "Property value count {count} or start index {start_index} is out of range"
+            ),
+        }
+        .into());
+    }
+
+    let mut result = Vec::with_capacity(6 + data.len());
+    result.extend_from_slice(&[
+        APCI_HIGH_BYTE,
+        service,
+        object_index,
+        property_id,
+        (count << 4) | ((start_index >> 8) as u8),
+        start_index as u8,
+    ]);
+    result.extend_from_slice(data);
+    Ok(result)
+}
+
+fn decode_property_value(apci_bytes: &[u8], service: u8) -> Result<(u8, u8, u8, u16, &[u8])> {
+    if apci_bytes.len() < 6 || apci_bytes[0] != APCI_HIGH_BYTE || apci_bytes[1] != service {
+        return Err(ProtocolError::InvalidFrame {
+            details: format!(
+                "Expected PropertyValue APCI 0x03{service:02X} with at least 6 bytes, got {} bytes",
+                apci_bytes.len()
+            ),
+        }
+        .into());
+    }
+
+    let count_and_index = apci_bytes[4];
+    Ok((
+        apci_bytes[2],
+        apci_bytes[3],
+        count_and_index >> 4,
+        (u16::from(count_and_index & 0x0F) << 8) | u16::from(apci_bytes[5]),
+        &apci_bytes[6..],
+    ))
+}
+
+impl PropertyValueRead {
+    /// Encode the request as APCI bytes.
+    pub fn encode(self) -> Result<Vec<u8>> {
+        encode_property_value(
+            APCI_PROPERTY_VALUE_READ,
+            self.object_index,
+            self.property_id,
+            self.count,
+            self.start_index,
+            &[],
+        )
+    }
+
+    /// Decode a property value read request from APCI bytes.
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        let (object_index, property_id, count, start_index, data) =
+            decode_property_value(apci_bytes, APCI_PROPERTY_VALUE_READ)?;
+        if !data.is_empty() {
+            return Err(ProtocolError::InvalidFrame {
+                details: "PropertyValueRead must not contain data".to_owned(),
+            }
+            .into());
+        }
+        Ok(Self {
+            object_index,
+            property_id,
+            count,
+            start_index,
+        })
+    }
+}
+
+impl PropertyValueResponse {
+    /// Encode the response as APCI bytes.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        encode_property_value(
+            APCI_PROPERTY_VALUE_RESPONSE,
+            self.object_index,
+            self.property_id,
+            self.count,
+            self.start_index,
+            &self.data,
+        )
+    }
+
+    /// Decode a property value response from APCI bytes.
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        let (object_index, property_id, count, start_index, data) =
+            decode_property_value(apci_bytes, APCI_PROPERTY_VALUE_RESPONSE)?;
+        Ok(Self {
+            object_index,
+            property_id,
+            count,
+            start_index,
+            data: data.to_vec(),
+        })
+    }
+}
+
+impl PropertyValueWrite {
+    /// Encode the request as APCI bytes.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        encode_property_value(
+            APCI_PROPERTY_VALUE_WRITE,
+            self.object_index,
+            self.property_id,
+            self.count,
+            self.start_index,
+            &self.data,
+        )
+    }
+
+    /// Decode a property value write from APCI bytes.
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        let (object_index, property_id, count, start_index, data) =
+            decode_property_value(apci_bytes, APCI_PROPERTY_VALUE_WRITE)?;
+        Ok(Self {
+            object_index,
+            property_id,
+            count,
+            start_index,
+            data: data.to_vec(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DeviceDescriptorRead, DeviceDescriptorResponse, PropertyDescriptionResponse};
+    use super::{
+        DeviceDescriptorRead, DeviceDescriptorResponse, PropertyDescriptionResponse,
+        PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
+    };
 
     #[test]
     fn device_descriptor_read_encodes_to_apci_0x0300() {
@@ -339,5 +512,73 @@ mod tests {
         assert!(
             PropertyDescriptionResponse::decode(&[0x03, 0xD9, 0, 1, 2, 3, 0, 1, 0, 0]).is_err()
         );
+    }
+
+    #[test]
+    fn property_value_read_encodes_count_and_full_12_bit_index() {
+        let read = PropertyValueRead {
+            object_index: 1,
+            property_id: 2,
+            count: 15,
+            start_index: 0x0FFF,
+        };
+        let encoded = read.encode().unwrap();
+        assert_eq!(encoded, [0x03, 0xD5, 1, 2, 0xFF, 0xFF]);
+        assert_eq!(PropertyValueRead::decode(&encoded).unwrap(), read);
+        assert!(PropertyValueRead::decode(&[0x03, 0xD5, 1, 2, 0xFF, 0xFF, 0]).is_err());
+    }
+
+    #[test]
+    fn property_value_response_and_write_round_trip() {
+        let response = PropertyValueResponse {
+            object_index: 1,
+            property_id: 2,
+            count: 2,
+            start_index: 0x123,
+            data: vec![0xAA, 0xBB],
+        };
+        let encoded_response = response.encode().unwrap();
+        assert_eq!(encoded_response, [0x03, 0xD6, 1, 2, 0x21, 0x23, 0xAA, 0xBB]);
+        assert_eq!(
+            PropertyValueResponse::decode(&encoded_response).unwrap(),
+            response
+        );
+
+        let write = PropertyValueWrite {
+            object_index: 3,
+            property_id: 4,
+            count: 1,
+            start_index: 0xABC,
+            data: vec![0x55],
+        };
+        let encoded_write = write.encode().unwrap();
+        assert_eq!(encoded_write, [0x03, 0xD7, 3, 4, 0x1A, 0xBC, 0x55]);
+        assert_eq!(PropertyValueWrite::decode(&encoded_write).unwrap(), write);
+    }
+
+    #[test]
+    fn property_value_codecs_reject_out_of_range_fields_and_malformed_frames() {
+        assert!(
+            PropertyValueRead {
+                object_index: 0,
+                property_id: 1,
+                count: 16,
+                start_index: 0,
+            }
+            .encode()
+            .is_err()
+        );
+        assert!(
+            PropertyValueRead {
+                object_index: 0,
+                property_id: 1,
+                count: 1,
+                start_index: 4096,
+            }
+            .encode()
+            .is_err()
+        );
+        assert!(PropertyValueResponse::decode(&[0x03, 0xD5, 0, 1, 0x10, 0]).is_err());
+        assert!(PropertyValueWrite::decode(&[0x03, 0xD7, 0, 1, 0x10]).is_err());
     }
 }
