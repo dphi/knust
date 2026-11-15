@@ -3481,6 +3481,28 @@ impl P2pConnection {
         Ok(response)
     }
 
+    /// Write a single property-value range over this P2P session.
+    pub async fn write_property_value(
+        &mut self,
+        request: crate::protocol::management::PropertyValueWrite,
+        timeout: std::time::Duration,
+    ) -> Result<crate::protocol::management::PropertyValueResponse> {
+        let response = self
+            .request(request.encode()?, [0x03, 0xD6], timeout)
+            .await?;
+        let response = crate::protocol::management::PropertyValueResponse::decode(&response)?;
+        if response.object_index != request.object_index
+            || response.property_id != request.property_id
+            || response.start_index != request.start_index
+        {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "PropertyValueResponse does not match the requested object, property, and start index".to_owned(),
+            }
+            .into());
+        }
+        Ok(response)
+    }
+
     /// Tear down the transport link and unregister its receive callback.
     pub async fn close(&mut self) -> Result<()> {
         let result = if self.closed {
@@ -4005,6 +4027,61 @@ mod integration_tests {
         assert_eq!(
             mismatched_response_ack.tpci,
             TpciFrame::Ack { sequence: 2 }.encode()
+        );
+
+        let property_write = crate::protocol::management::PropertyValueWrite {
+            object_index: 1,
+            property_id: 2,
+            count: 1,
+            start_index: 8,
+            data: vec![0x12, 0x34],
+        };
+        let property_apdu = property_write.encode().unwrap();
+        let writing = tokio::spawn(async move {
+            let response = p2p
+                .write_property_value(property_write, Duration::from_secs(2))
+                .await?;
+            Ok::<_, KnxError>((p2p, response))
+        });
+        let property_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            property_request.tpci,
+            TpciFrame::DataConnected { sequence: 4 }.encode()
+        );
+        assert_eq!(property_request.payload, property_apdu);
+        let mut property_ack = Telegram::individual_data(client_address, Vec::new());
+        property_ack.source = device_address;
+        property_ack.telegram_type = TelegramType::IndividualControl;
+        property_ack.tpci = TpciFrame::Ack { sequence: 4 }.encode();
+        server.send(property_ack).await.unwrap();
+        let mut property_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::PropertyValueResponse {
+                object_index: 1,
+                property_id: 2,
+                count: 1,
+                start_index: 8,
+                data: vec![0x12, 0x34],
+            }
+            .encode()
+            .unwrap(),
+        );
+        property_response.source = device_address;
+        property_response.tpci = TpciFrame::DataConnected { sequence: 3 }.encode();
+        server.send(property_response).await.unwrap();
+        let (mut p2p, property_response) = writing.await.unwrap().unwrap();
+        assert_eq!(property_response.data, [0x12, 0x34]);
+        let property_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            property_response_ack.tpci,
+            TpciFrame::Ack { sequence: 3 }.encode()
         );
 
         p2p.close().await.unwrap();
