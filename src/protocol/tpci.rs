@@ -24,6 +24,8 @@ const T_NAK: u8 = 0xC3;
 /// A KNX transport-layer (TPCI) control frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TpciFrame {
+    /// Unconnected data frame, used for group traffic and connectionless individual traffic.
+    DataUnconnected,
     /// `T_Connect` — establish a connection-oriented transport link.
     Connect,
     /// `T_Disconnect` — tear down a connection-oriented transport link.
@@ -52,6 +54,7 @@ impl TpciFrame {
         let result = match self {
             Self::Connect => T_CONNECT,
             Self::Disconnect => T_DISCONNECT,
+            Self::DataUnconnected => 0,
             Self::DataConnected { sequence } => T_DATA_CONNECTED | ((sequence & 0x0F) << 2),
             Self::Ack { sequence } => T_ACK | ((sequence & 0x0F) << 2),
             Self::Nak { sequence } => T_NAK | ((sequence & 0x0F) << 2),
@@ -83,6 +86,8 @@ impl TpciFrame {
             b if (b & 0xC3) == T_NAK => Self::Nak { sequence },
             // T_Data_Connected: 0x40 | (seq << 2) -> bit 7 = 0, bit 6 = 1, bits 1..0 = 00.
             b if (b & 0xC3) == T_DATA_CONNECTED => Self::DataConnected { sequence },
+            // Unconnected data has no sequence bits; the low two bits belong to APCI.
+            b if (b & 0xFC) == 0 => Self::DataUnconnected,
             _ => {
                 log_protocol!(
                     LogLevel::Warn,
@@ -116,6 +121,14 @@ mod tests {
     fn disconnect_round_trip() {
         assert_eq!(TpciFrame::Disconnect.encode(), 0x81);
         assert_eq!(TpciFrame::decode(0x81), TpciFrame::Disconnect);
+    }
+
+    #[test]
+    fn unconnected_data_preserves_apci_bits() {
+        assert_eq!(TpciFrame::DataUnconnected.encode(), 0);
+        for apci_bits in 0..=3 {
+            assert_eq!(TpciFrame::decode(apci_bits), TpciFrame::DataUnconnected);
+        }
     }
 
     #[test]
