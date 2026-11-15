@@ -93,6 +93,8 @@ async fn foreign_requests_do_not_ack_advance_sequence_or_deliver() {
             Some(7),
             &connection,
             None,
+            #[cfg(feature = "secure")]
+            &RwLock::new(None),
         )
         .await
         .unwrap();
@@ -119,6 +121,8 @@ async fn foreign_requests_do_not_ack_advance_sequence_or_deliver() {
             Some(7),
             &connection,
             None,
+            #[cfg(feature = "secure")]
+            &RwLock::new(None),
         )
         .await
         .unwrap();
@@ -148,6 +152,8 @@ async fn foreign_disconnect_replies_with_channel_error_without_losing_tunnel() {
             current_channel,
             &connection,
             None,
+            #[cfg(feature = "secure")]
+            &RwLock::new(None),
         )
         .await
         .unwrap();
@@ -175,6 +181,8 @@ async fn foreign_disconnect_replies_with_channel_error_without_losing_tunnel() {
         Some(7),
         &connection,
         None,
+        #[cfg(feature = "secure")]
+        &RwLock::new(None),
     )
     .await
     .unwrap();

@@ -3,6 +3,8 @@
 use crate::application::callbacks::{
     CallbackHandle, ConnectionCallbackFn, EventHandler, TelegramCallbackFn, TelegramFilter,
 };
+#[cfg(feature = "secure")]
+use crate::error::SecurityError;
 use crate::error::{ConfigurationError, DeviceError, KnxError, Result};
 use crate::log_application;
 use crate::logging::{Component, LogLevel, Timer};
@@ -15,11 +17,15 @@ use crate::protocol::dpt::{
     DptType, DptValue, DptView, GroupAddressRegistry, GroupAddressState, WriteValue,
 };
 use crate::protocol::{Address, GroupAddress, TelegramType};
+#[cfg(feature = "secure")]
+use crate::security::KeyRing;
 use crate::transport::{
     Connection, ConnectionConfig, ConnectionType, ReceiveLimitConfig, ReceiveRateLimiter,
     ReceiveStats, RoutingConnection, Tunnel, queue::TelegramQueue,
 };
 use std::sync::Arc;
+#[cfg(feature = "secure")]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
@@ -111,6 +117,11 @@ type ActiveConnection = tokio::sync::watch::Sender<Option<Arc<dyn Connection>>>;
 pub struct Knx {
     /// Connection configuration
     config: ConnectionConfig,
+
+    #[cfg(feature = "secure")]
+    data_secure_keyring: Arc<RwLock<Option<KeyRing>>>,
+    #[cfg(feature = "secure")]
+    data_secure_sequence: Arc<AtomicU64>,
 
     /// Active connection
     connection: ActiveConnection,
@@ -363,6 +374,29 @@ pub struct KnxBuilder {
     memory_limit_mb: u64,
     max_connections: usize,
     stored_callbacks: Vec<StoredCallback>,
+}
+
+#[cfg(feature = "secure")]
+fn next_data_secure_sequence(sequence: &AtomicU64) -> Result<u64> {
+    let mut current = sequence.load(Ordering::Relaxed);
+    loop {
+        if current > 0xFFFF_FFFF_FFFF {
+            return Err(SecurityError::CryptographicError {
+                operation: "group encrypt".to_string(),
+                reason: "48-bit sequence number exhausted".to_string(),
+            }
+            .into());
+        }
+        match sequence.compare_exchange_weak(
+            current,
+            current + 1,
+            Ordering::SeqCst,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return Ok(current),
+            Err(actual) => current = actual,
+        }
+    }
 }
 
 impl KnxBuilder {
@@ -689,8 +723,18 @@ impl Knx {
             }
         });
 
+        #[cfg(feature = "secure")]
+        let data_secure_sequence = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
         let knx = Self {
             config,
+            #[cfg(feature = "secure")]
+            data_secure_keyring: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "secure")]
+            data_secure_sequence: Arc::new(AtomicU64::new(data_secure_sequence)),
             connection: tokio::sync::watch::channel(None).0,
             state: Arc::new(RwLock::new(KnxState::Disconnected)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
@@ -1194,6 +1238,12 @@ impl Knx {
         Ok(())
     }
 
+    /// Enable group Data Secure with group keys and sender sequence baselines.
+    #[cfg(feature = "secure")]
+    pub async fn set_data_secure_keyring(&self, keyring: KeyRing) {
+        *self.data_secure_keyring.write().await = Some(keyring);
+    }
+
     /// Send a telegram to the KNX network.
     ///
     /// `telegram.source` is overwritten with this bus's configured
@@ -1574,6 +1624,8 @@ impl Knx {
         let telegram_queue = self.telegram_queue.clone();
         let control_tx = self.control_tx.clone();
         let receive_limiter = self.receive_limiter.clone();
+        #[cfg(feature = "secure")]
+        let data_secure_keyring = self.data_secure_keyring.clone();
         let memory_monitor = self.memory_monitor.clone();
         let performance_optimizer = self.performance_optimizer.clone();
         let handle = tokio::spawn(async move {
@@ -1642,6 +1694,7 @@ impl Knx {
                                 if let Err(error) = Self::handle_incoming_frame(
                                     &frame_data, &telegram_queue, &control_tx, channel_id,
                                     &connection, receive_limiter.as_deref(),
+                                    #[cfg(feature = "secure")] &data_secure_keyring,
                                 ).await {
                                     log_application!(LogLevel::Warn, "Failed to handle incoming frame: {}", error);
                                 }
@@ -1778,6 +1831,10 @@ impl Knx {
         let auto_reconnect = self.config.auto_reconnect;
         let shutdown_flag = self.shutdown_flag.clone();
         let telegram_queue = self.telegram_queue.clone();
+        #[cfg(feature = "secure")]
+        let data_secure_keyring = self.data_secure_keyring.clone();
+        #[cfg(feature = "secure")]
+        let data_secure_sequence = self.data_secure_sequence.clone();
         let performance_optimizer = self.performance_optimizer.clone();
 
         log_application!(LogLevel::Debug, "Starting telegram sending task");
@@ -1836,14 +1893,24 @@ impl Knx {
                     if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
                         continue;
                     }
-                    let mut result =
-                        match Self::build_outgoing_frame_for_connection(&telegram, &connection) {
-                            Ok(frame_data) => {
-                                Self::send_telegram_frame(&connection, &frame_data, 2, &mut receipt)
-                                    .await
-                            }
-                            Err(error) => Err(error),
-                        };
+                    #[cfg(feature = "secure")]
+                    let frame_result = Self::build_outgoing_frame_with_security(
+                        &telegram,
+                        &connection,
+                        &data_secure_keyring,
+                        &data_secure_sequence,
+                    )
+                    .await;
+                    #[cfg(not(feature = "secure"))]
+                    let frame_result =
+                        Self::build_outgoing_frame_for_connection(&telegram, &connection);
+                    let mut result = match frame_result {
+                        Ok(frame_data) => {
+                            Self::send_telegram_frame(&connection, &frame_data, 2, &mut receipt)
+                                .await
+                        }
+                        Err(error) => Err(error),
+                    };
                     if let Err(error) = &result {
                         if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
                             continue;
@@ -1873,10 +1940,19 @@ impl Knx {
                                     _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                                 }
                             };
-                            result = match Self::build_outgoing_frame_for_connection(
-                                &telegram,
-                                &replacement,
-                            ) {
+                            #[cfg(feature = "secure")]
+                            let replacement_frame_result =
+                                Self::build_outgoing_frame_with_security(
+                                    &telegram,
+                                    &replacement,
+                                    &data_secure_keyring,
+                                    &data_secure_sequence,
+                                )
+                                .await;
+                            #[cfg(not(feature = "secure"))]
+                            let replacement_frame_result =
+                                Self::build_outgoing_frame_for_connection(&telegram, &replacement);
+                            result = match replacement_frame_result {
                                 Ok(frame) => {
                                     Self::send_telegram_frame(&replacement, &frame, 1, &mut receipt)
                                         .await
@@ -2323,6 +2399,7 @@ impl Knx {
         current_channel_id: Option<u8>,
         connection: &Arc<dyn Connection>,
         receive_limiter: Option<&ReceiveRateLimiter>,
+        #[cfg(feature = "secure")] data_secure_keyring: &RwLock<Option<KeyRing>>,
     ) -> Result<bool> {
         use crate::protocol::knxip::{KnxIpFrame, ServiceType};
 
@@ -2344,13 +2421,21 @@ impl Knx {
                     telegram_queue,
                     connection,
                     receive_limiter,
+                    #[cfg(feature = "secure")]
+                    data_secure_keyring,
                 )
                 .await?;
                 Ok(true)
             }
             ServiceType::RoutingIndication => {
-                Self::handle_routing_indication(&knx_frame, telegram_queue, receive_limiter)
-                    .await?;
+                Self::handle_routing_indication(
+                    &knx_frame,
+                    telegram_queue,
+                    receive_limiter,
+                    #[cfg(feature = "secure")]
+                    data_secure_keyring,
+                )
+                .await?;
                 Ok(true)
             }
 
@@ -2404,6 +2489,7 @@ impl Knx {
         telegram_queue: &crate::transport::queue::TelegramQueue,
         connection: &Arc<dyn Connection>,
         receive_limiter: Option<&ReceiveRateLimiter>,
+        #[cfg(feature = "secure")] data_secure_keyring: &RwLock<Option<KeyRing>>,
     ) -> Result<()> {
         use crate::protocol::knxip::{TunnellingAck, TunnellingRequest};
         use crate::transport::{SequenceValidationResult, Tunnel};
@@ -2453,6 +2539,13 @@ impl Knx {
                 }
 
                 // Parse CEMI and enqueue telegram for processing
+                #[cfg(feature = "secure")]
+                let telegram = Self::parse_cemi_to_telegram_with_security(
+                    &tunnelling_request.raw_cemi,
+                    data_secure_keyring,
+                )
+                .await?;
+                #[cfg(not(feature = "secure"))]
                 let telegram = Self::parse_cemi_to_telegram(&tunnelling_request.raw_cemi)?;
 
                 log_application!(
@@ -2546,9 +2639,14 @@ impl Knx {
         knx_frame: &crate::protocol::knxip::KnxIpFrame,
         telegram_queue: &crate::transport::queue::TelegramQueue,
         receive_limiter: Option<&ReceiveRateLimiter>,
+        #[cfg(feature = "secure")] data_secure_keyring: &RwLock<Option<KeyRing>>,
     ) -> Result<()> {
         // RoutingIndication format: [cemi_data...]
         let cemi_data = &knx_frame.body;
+        #[cfg(feature = "secure")]
+        let telegram =
+            Self::parse_cemi_to_telegram_with_security(cemi_data, data_secure_keyring).await?;
+        #[cfg(not(feature = "secure"))]
         let telegram = Self::parse_cemi_to_telegram(cemi_data)?;
 
         log_application!(
@@ -2780,34 +2878,82 @@ impl Knx {
         );
     }
 
+    #[cfg(feature = "secure")]
+    async fn parse_cemi_to_telegram_with_security(
+        cemi_data: &[u8],
+        data_secure_keyring: &RwLock<Option<KeyRing>>,
+    ) -> Result<Telegram> {
+        let mut frame = crate::protocol::cemi::CemiFrame::parse(cemi_data)?;
+        let is_data_secure = frame.tpci & 0x03 == 0x03 && frame.apci_data.first() == Some(&0xF1);
+        if is_data_secure {
+            if frame.apci_data.len() < 8 {
+                return Err(SecurityError::CryptographicError {
+                    operation: "group decrypt".to_string(),
+                    reason: "Data Secure APDU is too short for its sequence number".to_string(),
+                }
+                .into());
+            }
+            let sequence_number = u64::from_be_bytes([
+                0,
+                0,
+                frame.apci_data[2],
+                frame.apci_data[3],
+                frame.apci_data[4],
+                frame.apci_data[5],
+                frame.apci_data[6],
+                frame.apci_data[7],
+            ]);
+            let mut keyring = data_secure_keyring.write().await;
+            let keyring = keyring
+                .as_mut()
+                .ok_or_else(|| SecurityError::InvalidCredentials {
+                    details: "Data Secure frame received without group keys".to_string(),
+                })?;
+            if keyring.get_sequence_number(&frame.source_addr).is_none() {
+                return Err(SecurityError::InvalidCredentials {
+                    details: format!("No Data Secure sender entry for {}", frame.source_addr),
+                }
+                .into());
+            }
+            frame = crate::security::decrypt_group_frame(keyring, &frame)?;
+            keyring.validate_sequence(frame.source_addr, sequence_number)?;
+        }
+        Telegram::from_cemi_frame(frame)
+    }
+
+    #[cfg(any(test, not(feature = "secure")))]
     fn parse_cemi_to_telegram(cemi_data: &[u8]) -> Result<Telegram> {
         crate::protocol::telegram::Telegram::from_cemi_frame(
             crate::protocol::cemi::CemiFrame::parse(cemi_data)?,
         )
     }
 
-    fn build_outgoing_frame_for_connection(
+    fn cemi_frame_for_telegram(
         telegram: &Telegram,
         connection: &Arc<dyn Connection>,
-    ) -> Result<Vec<u8>> {
+    ) -> crate::protocol::cemi::CemiFrame {
         use crate::protocol::cemi::{CemiFrame, MessageCode};
-        use crate::protocol::knxip::{KnxIpFrame, ServiceType, TunnellingRequest};
-        use crate::transport::Tunnel;
 
-        let apci_data = telegram.encode_apdu();
         let message_code = if connection.as_any().is::<Tunnel>() {
             MessageCode::LDataReq
         } else {
             MessageCode::LDataInd
         };
-        let cemi = CemiFrame::new(
+        CemiFrame::new(
             message_code,
             telegram.source,
             telegram.destination,
-            apci_data,
-        );
-        let raw_cemi = cemi.serialize()?;
+            telegram.encode_apdu(),
+        )
+    }
 
+    fn serialize_outgoing_cemi(
+        cemi: crate::protocol::cemi::CemiFrame,
+        connection: &Arc<dyn Connection>,
+    ) -> Result<Vec<u8>> {
+        use crate::protocol::knxip::{KnxIpFrame, ServiceType, TunnellingRequest};
+
+        let raw_cemi = cemi.serialize()?;
         if let Some(tunneling_conn) = connection.as_any().downcast_ref::<Tunnel>() {
             let tunnelling_request = TunnellingRequest::new(
                 tunneling_conn.channel_id(),
@@ -2820,8 +2966,43 @@ impl Knx {
             )
             .serialize());
         }
-
         Ok(KnxIpFrame::new(ServiceType::RoutingIndication, raw_cemi).serialize())
+    }
+
+    #[cfg(feature = "secure")]
+    async fn build_outgoing_frame_with_security(
+        telegram: &Telegram,
+        connection: &Arc<dyn Connection>,
+        keyring: &RwLock<Option<KeyRing>>,
+        sequence: &AtomicU64,
+    ) -> Result<Vec<u8>> {
+        let mut cemi = Self::cemi_frame_for_telegram(telegram, connection);
+        if let Address::Group(destination) = telegram.destination {
+            let keyring = keyring.read().await;
+            if keyring
+                .as_ref()
+                .is_some_and(|keys| keys.get_group_key(&destination).is_some())
+            {
+                let sequence_number = next_data_secure_sequence(sequence)?;
+                cemi = crate::security::encrypt_group_frame(
+                    keyring.as_ref().expect("checked above"),
+                    &cemi,
+                    sequence_number,
+                )?;
+            }
+        }
+        Self::serialize_outgoing_cemi(cemi, connection)
+    }
+
+    #[cfg(any(test, not(feature = "secure")))]
+    fn build_outgoing_frame_for_connection(
+        telegram: &Telegram,
+        connection: &Arc<dyn Connection>,
+    ) -> Result<Vec<u8>> {
+        Self::serialize_outgoing_cemi(
+            Self::cemi_frame_for_telegram(telegram, connection),
+            connection,
+        )
     }
 }
 
@@ -3084,6 +3265,72 @@ mod integration_tests {
         assert!(switch.compact_payload);
         assert_eq!(switch.encode_apdu(), [0x81]);
         assert_eq!(Telegram::group_read(address).encode_apdu(), [0]);
+    }
+
+    #[cfg(feature = "secure")]
+    #[tokio::test]
+    async fn data_secure_group_telegrams_are_wrapped_and_replay_checked() {
+        use crate::protocol::knxip::{KnxIpFrame, TunnellingRequest};
+        use crate::security::{KeyRing, SecurityKey};
+        use std::sync::atomic::AtomicU64;
+
+        let destination = GroupAddress::try_from_raw(0x0400).unwrap();
+        let source = crate::protocol::IndividualAddress::new(5, 0, 1);
+        let connection: Arc<dyn Connection> =
+            Arc::new(Tunnel::new_udp("127.0.0.1:3671".parse().unwrap()));
+        let mut keyring = KeyRing::new();
+        keyring.add_group_key(
+            destination,
+            SecurityKey::from_hex("dfdf23a59fbb40404091d1c162087e8b").unwrap(),
+        );
+        keyring.set_sequence_number(source, 160170101606);
+        let keyring = RwLock::new(Some(keyring));
+        let sequence = AtomicU64::new(160170101607);
+        let mut telegram = Telegram::group_read(destination);
+        telegram.source = source;
+
+        let wire =
+            Knx::build_outgoing_frame_with_security(&telegram, &connection, &keyring, &sequence)
+                .await
+                .unwrap();
+        let knxip = KnxIpFrame::parse(&wire).unwrap();
+        let request = TunnellingRequest::parse(&knxip.body).unwrap();
+        let secure = CemiFrame::parse(&request.raw_cemi).unwrap();
+        assert_eq!(secure.tpci, 0x03);
+        assert_eq!(sequence.load(Ordering::SeqCst), 160170101608);
+        assert_eq!(
+            secure.apci_data,
+            [
+                0xF1, 0x10, 0x00, 0x25, 0x4A, 0xE1, 0xCB, 0x67, 0xCD, 0x18, 0x4A, 0xFE, 0x57, 0x44
+            ]
+        );
+
+        let mut unknown_sender_keys = KeyRing::new();
+        unknown_sender_keys.add_group_key(
+            destination,
+            SecurityKey::from_hex("dfdf23a59fbb40404091d1c162087e8b").unwrap(),
+        );
+        assert!(
+            Knx::parse_cemi_to_telegram_with_security(
+                &request.raw_cemi,
+                &RwLock::new(Some(unknown_sender_keys)),
+            )
+            .await
+            .is_err()
+        );
+
+        let telegram = Knx::parse_cemi_to_telegram_with_security(&request.raw_cemi, &keyring)
+            .await
+            .unwrap();
+        assert_eq!(telegram.source, source);
+        assert_eq!(telegram.destination, Address::Group(destination));
+        assert_eq!(telegram.telegram_type, TelegramType::GroupValueRead);
+
+        assert!(
+            Knx::parse_cemi_to_telegram_with_security(&request.raw_cemi, &keyring)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

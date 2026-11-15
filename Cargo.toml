@@ -31,8 +31,8 @@ server = []
 # Implies `ets` (keyring parsing + validation live in the config module and use
 # tokio `fs`).
 # NOTE: KNX IP Secure (session handshake) is verified against real hardware.
-# Data Secure group crypto is not yet integrated into the telegram pipeline or
-# validated with real Data-Secure devices.
+# Data Secure group APDUs are integrated behind an explicit keyring opt-in;
+# interoperability with real Data-Secure devices is not yet validated.
 secure = ["dep:aes", "dep:ctr", "dep:sha2", "dep:pbkdf2", "dep:x25519-dalek", "dep:zeroize", "ets"]
 
 [dependencies]
