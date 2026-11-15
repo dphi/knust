@@ -3441,7 +3441,16 @@ impl P2pConnection {
                     continue;
                 }
             }
-            if expected_service.is_none_or(|service| event.payload.starts_with(&service)) {
+            let matches_service = expected_service.is_none_or(|service| {
+                // A_Memory_Response carries its count in the service octet's low six bits.
+                if service == [0x02, 0x40] {
+                    event.payload.first() == Some(&0x02)
+                        && event.payload.get(1).is_some_and(|byte| byte & 0xC0 == 0x40)
+                } else {
+                    event.payload.starts_with(&service)
+                }
+            });
+            if matches_service {
                 return Ok(event.payload);
             }
         }
@@ -3659,6 +3668,82 @@ impl P2pConnection {
         }
 
         Ok(())
+    }
+
+    /// Read one range from the standard 64 KiB memory address space.
+    pub async fn read_memory(
+        &mut self,
+        request: crate::protocol::management::MemoryRead,
+        timeout: std::time::Duration,
+    ) -> Result<crate::protocol::management::MemoryResponse> {
+        let response = self
+            .request(request.encode()?, [0x02, 0x40], timeout)
+            .await?;
+        let response = crate::protocol::management::MemoryResponse::decode(&response)?;
+        if response.address != request.address {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "MemoryResponse address does not match the request".to_owned(),
+            }
+            .into());
+        }
+        Ok(response)
+    }
+
+    /// Write one range to the standard 64 KiB memory address space.
+    pub async fn write_memory(
+        &mut self,
+        request: crate::protocol::management::MemoryWrite,
+        timeout: std::time::Duration,
+    ) -> Result<crate::protocol::management::MemoryResponse> {
+        let response = self
+            .request(request.encode()?, [0x02, 0x40], timeout)
+            .await?;
+        let response = crate::protocol::management::MemoryResponse::decode(&response)?;
+        if response.address != request.address {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "MemoryResponse address does not match the request".to_owned(),
+            }
+            .into());
+        }
+        Ok(response)
+    }
+
+    /// Read one range from the 1 MiB user-memory address space.
+    pub async fn read_user_memory(
+        &mut self,
+        request: crate::protocol::management::UserMemoryRead,
+        timeout: std::time::Duration,
+    ) -> Result<crate::protocol::management::UserMemoryResponse> {
+        let response = self
+            .request(request.encode()?, [0x02, 0xC1], timeout)
+            .await?;
+        let response = crate::protocol::management::UserMemoryResponse::decode(&response)?;
+        if response.address != request.address {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "UserMemoryResponse address does not match the request".to_owned(),
+            }
+            .into());
+        }
+        Ok(response)
+    }
+
+    /// Write one range to the 1 MiB user-memory address space.
+    pub async fn write_user_memory(
+        &mut self,
+        request: crate::protocol::management::UserMemoryWrite,
+        timeout: std::time::Duration,
+    ) -> Result<crate::protocol::management::UserMemoryResponse> {
+        let response = self
+            .request(request.encode()?, [0x02, 0xC1], timeout)
+            .await?;
+        let response = crate::protocol::management::UserMemoryResponse::decode(&response)?;
+        if response.address != request.address {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "UserMemoryResponse address does not match the request".to_owned(),
+            }
+            .into());
+        }
+        Ok(response)
     }
 
     /// Read metadata for one interface-object property over this P2P session.
@@ -4562,6 +4647,215 @@ mod integration_tests {
         assert_eq!(
             second_write_response_ack.tpci,
             TpciFrame::Ack { sequence: 8 }.encode()
+        );
+
+        let reading_memory = tokio::spawn(async move {
+            let response = p2p
+                .read_memory(
+                    crate::protocol::management::MemoryRead {
+                        address: 0x1234,
+                        count: 2,
+                    },
+                    Duration::from_secs(2),
+                )
+                .await?;
+            Ok::<_, KnxError>((p2p, response))
+        });
+        let memory_read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::MemoryRead::decode(&memory_read.payload).unwrap(),
+            crate::protocol::management::MemoryRead {
+                address: 0x1234,
+                count: 2,
+            }
+        );
+        let mut memory_read_ack = Telegram::individual_data(client_address, Vec::new());
+        memory_read_ack.source = device_address;
+        memory_read_ack.telegram_type = TelegramType::IndividualControl;
+        memory_read_ack.tpci = TpciFrame::Ack { sequence: 10 }.encode();
+        server.send(memory_read_ack).await.unwrap();
+        let mut memory_read_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::MemoryResponse {
+                address: 0x1234,
+                count: 2,
+                data: vec![0xAA, 0xBB],
+            }
+            .encode()
+            .unwrap(),
+        );
+        memory_read_response.source = device_address;
+        memory_read_response.tpci = TpciFrame::DataConnected { sequence: 9 }.encode();
+        server.send(memory_read_response).await.unwrap();
+        let (mut p2p, memory_response) = reading_memory.await.unwrap().unwrap();
+        assert_eq!(memory_response.data, [0xAA, 0xBB]);
+        let memory_read_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            memory_read_response_ack.tpci,
+            TpciFrame::Ack { sequence: 9 }.encode()
+        );
+
+        let reading_user_memory = tokio::spawn(async move {
+            let response = p2p
+                .read_user_memory(
+                    crate::protocol::management::UserMemoryRead {
+                        address: 0xABCDE,
+                        count: 2,
+                    },
+                    Duration::from_secs(2),
+                )
+                .await?;
+            Ok::<_, KnxError>((p2p, response))
+        });
+        let user_memory_read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::UserMemoryRead::decode(&user_memory_read.payload)
+                .unwrap()
+                .address,
+            0xABCDE
+        );
+        let mut user_memory_read_ack = Telegram::individual_data(client_address, Vec::new());
+        user_memory_read_ack.source = device_address;
+        user_memory_read_ack.telegram_type = TelegramType::IndividualControl;
+        user_memory_read_ack.tpci = TpciFrame::Ack { sequence: 11 }.encode();
+        server.send(user_memory_read_ack).await.unwrap();
+        let mut user_memory_read_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::UserMemoryResponse {
+                address: 0xABCDE,
+                count: 2,
+                data: vec![0xCC, 0xDD],
+            }
+            .encode()
+            .unwrap(),
+        );
+        user_memory_read_response.source = device_address;
+        user_memory_read_response.tpci = TpciFrame::DataConnected { sequence: 10 }.encode();
+        server.send(user_memory_read_response).await.unwrap();
+        let (mut p2p, user_memory_response) = reading_user_memory.await.unwrap().unwrap();
+        assert_eq!(user_memory_response.data, [0xCC, 0xDD]);
+        let user_memory_read_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            user_memory_read_response_ack.tpci,
+            TpciFrame::Ack { sequence: 10 }.encode()
+        );
+
+        let writing_memory = tokio::spawn(async move {
+            let response = p2p
+                .write_memory(
+                    crate::protocol::management::MemoryWrite {
+                        address: 0x2345,
+                        count: 2,
+                        data: vec![0x11, 0x22],
+                    },
+                    Duration::from_secs(2),
+                )
+                .await?;
+            Ok::<_, KnxError>((p2p, response))
+        });
+        let memory_write = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::MemoryWrite::decode(&memory_write.payload)
+                .unwrap()
+                .address,
+            0x2345
+        );
+        let mut memory_write_ack = Telegram::individual_data(client_address, Vec::new());
+        memory_write_ack.source = device_address;
+        memory_write_ack.telegram_type = TelegramType::IndividualControl;
+        memory_write_ack.tpci = TpciFrame::Ack { sequence: 12 }.encode();
+        server.send(memory_write_ack).await.unwrap();
+        let mut memory_write_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::MemoryResponse {
+                address: 0x2345,
+                count: 2,
+                data: Vec::new(),
+            }
+            .encode()
+            .unwrap(),
+        );
+        memory_write_response.source = device_address;
+        memory_write_response.tpci = TpciFrame::DataConnected { sequence: 11 }.encode();
+        server.send(memory_write_response).await.unwrap();
+        let (mut p2p, _) = writing_memory.await.unwrap().unwrap();
+        let memory_write_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            memory_write_response_ack.tpci,
+            TpciFrame::Ack { sequence: 11 }.encode()
+        );
+
+        let writing_user_memory = tokio::spawn(async move {
+            let response = p2p
+                .write_user_memory(
+                    crate::protocol::management::UserMemoryWrite {
+                        address: 0xFEDCB,
+                        count: 1,
+                        data: vec![0x33],
+                    },
+                    Duration::from_secs(2),
+                )
+                .await?;
+            Ok::<_, KnxError>((p2p, response))
+        });
+        let user_memory_write = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::UserMemoryWrite::decode(&user_memory_write.payload)
+                .unwrap()
+                .address,
+            0xFEDCB
+        );
+        let mut user_memory_write_ack = Telegram::individual_data(client_address, Vec::new());
+        user_memory_write_ack.source = device_address;
+        user_memory_write_ack.telegram_type = TelegramType::IndividualControl;
+        user_memory_write_ack.tpci = TpciFrame::Ack { sequence: 13 }.encode();
+        server.send(user_memory_write_ack).await.unwrap();
+        let mut user_memory_write_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::UserMemoryResponse {
+                address: 0xFEDCB,
+                count: 1,
+                data: Vec::new(),
+            }
+            .encode()
+            .unwrap(),
+        );
+        user_memory_write_response.source = device_address;
+        user_memory_write_response.tpci = TpciFrame::DataConnected { sequence: 12 }.encode();
+        server.send(user_memory_write_response).await.unwrap();
+        let (mut p2p, _) = writing_user_memory.await.unwrap().unwrap();
+        let user_memory_write_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            user_memory_write_response_ack.tpci,
+            TpciFrame::Ack { sequence: 12 }.encode()
         );
 
         p2p.close().await.unwrap();
