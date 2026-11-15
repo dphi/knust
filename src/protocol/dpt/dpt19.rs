@@ -111,7 +111,7 @@ impl DateTime {
         Ok(value)
     }
 
-    fn encode_data(&self) -> [u8; 8] {
+    pub(super) fn encode_data(&self) -> [u8; 8] {
         let year = if self.no_year { 0 } else { self.year };
         let month = if self.no_date { 0 } else { self.month };
         let day = if self.no_date { 0 } else { self.day };
