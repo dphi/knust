@@ -1435,6 +1435,76 @@ impl Knx {
         result
     }
 
+    /// Read addresses of devices currently in programming mode.
+    ///
+    /// Returns all responders before the timeout elapses. Set `raise_if_multiple`
+    /// to return an error when a second device responds.
+    pub async fn read_individual_addresses_in_programming_mode(
+        &self,
+        timeout_duration: std::time::Duration,
+        raise_if_multiple: bool,
+    ) -> Result<Vec<crate::protocol::IndividualAddress>> {
+        let _request_guard = self.individual_request_lock.lock().await;
+        let stopping = self.shutdown_started.notified();
+        tokio::pin!(stopping);
+        stopping.as_mut().enable();
+        if self.shutdown_flag.load(Ordering::SeqCst) {
+            return Err(crate::error::TransportError::QueueClosed.into());
+        }
+
+        let broadcast = GroupAddress::try_new(0, 0, 0).expect("0/0/0 is a valid group address");
+        let (tx, mut rx) = mpsc::channel(16);
+        let filter = TelegramFilter::Custom(Arc::new(move |telegram| {
+            telegram.destination == Address::Group(broadcast)
+                && telegram.payload.starts_with(&[0x01, 0x40])
+        }));
+        let handle = self
+            .register_telegram_callback_filtered(P2pTelegramCallback { tx }, filter, false)
+            .await;
+        let mut callback_guard = ReadCallbackGuard {
+            handler: self.event_handler.clone(),
+            handle: Some(handle),
+        };
+
+        let operation = async {
+            let mut telegram = Telegram::group_write(broadcast, vec![0x01, 0x00]);
+            telegram.telegram_type = TelegramType::IndividualData;
+            telegram.compact_payload = false;
+            let (sent, completed) = self
+                .telegram_queue
+                .enqueue_outgoing_tracked(telegram)
+                .await?;
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                tokio::select! {
+                    sent = sent => sent.map_err(|_| crate::error::TransportError::QueueClosed.into()),
+                    result = completed => result.map_err(|_| crate::error::TransportError::QueueClosed)?,
+                }
+            })
+            .await
+            .map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })??;
+
+            let deadline = tokio::time::Instant::now() + timeout_duration;
+            let mut addresses = Vec::new();
+            while let Ok(Some(response)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+                addresses.push(response.source);
+                if raise_if_multiple && addresses.len() > 1 {
+                    return Err(crate::error::ProtocolError::InvalidFrame {
+                        details: "More than one KNX device is in programming mode".to_owned(),
+                    }
+                    .into());
+                }
+            }
+            Ok(addresses)
+        };
+        let result = tokio::select! {
+            result = operation => result,
+            _ = &mut stopping => Err(crate::error::TransportError::QueueClosed.into()),
+        };
+        self.unregister_callback(handle).await;
+        callback_guard.handle = None;
+        result
+    }
+
     /// Open a connection-oriented transport link to an individual address.
     ///
     /// Only one connected session per peer may be active on a Knx instance.
@@ -4486,6 +4556,82 @@ mod integration_tests {
         server.send(response).await.unwrap();
 
         assert_eq!(request.await.unwrap().unwrap(), [0x02, 0xC9, 0x42, 0x55]);
+        knx.shutdown().await.unwrap();
+        server.shutdown();
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn programming_mode_address_scan_collects_broadcast_responses() {
+        use crate::transport::TunnelServer;
+
+        let client_address = IndividualAddress::new(1, 1, 10);
+        let first = IndividualAddress::new(1, 1, 11);
+        let second = IndividualAddress::new(15, 15, 255);
+        let broadcast = GroupAddress::try_new(0, 0, 0).expect("0/0/0 is a valid group address");
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut traffic = server.subscribe();
+
+        let knx_for_scan = knx.clone();
+        let scan = tokio::spawn(async move {
+            knx_for_scan
+                .read_individual_addresses_in_programming_mode(Duration::from_secs(2), false)
+                .await
+        });
+        let request = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.destination, Address::Group(broadcast));
+        assert_eq!(request.payload, [0x01, 0x00]);
+        for address in [first, second] {
+            server
+                .send(Telegram::received(
+                    address,
+                    broadcast,
+                    TelegramType::IndividualData,
+                    vec![0x01, 0x40],
+                ))
+                .await
+                .unwrap();
+        }
+        assert_eq!(scan.await.unwrap().unwrap(), [first, second]);
+
+        let knx_for_scan = knx.clone();
+        let strict_scan = tokio::spawn(async move {
+            knx_for_scan
+                .read_individual_addresses_in_programming_mode(Duration::from_secs(10), true)
+                .await
+        });
+        let _request = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        for address in [first, second] {
+            server
+                .send(Telegram::received(
+                    address,
+                    broadcast,
+                    TelegramType::IndividualData,
+                    vec![0x01, 0x40],
+                ))
+                .await
+                .unwrap();
+        }
+        let error = strict_scan.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("More than one KNX device"));
         knx.shutdown().await.unwrap();
         server.shutdown();
     }
