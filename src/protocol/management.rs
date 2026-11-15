@@ -80,6 +80,14 @@ pub struct PropertyDescriptionResponse {
     pub access: u8,
 }
 
+/// `A_PropertyDescription_Read` request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PropertyDescriptionRead {
+    pub object_index: u8,
+    pub property_id: u8,
+    pub property_index: u8,
+}
+
 /// `A_PropertyValue_Read` request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PropertyValueRead {
@@ -403,11 +411,48 @@ impl PropertyValueWrite {
     }
 }
 
+impl PropertyDescriptionRead {
+    /// Encode the request as APCI bytes, including service `0x03D8`.
+    #[must_use]
+    pub fn encode(self) -> Vec<u8> {
+        vec![
+            APCI_HIGH_BYTE,
+            0xD8,
+            self.object_index,
+            self.property_id,
+            self.property_index,
+        ]
+    }
+
+    /// Decode a five-byte `A_PropertyDescription_Read` APCI frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProtocolError::InvalidFrame` for a different service or length.
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        if apci_bytes.len() != 5 || apci_bytes[..2] != [APCI_HIGH_BYTE, 0xD8] {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "Expected 5-byte PropertyDescriptionRead APCI 0x03D8, got {} bytes",
+                    apci_bytes.len()
+                ),
+            }
+            .into());
+        }
+
+        Ok(Self {
+            object_index: apci_bytes[2],
+            property_id: apci_bytes[3],
+            property_index: apci_bytes[4],
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        DeviceDescriptorRead, DeviceDescriptorResponse, PropertyDescriptionResponse,
-        PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
+        DeviceDescriptorRead, DeviceDescriptorResponse, PropertyDescriptionRead,
+        PropertyDescriptionResponse, PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
     };
 
     #[test]
@@ -512,6 +557,21 @@ mod tests {
         assert!(
             PropertyDescriptionResponse::decode(&[0x03, 0xD9, 0, 1, 2, 3, 0, 1, 0, 0]).is_err()
         );
+    }
+
+    #[test]
+    fn property_description_read_round_trip_and_validation() {
+        let read = PropertyDescriptionRead {
+            object_index: 1,
+            property_id: 2,
+            property_index: 3,
+        };
+        let encoded = read.encode();
+        assert_eq!(encoded, [0x03, 0xD8, 1, 2, 3]);
+        assert_eq!(PropertyDescriptionRead::decode(&encoded).unwrap(), read);
+        assert!(PropertyDescriptionRead::decode(&[0x03, 0xD9, 1, 2, 3]).is_err());
+        assert!(PropertyDescriptionRead::decode(&[0x03, 0xD8, 1, 2]).is_err());
+        assert!(PropertyDescriptionRead::decode(&[0x03, 0xD8, 1, 2, 3, 4]).is_err());
     }
 
     #[test]
