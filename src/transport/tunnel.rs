@@ -50,6 +50,29 @@ pub enum SequenceValidationResult {
     Invalid { expected: u8, received: u8 },
 }
 
+#[cfg(feature = "secure")]
+const IP_SECURE_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+
+#[cfg(feature = "secure")]
+#[derive(Default)]
+struct SecureActivity {
+    last: tokio::sync::Mutex<Option<Instant>>,
+    changed: tokio::sync::Notify,
+}
+
+#[cfg(feature = "secure")]
+impl SecureActivity {
+    async fn touch(&self) {
+        *self.last.lock().await = Some(Instant::now());
+        self.changed.notify_one();
+    }
+
+    async fn last(&self) -> Instant {
+        let mut last = self.last.lock().await;
+        *last.get_or_insert_with(Instant::now)
+    }
+}
+
 /// A KNX/IP tunnel connection, transport-agnostic.
 pub struct Tunnel {
     kind: TransportKind,
@@ -69,6 +92,12 @@ pub struct Tunnel {
     heartbeat: std::sync::RwLock<Option<Arc<HeartbeatMonitor>>>,
     #[cfg(feature = "secure")]
     secure_session: Option<Arc<tokio::sync::RwLock<SecureSession>>>,
+    #[cfg(feature = "secure")]
+    secure_activity: Arc<SecureActivity>,
+    #[cfg(feature = "secure")]
+    secure_keepalive_cancel: Option<tokio::sync::oneshot::Sender<()>>,
+    #[cfg(feature = "secure")]
+    secure_send_lock: Arc<tokio::sync::Mutex<()>>,
     /// Whether the `ConnectionState` heartbeat should run for this tunnel.
     pub(crate) use_heartbeat: bool,
     /// Whether incoming `TunnellingRequests` must be acknowledged (UDP only).
@@ -148,6 +177,12 @@ impl Tunnel {
             heartbeat: std::sync::RwLock::new(None),
             #[cfg(feature = "secure")]
             secure_session: None,
+            #[cfg(feature = "secure")]
+            secure_activity: Arc::new(SecureActivity::default()),
+            #[cfg(feature = "secure")]
+            secure_keepalive_cancel: None,
+            #[cfg(feature = "secure")]
+            secure_send_lock: Arc::new(tokio::sync::Mutex::new(())),
             use_heartbeat,
             send_acks,
             configured_address: None,
@@ -445,7 +480,9 @@ impl Tunnel {
             user_id: 1,
             user_password: security.user_password.clone().unwrap_or_default(),
             device_auth_password: Some(security.device_auth_password.clone()),
-            keepalive_interval: security.session_timeout,
+            keepalive_interval: security
+                .session_timeout
+                .clamp(1, IP_SECURE_KEEPALIVE_INTERVAL.as_secs() as u32),
         };
         let mut session = SecureSession::new(&config);
         let public_key = session.initialize().await;
@@ -496,6 +533,7 @@ impl Tunnel {
         session.complete_authentication(status_data[7]).await?;
 
         self.secure_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
+        self.start_secure_keepalive(Duration::from_secs(config.keepalive_interval as u64))?;
         log_transport!(LogLevel::Info, "Secure session established");
 
         // The secure *session* is now up, but that's just the encrypted
@@ -510,6 +548,9 @@ impl Tunnel {
                 self.finish_connect(channel_id, assigned_address).await
             }
             Err(e) => {
+                if let Some(cancel) = self.secure_keepalive_cancel.take() {
+                    let _ = cancel.send(());
+                }
                 if let Ok(mut s) = self.state.write() {
                     *s = ConnectionState::Failed;
                 }
@@ -519,6 +560,49 @@ impl Tunnel {
                 Err(e)
             }
         }
+    }
+
+    #[cfg(feature = "secure")]
+    fn start_secure_keepalive(&mut self, interval: Duration) -> Result<()> {
+        let transport = self.transport()?.clone();
+        let session = self
+            .secure_session
+            .as_ref()
+            .expect("secure session is set before its keepalive starts")
+            .clone();
+        let activity = self.secure_activity.clone();
+        let send_lock = self.secure_send_lock.clone();
+        activity.changed.notify_one();
+        let (cancel, mut cancelled) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let keepalive = [0x06, 0x10, 0x09, 0x54, 0x00, 0x08, 0x00, 0x04];
+            loop {
+                let deadline = activity.last().await + interval;
+                tokio::select! {
+                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+                        if Instant::now() < deadline {
+                            continue;
+                        }
+                        let _guard = send_lock.lock().await;
+                        if Instant::now() < activity.last().await + interval {
+                            continue;
+                        }
+                        let encrypted = match session.read().await.encrypt_frame(&keepalive).await {
+                            Ok(frame) => frame,
+                            Err(_) => break,
+                        };
+                        if transport.send_frame(&encrypted).await.is_err() {
+                            break;
+                        }
+                        activity.touch().await;
+                    }
+                    _ = activity.changed.notified() => {}
+                    _ = &mut cancelled => break,
+                }
+            }
+        });
+        self.secure_keepalive_cancel = Some(cancel);
+        Ok(())
     }
 
     /// Disconnect, sending a `DisconnectRequest` if a channel is active.
@@ -537,6 +621,10 @@ impl Tunnel {
             && let Err(e) = self.send_disconnect_request().await
         {
             log_transport!(LogLevel::Warn, "Failed to send disconnect request: {}", e);
+        }
+        #[cfg(feature = "secure")]
+        if let Some(cancel) = self.secure_keepalive_cancel.take() {
+            let _ = cancel.send(());
         }
         if let Ok(mut s) = self.state.write() {
             *s = ConnectionState::Disconnected;
@@ -622,6 +710,13 @@ impl Tunnel {
     /// never established, a [`crate::error::SecurityError`] if encryption
     /// fails, or the underlying transport's send error.
     pub async fn send_frame(&self, frame: &[u8]) -> Result<()> {
+        #[cfg(feature = "secure")]
+        let _secure_guard = if self.secure_session.is_some() {
+            Some(self.secure_send_lock.lock().await)
+        } else {
+            None
+        };
+
         let result = async {
             let transport = self.transport()?;
             #[cfg(feature = "secure")]
@@ -632,7 +727,12 @@ impl Tunnel {
             };
             #[cfg(not(feature = "secure"))]
             let data = frame.to_vec();
-            transport.send_frame(&data).await
+            transport.send_frame(&data).await?;
+            #[cfg(feature = "secure")]
+            if self.secure_session.is_some() {
+                self.secure_activity.touch().await;
+            }
+            Ok(())
         }
         .await;
 
@@ -732,6 +832,10 @@ impl Tunnel {
             };
             #[cfg(not(feature = "secure"))]
             let data = raw;
+            #[cfg(feature = "secure")]
+            if self.secure_session.is_some() {
+                self.secure_activity.touch().await;
+            }
             Ok(data)
         }
         .await;
@@ -1036,6 +1140,86 @@ impl Connection for Tunnel {
 #[cfg(test)]
 mod tunneling_address_tests {
     use super::*;
+
+    #[cfg(feature = "secure")]
+    struct KeepaliveTestTransport(tokio::sync::mpsc::UnboundedSender<Vec<u8>>);
+
+    #[cfg(feature = "secure")]
+    #[async_trait::async_trait]
+    impl FrameTransport for KeepaliveTestTransport {
+        async fn send_frame(&self, frame: &[u8]) -> Result<()> {
+            self.0
+                .send(frame.to_vec())
+                .map_err(|_| TransportError::ConnectionClosed.into())
+        }
+
+        async fn recv_frame(&self) -> Result<Vec<u8>> {
+            Err(TransportError::ConnectionClosed.into())
+        }
+
+        fn kind(&self) -> TransportKind {
+            TransportKind::Udp
+        }
+    }
+
+    #[cfg(feature = "secure")]
+    #[tokio::test(start_paused = true)]
+    async fn ip_secure_keepalive_waits_for_fifteen_idle_seconds() {
+        let config = SessionConfig {
+            user_id: 1,
+            user_password: crate::security::generate_password(),
+            device_auth_password: Some(crate::security::generate_password()),
+            keepalive_interval: 15,
+        };
+        let mut client = SecureSession::new(&config);
+        let mut server = SecureSession::new(&config);
+        let client_pub: [u8; 32] = client.initialize().await.try_into().unwrap();
+        let server_pub: [u8; 32] = server.initialize().await.try_into().unwrap();
+        let session_id = 42;
+        let response_mac = server
+            .process_session_request(&client_pub, session_id)
+            .await
+            .unwrap();
+        let auth_mac = client
+            .process_session_response(session_id, &server_pub, &response_mac)
+            .await
+            .unwrap();
+        assert!(
+            server
+                .verify_authenticate_mac(&client_pub, config.user_id, &auth_mac)
+                .await
+                .unwrap()
+        );
+        client.complete_authentication(0).await.unwrap();
+
+        let (sent_tx, mut sent_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut tunnel = Tunnel::new_udp(gateway());
+        tunnel.transport = std::sync::Mutex::new(Some(Arc::new(KeepaliveTestTransport(sent_tx))));
+        tunnel.secure_session = Some(Arc::new(tokio::sync::RwLock::new(client)));
+        tunnel
+            .start_secure_keepalive(Duration::from_secs(15))
+            .unwrap();
+        tokio::task::yield_now().await;
+
+        tokio::time::advance(Duration::from_secs(14)).await;
+        tunnel.secure_activity.touch().await;
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(14)).await;
+        assert!(sent_rx.try_recv().is_err());
+        tokio::time::advance(Duration::from_secs(1)).await;
+
+        let encrypted = tokio::time::timeout(Duration::from_secs(1), sent_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            server.decrypt_frame(&encrypted).await.unwrap(),
+            [0x06, 0x10, 0x09, 0x54, 0x00, 0x08, 0x00, 0x04]
+        );
+        if let Some(cancel) = tunnel.secure_keepalive_cancel.take() {
+            let _ = cancel.send(());
+        }
+    }
 
     fn gateway() -> SocketAddr {
         "127.0.0.1:3671".parse().unwrap()
