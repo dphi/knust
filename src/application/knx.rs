@@ -3459,6 +3459,28 @@ impl P2pConnection {
         self.receive(Some(expected_response_service), timeout).await
     }
 
+    /// Read a single property-value range over this P2P session.
+    pub async fn read_property_value(
+        &mut self,
+        request: crate::protocol::management::PropertyValueRead,
+        timeout: std::time::Duration,
+    ) -> Result<crate::protocol::management::PropertyValueResponse> {
+        let response = self
+            .request(request.encode()?, [0x03, 0xD6], timeout)
+            .await?;
+        let response = crate::protocol::management::PropertyValueResponse::decode(&response)?;
+        if response.object_index != request.object_index
+            || response.property_id != request.property_id
+            || response.start_index != request.start_index
+        {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "PropertyValueResponse does not match the requested object, property, and start index".to_owned(),
+            }
+            .into());
+        }
+        Ok(response)
+    }
+
     /// Tear down the transport link and unregister its receive callback.
     pub async fn close(&mut self) -> Result<()> {
         let result = if self.closed {
@@ -3878,6 +3900,112 @@ mod integration_tests {
         next_ack.tpci = TpciFrame::Ack { sequence: 1 }.encode();
         server.send(next_ack).await.unwrap();
         let mut p2p = send_next.await.unwrap().unwrap();
+
+        let property_read = crate::protocol::management::PropertyValueRead {
+            object_index: 1,
+            property_id: 2,
+            count: 1,
+            start_index: 5,
+        };
+        let property_apdu = property_read.encode().unwrap();
+        let reading = tokio::spawn(async move {
+            let response = p2p
+                .read_property_value(property_read, Duration::from_secs(2))
+                .await?;
+            Ok::<_, KnxError>((p2p, response))
+        });
+        let property_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            property_request.tpci,
+            TpciFrame::DataConnected { sequence: 2 }.encode()
+        );
+        assert_eq!(property_request.payload, property_apdu);
+        let mut property_ack = Telegram::individual_data(client_address, Vec::new());
+        property_ack.source = device_address;
+        property_ack.telegram_type = TelegramType::IndividualControl;
+        property_ack.tpci = TpciFrame::Ack { sequence: 2 }.encode();
+        server.send(property_ack).await.unwrap();
+        let mut property_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::PropertyValueResponse {
+                object_index: 1,
+                property_id: 2,
+                count: 1,
+                start_index: 5,
+                data: vec![0xAA, 0xBB],
+            }
+            .encode()
+            .unwrap(),
+        );
+        property_response.source = device_address;
+        property_response.tpci = TpciFrame::DataConnected { sequence: 1 }.encode();
+        server.send(property_response).await.unwrap();
+        let (mut p2p, property_response) = reading.await.unwrap().unwrap();
+        assert_eq!(property_response.data, [0xAA, 0xBB]);
+        let property_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            property_response_ack.tpci,
+            TpciFrame::Ack { sequence: 1 }.encode()
+        );
+
+        let mismatched_read = crate::protocol::management::PropertyValueRead {
+            object_index: 1,
+            property_id: 2,
+            count: 1,
+            start_index: 6,
+        };
+        let reading = tokio::spawn(async move {
+            let result = p2p
+                .read_property_value(mismatched_read, Duration::from_secs(2))
+                .await;
+            Ok::<_, KnxError>((p2p, result))
+        });
+        let mismatched_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            mismatched_request.tpci,
+            TpciFrame::DataConnected { sequence: 3 }.encode()
+        );
+        let mut mismatched_request_ack = Telegram::individual_data(client_address, Vec::new());
+        mismatched_request_ack.source = device_address;
+        mismatched_request_ack.telegram_type = TelegramType::IndividualControl;
+        mismatched_request_ack.tpci = TpciFrame::Ack { sequence: 3 }.encode();
+        server.send(mismatched_request_ack).await.unwrap();
+        let mut mismatched_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::PropertyValueResponse {
+                object_index: 1,
+                property_id: 2,
+                count: 1,
+                start_index: 7,
+                data: vec![0xCC],
+            }
+            .encode()
+            .unwrap(),
+        );
+        mismatched_response.source = device_address;
+        mismatched_response.tpci = TpciFrame::DataConnected { sequence: 2 }.encode();
+        server.send(mismatched_response).await.unwrap();
+        let (mut p2p, result) = reading.await.unwrap().unwrap();
+        assert!(result.is_err());
+        let mismatched_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            mismatched_response_ack.tpci,
+            TpciFrame::Ack { sequence: 2 }.encode()
+        );
 
         p2p.close().await.unwrap();
         let disconnect = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
