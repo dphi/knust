@@ -57,6 +57,7 @@ status!(SolarDHWControllerStatus,DPTStatusSDHWC,1,"21.103","solar_dhw_controller
 status!(FuelTypeSet,DPTFuelTypeSet,1,"21.104","fuel_type_set",oil:0,gas:1,solid_state:2);
 status!(RoomCoolingControllerStatus,DPTStatusRCC,1,"21.105","room_cooling_controller_status",fault:0);
 status!(VentilationControllerStatus,DPTStatusAHU,1,"21.106","ventilation_controller_status",fault:0,fan_active:1,heat:2,cool:3);
+status!(LightActuatorErrorInfo,DPTLightActuatorErrorInfo,1,"21.601","light_actuator_error_info",load_detection_error:0,undervoltage:1,overcurrent:2,underload:3,defective_load:4,lamp_failure:5,overheat:6);
 status!(GeneralStatus,DPTStatusGen,1,"21.001","general_status",out_of_service:0,fault:1,overridden:2,in_alarm:3,alarm_un_ack:4);
 status!(DeviceControl,DPTDeviceControl,1,"21.002","device_control",user_stopped:0,own_ia:1,verify_mode:2);
 status!(CombinedStatusRTSM,DPTCombinedStatusRTSM,1,"21.107","combined_status_rtsm",window_open:0,presence:1,comfort_push_button:2,comfort_prolongation_user:3,hvac_mode_user:4);

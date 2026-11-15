@@ -367,6 +367,7 @@ macro_rules! status_view {
         }
     };
 }
+status_view!(LightActuatorErrorInfoView, LightActuatorErrorInfo);
 status_view!(StatusRTSMView, CombinedStatusRTSM);
 status_view!(ForcingSignalView, ForcingSignal);
 status_view!(ForcingSignalCoolView, ForcingSignalCool);
@@ -957,6 +958,7 @@ pub enum DptView<'a> {
     FuelTypeSet(FuelTypeSetView<'a>),
     RoomCoolingControllerStatus(RoomCoolingControllerStatusView<'a>),
     VentilationControllerStatus(VentilationControllerStatusView<'a>),
+    LightActuatorErrorInfo(LightActuatorErrorInfoView<'a>),
     StatusRTSM(StatusRTSMView<'a>),
     GeneralStatus(GeneralStatusView<'a>),
     DeviceControl(DeviceControlView<'a>),
@@ -1031,6 +1033,7 @@ impl<'a> DptView<'a> {
             | Self::FuelTypeSet(_)
             | Self::RoomCoolingControllerStatus(_)
             | Self::VentilationControllerStatus(_)
+            | Self::LightActuatorErrorInfo(_)
             | Self::StatusRTSM(_)
             | Self::GeneralStatus(_)
             | Self::DeviceControl(_)
@@ -1109,6 +1112,7 @@ impl<'a> DptView<'a> {
             Self::FuelTypeSet(v) => v.raw(),
             Self::RoomCoolingControllerStatus(v) => v.raw(),
             Self::VentilationControllerStatus(v) => v.raw(),
+            Self::LightActuatorErrorInfo(v) => v.raw(),
             Self::StatusRTSM(v) => v.raw(),
             Self::GeneralStatus(v) => v.raw(),
             Self::DeviceControl(v) => v.raw(),
@@ -1194,6 +1198,7 @@ impl DptView<'_> {
             Self::FuelTypeSet(v) => v.value().to_string(),
             Self::RoomCoolingControllerStatus(v) => v.value().to_string(),
             Self::VentilationControllerStatus(v) => v.value().to_string(),
+            Self::LightActuatorErrorInfo(v) => v.value().to_string(),
             Self::StatusRTSM(v) => v.value().to_string(),
             Self::GeneralStatus(v) => v.value().to_string(),
             Self::DeviceControl(v) => v.value().to_string(),
@@ -1662,6 +1667,7 @@ impl DptType {
             250 | 252..=254 => super::dpt_relative_color::parse_payload(s,self.main()),
             243 => s.parse().map(DptPayload::XYYColorTransition),
             21 if self.sub() == 1 => s.parse().map(DptPayload::GeneralStatus),
+            21 if self.sub() == 601 => s.parse().map(DptPayload::LightActuatorErrorInfo),
             21 if self.sub() == 100 => s.parse().map(DptPayload::ForcingSignal),
             21 if self.sub() == 101 => s.parse().map(DptPayload::ForcingSignalCool),
             21 if self.sub() == 102 => s.parse().map(DptPayload::RoomHeatingControllerStatus),

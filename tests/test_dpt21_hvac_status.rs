@@ -1,7 +1,7 @@
 #![cfg(feature = "dpt")]
 use knust::protocol::dpt::{
-    DPTForceSign, DPTForceSignCool, DPTFuelTypeSet, DPTStatusAHU, DPTStatusRCC, DPTStatusRHC,
-    DPTStatusSDHWC, DptPayload, DptRegistry, DptType, DptValue,
+    DPTForceSign, DPTForceSignCool, DPTFuelTypeSet, DPTLightActuatorErrorInfo, DPTStatusAHU,
+    DPTStatusRCC, DPTStatusRHC, DPTStatusSDHWC, DptPayload, DptRegistry, DptType, DptValue,
 };
 use knust::protocol::{Telegram, address::GroupAddress};
 
@@ -48,4 +48,9 @@ fn hvac_controller_status_subtypes_preserve_defined_bits() {
     check_typed_status!(DPTFuelTypeSet, "21.104", 0x07);
     check_typed_status!(DPTStatusRCC, "21.105", 0x01);
     check_typed_status!(DPTStatusAHU, "21.106", 0x0f);
+}
+
+#[test]
+fn light_actuator_error_info_preserves_defined_bits() {
+    check_typed_status!(DPTLightActuatorErrorInfo, "21.601", 0x7f);
 }

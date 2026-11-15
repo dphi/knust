@@ -8,9 +8,9 @@ use super::view::{
     DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DeviceControlView,
     DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForcingSignalCoolView,
     ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
-    PrioritisedModeControlView, RelativeColorView, RgbView, RgbwView,
-    RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
+    I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
+    MeteringValueView, ModeNextView, PrioritisedModeControlView, RelativeColorView, RgbView,
+    RgbwView, RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
     SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
     SolarDHWControllerStatusView, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView,
     StrView, TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
@@ -299,6 +299,7 @@ pub enum DptType {
     FuelTypeSet = 2_100_104,
     RoomCoolingControllerStatus = 2_100_105,
     VentilationControllerStatus = 2_100_106,
+    LightActuatorErrorInfo = 2_100_601,
     CombinedStatusRTSM = 2_100_107,
     GeneralStatus = 2_100_001,
     DeviceControl = 2_100_002,
@@ -819,6 +820,9 @@ impl DptType {
                 Ok(DptView::MeteringValue(MeteringValueView(bytes)))
             }
             21 if self.sub() == 1 => Ok(DptView::GeneralStatus(GeneralStatusView(bytes))),
+            21 if self.sub() == 601 => Ok(DptView::LightActuatorErrorInfo(
+                LightActuatorErrorInfoView(bytes),
+            )),
             21 if self.sub() == 100 => Ok(DptView::ForcingSignal(ForcingSignalView(bytes))),
             21 if self.sub() == 101 => Ok(DptView::ForcingSignalCool(ForcingSignalCoolView(bytes))),
             21 if self.sub() == 102 => Ok(DptView::RoomHeatingControllerStatus(
@@ -1204,6 +1208,9 @@ impl DptType {
                 Ok(value.encode()?.to_vec())
             }
             (229, DptPayload::MeteringValue(value)) => Ok(value.encode()?.to_vec()),
+            (21, DptPayload::LightActuatorErrorInfo(value)) if self.sub() == 601 => {
+                Ok(value.encode().to_vec())
+            }
             (21, DptPayload::StatusRTSM(value)) if self.sub() == 107 => Ok(value.encode().to_vec()),
             (21, DptPayload::ForcingSignal(value)) if self.sub() == 100 => {
                 Ok(value.encode().to_vec())
