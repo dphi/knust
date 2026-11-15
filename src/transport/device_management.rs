@@ -115,6 +115,90 @@ impl DeviceManagementConnection {
         expected_response: MessageCode,
         timeout: Duration,
     ) -> Result<Vec<u8>> {
+        self.request_cemi_matching(
+            cemi,
+            expected_response,
+            |response| response.first() == Some(&expected_response.to_u8()),
+            timeout,
+        )
+        .await
+    }
+
+    /// Read a property of the KNXnet/IP server's own interface objects.
+    pub async fn read_property(
+        &mut self,
+        property: crate::protocol::cemi::CemiPropertyInfo,
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
+        use crate::protocol::cemi::{CemiPropertyReadRequest, CemiPropertyReadResponse};
+
+        let request = CemiPropertyReadRequest { property }.encode()?;
+        let response = self
+            .request_cemi_matching(
+                &request,
+                MessageCode::MPropReadCon,
+                |bytes| {
+                    CemiPropertyReadResponse::decode(bytes)
+                        .is_ok_and(|response| same_property(response.property, property))
+                },
+                timeout,
+            )
+            .await?;
+        let response = CemiPropertyReadResponse::decode(&response)?;
+        if let Some(error_code) = response.error_code {
+            return Err(TransportError::InvalidConfiguration {
+                details: format!("property read failed with cEMI error 0x{error_code:02X}"),
+            }
+            .into());
+        }
+        Ok(response.data)
+    }
+
+    /// Write a property of the KNXnet/IP server's own interface objects.
+    pub async fn write_property(
+        &mut self,
+        property: crate::protocol::cemi::CemiPropertyInfo,
+        data: &[u8],
+        timeout: Duration,
+    ) -> Result<()> {
+        use crate::protocol::cemi::{CemiPropertyWriteRequest, CemiPropertyWriteResponse};
+
+        let request = CemiPropertyWriteRequest {
+            property,
+            data: data.to_vec(),
+        }
+        .encode()?;
+        let response = self
+            .request_cemi_matching(
+                &request,
+                MessageCode::MPropWriteCon,
+                |bytes| {
+                    CemiPropertyWriteResponse::decode(bytes)
+                        .is_ok_and(|response| same_property(response.property, property))
+                },
+                timeout,
+            )
+            .await?;
+        let response = CemiPropertyWriteResponse::decode(&response)?;
+        if let Some(error_code) = response.error_code {
+            return Err(TransportError::InvalidConfiguration {
+                details: format!("property write failed with cEMI error 0x{error_code:02X}"),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    async fn request_cemi_matching<F>(
+        &mut self,
+        cemi: &[u8],
+        expected_response: MessageCode,
+        matches: F,
+        timeout: Duration,
+    ) -> Result<Vec<u8>>
+    where
+        F: Fn(&[u8]) -> bool,
+    {
         if self.closed {
             return Err(TransportError::ConnectionClosed.into());
         }
@@ -148,8 +232,10 @@ impl DeviceManagementConnection {
                         acknowledged = true;
                         break;
                     }
-                    DeviceManagementEvent::Response(raw_cemi) => response = Some(raw_cemi),
-                    DeviceManagementEvent::Ignored => {}
+                    DeviceManagementEvent::Response(raw_cemi) if matches(&raw_cemi) => {
+                        response = Some(raw_cemi);
+                    }
+                    DeviceManagementEvent::Response(_) | DeviceManagementEvent::Ignored => {}
                 }
             }
             if acknowledged || response.is_some() {
@@ -172,9 +258,11 @@ impl DeviceManagementConnection {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             match tokio::time::timeout_at(deadline, self.next_event(expected_response)).await {
-                Ok(Ok(DeviceManagementEvent::Response(raw_cemi))) => return Ok(raw_cemi),
-                Ok(Ok(DeviceManagementEvent::Acknowledged)) => {}
-                Ok(Ok(DeviceManagementEvent::Ignored)) => {}
+                Ok(Ok(DeviceManagementEvent::Response(raw_cemi))) if matches(&raw_cemi) => {
+                    return Ok(raw_cemi);
+                }
+                Ok(Ok(DeviceManagementEvent::Acknowledged | DeviceManagementEvent::Ignored))
+                | Ok(Ok(DeviceManagementEvent::Response(_))) => {}
                 Ok(Err(error)) => return Err(error),
                 Err(_) => {
                     return Err(TransportError::Timeout {
@@ -323,6 +411,15 @@ enum DeviceManagementEvent {
     Ignored,
 }
 
+fn same_property(
+    left: crate::protocol::cemi::CemiPropertyInfo,
+    right: crate::protocol::cemi::CemiPropertyInfo,
+) -> bool {
+    left.object_type == right.object_type
+        && left.object_instance == right.object_instance
+        && left.property_id == right.property_id
+}
+
 async fn send_frame(socket: &UdpSocket, destination: SocketAddr, frame: &[u8]) -> Result<()> {
     socket
         .send_to(frame, destination)
@@ -353,13 +450,15 @@ async fn receive_frame(socket: &UdpSocket) -> Result<(KnxIpFrame, SocketAddr)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::IndividualAddress;
-    use crate::protocol::address::Address;
-    use crate::protocol::cemi::CemiFrame;
     use tokio::time::timeout;
 
     #[tokio::test]
-    async fn udp_device_management_client_exchanges_cemi_with_loopback_server() {
+    async fn udp_device_management_client_reads_and_writes_properties_with_loopback_server() {
+        use crate::protocol::cemi::{
+            CemiPropertyInfo, CemiPropertyReadRequest, CemiPropertyReadResponse,
+            CemiPropertyWriteRequest, CemiPropertyWriteResponse,
+        };
+
         let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let gateway = server.local_addr().unwrap();
         let server_task = tokio::spawn(async move {
@@ -388,6 +487,13 @@ mod tests {
                 .await
                 .unwrap();
 
+            let property = CemiPropertyInfo {
+                object_type: 0x0011,
+                object_instance: 1,
+                property_id: 2,
+                number_of_elements: 1,
+                start_index: 1,
+            };
             let (length, client) = timeout(Duration::from_secs(2), server.recv_from(&mut buffer))
                 .await
                 .unwrap()
@@ -398,20 +504,26 @@ mod tests {
                 ServiceType::DeviceConfigurationRequest
             );
             let request = TunnellingRequest::parse(&frame.body).unwrap();
-            assert_eq!(request.communication_channel_id, 5);
             assert_eq!(request.sequence_counter, 0);
-            assert_eq!(request.raw_cemi[0], MessageCode::MPropReadReq.to_u8());
+            assert_eq!(
+                CemiPropertyReadRequest::decode(&request.raw_cemi)
+                    .unwrap()
+                    .property,
+                property
+            );
+            let read_request_raw = request.raw_cemi.clone();
 
-            let stale_ack = TunnellingAck::new_ok(5, 1);
             server
                 .send_to(
-                    &KnxIpFrame::new(ServiceType::DeviceConfigurationAck, stale_ack.serialize())
-                        .serialize(),
+                    &KnxIpFrame::new(
+                        ServiceType::DeviceConfigurationAck,
+                        TunnellingAck::new_ok(5, 1).serialize(),
+                    )
+                    .serialize(),
                     client,
                 )
                 .await
                 .unwrap();
-
             let (length, client) = timeout(Duration::from_secs(4), server.recv_from(&mut buffer))
                 .await
                 .unwrap()
@@ -422,26 +534,32 @@ mod tests {
                 ServiceType::DeviceConfigurationRequest
             );
             let retry = TunnellingRequest::parse(&frame.body).unwrap();
-            assert_eq!(retry.communication_channel_id, 5);
             assert_eq!(retry.sequence_counter, 0);
-            assert_eq!(retry.raw_cemi, request.raw_cemi);
+            assert_eq!(retry.raw_cemi, read_request_raw);
 
-            let ack = TunnellingAck::new_ok(5, 0);
             server
                 .send_to(
-                    &KnxIpFrame::new(ServiceType::DeviceConfigurationAck, ack.serialize())
-                        .serialize(),
+                    &KnxIpFrame::new(
+                        ServiceType::DeviceConfigurationAck,
+                        TunnellingAck::new_ok(5, 0).serialize(),
+                    )
+                    .serialize(),
                     client,
                 )
                 .await
                 .unwrap();
-            let response = vec![MessageCode::MPropReadCon.to_u8(), 0x42];
-            let response = TunnellingRequest::new(5, 0, response);
+            let response = CemiPropertyReadResponse {
+                property,
+                data: vec![0x42],
+                error_code: None,
+            }
+            .encode()
+            .unwrap();
             server
                 .send_to(
                     &KnxIpFrame::new(
                         ServiceType::DeviceConfigurationRequest,
-                        response.serialize(),
+                        TunnellingRequest::new(5, 0, response).serialize(),
                     )
                     .serialize(),
                     client,
@@ -452,14 +570,76 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
+            let ack_frame = KnxIpFrame::parse(&buffer[..length]).unwrap();
+            assert_eq!(
+                ack_frame.header.service_type,
+                ServiceType::DeviceConfigurationAck
+            );
+            assert_eq!(
+                TunnellingAck::parse(&ack_frame.body)
+                    .unwrap()
+                    .sequence_counter,
+                0
+            );
+
+            let (length, client) = timeout(Duration::from_secs(2), server.recv_from(&mut buffer))
+                .await
+                .unwrap()
+                .unwrap();
             let frame = KnxIpFrame::parse(&buffer[..length]).unwrap();
             assert_eq!(
                 frame.header.service_type,
+                ServiceType::DeviceConfigurationRequest
+            );
+            let request = TunnellingRequest::parse(&frame.body).unwrap();
+            assert_eq!(request.sequence_counter, 1);
+            let write = CemiPropertyWriteRequest::decode(&request.raw_cemi).unwrap();
+            assert_eq!(write.property, property);
+            assert_eq!(write.data, [0x12, 0x34]);
+
+            server
+                .send_to(
+                    &KnxIpFrame::new(
+                        ServiceType::DeviceConfigurationAck,
+                        TunnellingAck::new_ok(5, 1).serialize(),
+                    )
+                    .serialize(),
+                    client,
+                )
+                .await
+                .unwrap();
+            let response = CemiPropertyWriteResponse {
+                property,
+                error_code: None,
+            }
+            .encode()
+            .unwrap();
+            server
+                .send_to(
+                    &KnxIpFrame::new(
+                        ServiceType::DeviceConfigurationRequest,
+                        TunnellingRequest::new(5, 1, response).serialize(),
+                    )
+                    .serialize(),
+                    client,
+                )
+                .await
+                .unwrap();
+            let (length, _) = timeout(Duration::from_secs(2), server.recv_from(&mut buffer))
+                .await
+                .unwrap()
+                .unwrap();
+            let ack_frame = KnxIpFrame::parse(&buffer[..length]).unwrap();
+            assert_eq!(
+                ack_frame.header.service_type,
                 ServiceType::DeviceConfigurationAck
             );
-            let ack = TunnellingAck::parse(&frame.body).unwrap();
-            assert_eq!(ack.communication_channel_id, 5);
-            assert_eq!(ack.sequence_counter, 0);
+            assert_eq!(
+                TunnellingAck::parse(&ack_frame.body)
+                    .unwrap()
+                    .sequence_counter,
+                1
+            );
 
             let (length, client) = timeout(Duration::from_secs(2), server.recv_from(&mut buffer))
                 .await
@@ -487,19 +667,24 @@ mod tests {
         )
         .await
         .unwrap();
-        let cemi = CemiFrame::new(
-            MessageCode::MPropReadReq,
-            IndividualAddress::new(1, 1, 1),
-            Address::Individual(IndividualAddress::new(1, 1, 2)),
-            vec![0x00, 0x01],
-        )
-        .serialize()
-        .unwrap();
-        let response = connection
-            .request_cemi(&cemi, MessageCode::MPropReadCon, Duration::from_secs(2))
+        let property = CemiPropertyInfo {
+            object_type: 0x0011,
+            object_instance: 1,
+            property_id: 2,
+            number_of_elements: 1,
+            start_index: 1,
+        };
+        assert_eq!(
+            connection
+                .read_property(property, Duration::from_secs(2))
+                .await
+                .unwrap(),
+            [0x42]
+        );
+        connection
+            .write_property(property, &[0x12, 0x34], Duration::from_secs(2))
             .await
             .unwrap();
-        assert_eq!(response, [MessageCode::MPropReadCon.to_u8(), 0x42]);
         connection.disconnect(Duration::from_secs(2)).await.unwrap();
         server_task.await.unwrap();
     }

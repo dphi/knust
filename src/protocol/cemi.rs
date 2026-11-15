@@ -592,6 +592,242 @@ impl MessageCode {
     }
 }
 
+/// KNXnet/IP cEMI property addressing fields shared by M_Prop requests and responses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CemiPropertyInfo {
+    pub object_type: u16,
+    pub object_instance: u8,
+    pub property_id: u8,
+    pub number_of_elements: u8,
+    pub start_index: u16,
+}
+
+impl CemiPropertyInfo {
+    const LENGTH: usize = 6;
+
+    /// Encode the fixed six-byte property header.
+    pub fn encode(self) -> Result<[u8; Self::LENGTH]> {
+        if self.number_of_elements > 0x0F || self.start_index > 0x0FFF {
+            return Err(ProtocolError::InvalidFrame {
+                details: "cEMI property element count or start index is out of range".into(),
+            }
+            .into());
+        }
+        let index = (u16::from(self.number_of_elements) << 12) | self.start_index;
+        Ok([
+            (self.object_type >> 8) as u8,
+            self.object_type as u8,
+            self.object_instance,
+            self.property_id,
+            (index >> 8) as u8,
+            index as u8,
+        ])
+    }
+
+    /// Decode a fixed six-byte property header.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != Self::LENGTH {
+            return Err(ProtocolError::ParseError {
+                offset: bytes.len(),
+                reason: format!(
+                    "Expected six-byte cEMI property header, got {}",
+                    bytes.len()
+                ),
+            }
+            .into());
+        }
+        let index = u16::from_be_bytes([bytes[4], bytes[5]]);
+        Ok(Self {
+            object_type: u16::from_be_bytes([bytes[0], bytes[1]]),
+            object_instance: bytes[2],
+            property_id: bytes[3],
+            number_of_elements: (index >> 12) as u8,
+            start_index: index & 0x0FFF,
+        })
+    }
+}
+
+/// M_PropRead.req cEMI message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CemiPropertyReadRequest {
+    pub property: CemiPropertyInfo,
+}
+
+impl CemiPropertyReadRequest {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut bytes = vec![MessageCode::MPropReadReq.to_u8()];
+        bytes.extend_from_slice(&self.property.encode()?);
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.first() != Some(&MessageCode::MPropReadReq.to_u8()) {
+            return Err(ProtocolError::ParseError {
+                offset: 0,
+                reason: "Expected M_PropRead.req".into(),
+            }
+            .into());
+        }
+        Ok(Self {
+            property: CemiPropertyInfo::decode(&bytes[1..])?,
+        })
+    }
+}
+
+/// M_PropRead.con cEMI message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CemiPropertyReadResponse {
+    pub property: CemiPropertyInfo,
+    pub data: Vec<u8>,
+    pub error_code: Option<u8>,
+}
+
+impl CemiPropertyReadResponse {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut bytes = vec![MessageCode::MPropReadCon.to_u8()];
+        bytes.extend_from_slice(&self.property.encode()?);
+        if self.property.number_of_elements == 0 {
+            let Some(error_code) = self.error_code else {
+                return Err(ProtocolError::InvalidFrame {
+                    details: "cEMI property read error response needs an error code".into(),
+                }
+                .into());
+            };
+            if !self.data.is_empty() {
+                return Err(ProtocolError::InvalidFrame {
+                    details: "cEMI property read error response cannot contain data".into(),
+                }
+                .into());
+            }
+            bytes.push(error_code);
+        } else {
+            if self.error_code.is_some() || self.data.is_empty() {
+                return Err(ProtocolError::InvalidFrame {
+                    details: "cEMI property read response needs data and no error code".into(),
+                }
+                .into());
+            }
+            bytes.extend_from_slice(&self.data);
+        }
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.first() != Some(&MessageCode::MPropReadCon.to_u8()) || bytes.len() < 7 {
+            return Err(ProtocolError::ParseError {
+                offset: 0,
+                reason: "Invalid M_PropRead.con frame".into(),
+            }
+            .into());
+        }
+        let property = CemiPropertyInfo::decode(&bytes[1..7])?;
+        if property.number_of_elements == 0 {
+            if bytes.len() != 8 {
+                return Err(ProtocolError::ParseError {
+                    offset: bytes.len(),
+                    reason: "M_PropRead.con error response must carry one error code".into(),
+                }
+                .into());
+            }
+            Ok(Self {
+                property,
+                data: Vec::new(),
+                error_code: Some(bytes[7]),
+            })
+        } else if bytes.len() == 7 {
+            Err(ProtocolError::ParseError {
+                offset: bytes.len(),
+                reason: "M_PropRead.con response has no data".into(),
+            }
+            .into())
+        } else {
+            Ok(Self {
+                property,
+                data: bytes[7..].to_vec(),
+                error_code: None,
+            })
+        }
+    }
+}
+
+/// M_PropWrite.req cEMI message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CemiPropertyWriteRequest {
+    pub property: CemiPropertyInfo,
+    pub data: Vec<u8>,
+}
+
+impl CemiPropertyWriteRequest {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        if self.data.is_empty() || self.property.number_of_elements == 0 {
+            return Err(ProtocolError::InvalidFrame {
+                details: "cEMI property write request needs elements and data".into(),
+            }
+            .into());
+        }
+        let mut bytes = vec![MessageCode::MPropWriteReq.to_u8()];
+        bytes.extend_from_slice(&self.property.encode()?);
+        bytes.extend_from_slice(&self.data);
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.first() != Some(&MessageCode::MPropWriteReq.to_u8()) || bytes.len() <= 7 {
+            return Err(ProtocolError::ParseError {
+                offset: 0,
+                reason: "Invalid M_PropWrite.req frame".into(),
+            }
+            .into());
+        }
+        let property = CemiPropertyInfo::decode(&bytes[1..7])?;
+        if property.number_of_elements == 0 {
+            return Err(ProtocolError::ParseError {
+                offset: 5,
+                reason: "M_PropWrite.req cannot have zero elements".into(),
+            }
+            .into());
+        }
+        Ok(Self {
+            property,
+            data: bytes[7..].to_vec(),
+        })
+    }
+}
+
+/// M_PropWrite.con cEMI message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CemiPropertyWriteResponse {
+    pub property: CemiPropertyInfo,
+    pub error_code: Option<u8>,
+}
+
+impl CemiPropertyWriteResponse {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut bytes = vec![MessageCode::MPropWriteCon.to_u8()];
+        bytes.extend_from_slice(&self.property.encode()?);
+        if let Some(error_code) = self.error_code {
+            bytes.push(error_code);
+        }
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.first() != Some(&MessageCode::MPropWriteCon.to_u8())
+            || !(7..=8).contains(&bytes.len())
+        {
+            return Err(ProtocolError::ParseError {
+                offset: 0,
+                reason: "Invalid M_PropWrite.con frame".into(),
+            }
+            .into());
+        }
+        Ok(Self {
+            property: CemiPropertyInfo::decode(&bytes[1..7])?,
+            error_code: bytes.get(7).copied(),
+        })
+    }
+}
+
 /// A spontaneous property read response announced by a KNXnet/IP server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CemiPropertyInfoIndication {
@@ -1161,6 +1397,84 @@ mod tests {
         let wire = frame.serialize().unwrap();
         assert_eq!(wire[0], 0xF7);
         assert_eq!(CemiFrame::parse(&wire).unwrap(), frame);
+    }
+
+    #[test]
+    fn property_read_and_write_messages_match_wire_vectors() {
+        let property = CemiPropertyInfo {
+            object_type: 0x0029,
+            object_instance: 1,
+            property_id: 9,
+            number_of_elements: 2,
+            start_index: 3,
+        };
+        let read = CemiPropertyReadRequest { property };
+        let read_wire = read.encode().unwrap();
+        assert_eq!(read_wire, [0xFC, 0x00, 0x29, 1, 9, 0x20, 3]);
+        assert_eq!(CemiPropertyReadRequest::decode(&read_wire).unwrap(), read);
+
+        let read_response = CemiPropertyReadResponse {
+            property,
+            data: vec![0xAA, 0xBB],
+            error_code: None,
+        };
+        let read_response_wire = read_response.encode().unwrap();
+        assert_eq!(
+            read_response_wire,
+            [0xFB, 0x00, 0x29, 1, 9, 0x20, 3, 0xAA, 0xBB]
+        );
+        assert_eq!(
+            CemiPropertyReadResponse::decode(&read_response_wire).unwrap(),
+            read_response
+        );
+
+        let write = CemiPropertyWriteRequest {
+            property,
+            data: vec![0xAA, 0xBB],
+        };
+        let write_wire = write.encode().unwrap();
+        assert_eq!(write_wire, [0xF6, 0x00, 0x29, 1, 9, 0x20, 3, 0xAA, 0xBB]);
+        assert_eq!(
+            CemiPropertyWriteRequest::decode(&write_wire).unwrap(),
+            write
+        );
+
+        let write_response = CemiPropertyWriteResponse {
+            property,
+            error_code: None,
+        };
+        let write_response_wire = write_response.encode().unwrap();
+        assert_eq!(write_response_wire, [0xF5, 0x00, 0x29, 1, 9, 0x20, 3]);
+        assert_eq!(
+            CemiPropertyWriteResponse::decode(&write_response_wire).unwrap(),
+            write_response
+        );
+    }
+
+    #[test]
+    fn property_read_error_and_invalid_ranges_are_distinguished() {
+        let error = CemiPropertyReadResponse {
+            property: CemiPropertyInfo {
+                object_type: 0x0029,
+                object_instance: 1,
+                property_id: 9,
+                number_of_elements: 0,
+                start_index: 0,
+            },
+            data: Vec::new(),
+            error_code: Some(0x0B),
+        };
+        let wire = error.encode().unwrap();
+        assert_eq!(wire, [0xFB, 0x00, 0x29, 1, 9, 0, 0, 0x0B]);
+        assert_eq!(CemiPropertyReadResponse::decode(&wire).unwrap(), error);
+
+        let mut invalid = error.property;
+        invalid.number_of_elements = 16;
+        assert!(invalid.encode().is_err());
+        invalid.number_of_elements = 1;
+        invalid.start_index = 4096;
+        assert!(invalid.encode().is_err());
+        assert!(CemiPropertyReadResponse::decode(&wire[..7]).is_err());
     }
 
     #[test]
