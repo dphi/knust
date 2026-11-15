@@ -3,6 +3,7 @@
 //! These connections access the server's own interface objects. They are
 //! separate from [`super::Connection`], which carries telegrams to the KNX bus.
 
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 #[cfg(feature = "secure")]
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use tokio::net::UdpSocket;
 use super::SecurityConfig;
 use super::frame_transport::{FrameTransport, TcpFrameTransport};
 use crate::error::{ProtocolError, Result, TransportError};
-use crate::protocol::cemi::MessageCode;
+use crate::protocol::cemi::{CemiPropertyInfoIndication, MessageCode};
 use crate::protocol::knxip::{
     ConnectRequest, ConnectResponse, ConnectionRequestInfo, ConnectionstateRequest,
     ConnectionstateResponse, DisconnectRequest, DisconnectResponse, Hpai, KnxIpFrame, ServiceType,
@@ -38,6 +39,7 @@ pub struct DeviceManagementConnection {
     channel_id: u8,
     send_sequence: u8,
     receive_sequence: u8,
+    pending_indications: VecDeque<CemiPropertyInfoIndication>,
     closed: bool,
 }
 
@@ -467,6 +469,7 @@ impl DeviceManagementConnection {
             channel_id: response.channel_id,
             send_sequence: 0,
             receive_sequence: 0,
+            pending_indications: VecDeque::new(),
             closed: false,
         })
     }
@@ -601,6 +604,9 @@ impl DeviceManagementConnection {
                     DeviceManagementEvent::Response(raw_cemi) if matches(&raw_cemi) => {
                         response = Some(raw_cemi);
                     }
+                    DeviceManagementEvent::Indication(indication) => {
+                        self.pending_indications.push_back(indication);
+                    }
                     DeviceManagementEvent::Response(_) | DeviceManagementEvent::Ignored => {}
                 }
             }
@@ -627,6 +633,42 @@ impl DeviceManagementConnection {
                 Ok(Ok(DeviceManagementEvent::Response(raw_cemi))) if matches(&raw_cemi) => {
                     return Ok(raw_cemi);
                 }
+                Ok(Ok(DeviceManagementEvent::Indication(indication))) => {
+                    self.pending_indications.push_back(indication);
+                }
+                Ok(Ok(DeviceManagementEvent::Acknowledged | DeviceManagementEvent::Ignored))
+                | Ok(Ok(DeviceManagementEvent::Response(_))) => {}
+                Ok(Err(error)) => return Err(error),
+                Err(_) => {
+                    return Err(TransportError::Timeout {
+                        timeout_ms: timeout.as_millis() as u64,
+                    }
+                    .into());
+                }
+            }
+        }
+    }
+
+    /// Wait for the next unsolicited M_PropInfo.ind message from the server.
+    ///
+    /// Indications received while another request is in progress are queued
+    /// and returned here afterward.
+    pub async fn receive_property_info_indication(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<CemiPropertyInfoIndication> {
+        if let Some(indication) = self.pending_indications.pop_front() {
+            return Ok(indication);
+        }
+        if self.closed {
+            return Err(TransportError::ConnectionClosed.into());
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            match tokio::time::timeout_at(deadline, self.next_event(MessageCode::MPropInfoInd))
+                .await
+            {
+                Ok(Ok(DeviceManagementEvent::Indication(indication))) => return Ok(indication),
                 Ok(Ok(DeviceManagementEvent::Acknowledged | DeviceManagementEvent::Ignored))
                 | Ok(Ok(DeviceManagementEvent::Response(_))) => {}
                 Ok(Err(error)) => return Err(error),
@@ -747,6 +789,11 @@ impl DeviceManagementConnection {
                     self.receive_sequence = expected_sequence.wrapping_add(1);
                     self.send_device_configuration_ack(request.sequence_counter)
                         .await?;
+                    if request.raw_cemi.first() == Some(&MessageCode::MPropInfoInd.to_u8()) {
+                        return Ok(DeviceManagementEvent::Indication(
+                            CemiPropertyInfoIndication::parse(&request.raw_cemi)?,
+                        ));
+                    }
                     if request.raw_cemi.first() == Some(&expected.to_u8()) {
                         return Ok(DeviceManagementEvent::Response(request.raw_cemi));
                     }
@@ -776,6 +823,7 @@ impl DeviceManagementConnection {
 enum DeviceManagementEvent {
     Acknowledged,
     Response(Vec<u8>),
+    Indication(CemiPropertyInfoIndication),
     Ignored,
 }
 
@@ -823,8 +871,8 @@ mod tests {
     #[tokio::test]
     async fn udp_device_management_client_reads_and_writes_properties_with_loopback_server() {
         use crate::protocol::cemi::{
-            CemiPropertyInfo, CemiPropertyReadRequest, CemiPropertyReadResponse,
-            CemiPropertyWriteRequest, CemiPropertyWriteResponse,
+            CemiPropertyInfo, CemiPropertyInfoIndication, CemiPropertyReadRequest,
+            CemiPropertyReadResponse, CemiPropertyWriteRequest, CemiPropertyWriteResponse,
         };
 
         let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -916,6 +964,38 @@ mod tests {
                 )
                 .await
                 .unwrap();
+            let indication = CemiPropertyInfoIndication {
+                object_type: 0x0012,
+                object_instance: 1,
+                property_id: 5,
+                element_count: 1,
+                start_index: 1,
+                data: vec![0x7F],
+            }
+            .serialize()
+            .unwrap();
+            server
+                .send_to(
+                    &KnxIpFrame::new(
+                        ServiceType::DeviceConfigurationRequest,
+                        TunnellingRequest::new(5, 0, indication).serialize(),
+                    )
+                    .serialize(),
+                    client,
+                )
+                .await
+                .unwrap();
+            let (length, _) = timeout(Duration::from_secs(2), server.recv_from(&mut buffer))
+                .await
+                .unwrap()
+                .unwrap();
+            let indication_ack = KnxIpFrame::parse(&buffer[..length]).unwrap();
+            assert_eq!(
+                TunnellingAck::parse(&indication_ack.body)
+                    .unwrap()
+                    .sequence_counter,
+                0
+            );
             let response = CemiPropertyReadResponse {
                 property,
                 data: vec![0x42],
@@ -927,7 +1007,7 @@ mod tests {
                 .send_to(
                     &KnxIpFrame::new(
                         ServiceType::DeviceConfigurationRequest,
-                        TunnellingRequest::new(5, 0, response).serialize(),
+                        TunnellingRequest::new(5, 1, response).serialize(),
                     )
                     .serialize(),
                     client,
@@ -947,7 +1027,7 @@ mod tests {
                 TunnellingAck::parse(&ack_frame.body)
                     .unwrap()
                     .sequence_counter,
-                0
+                1
             );
 
             let (length, client) = timeout(Duration::from_secs(2), server.recv_from(&mut buffer))
@@ -986,7 +1066,7 @@ mod tests {
                 .send_to(
                     &KnxIpFrame::new(
                         ServiceType::DeviceConfigurationRequest,
-                        TunnellingRequest::new(5, 1, response).serialize(),
+                        TunnellingRequest::new(5, 2, response).serialize(),
                     )
                     .serialize(),
                     client,
@@ -1006,7 +1086,7 @@ mod tests {
                 TunnellingAck::parse(&ack_frame.body)
                     .unwrap()
                     .sequence_counter,
-                1
+                2
             );
 
             let (length, client) = timeout(Duration::from_secs(2), server.recv_from(&mut buffer))
@@ -1049,6 +1129,14 @@ mod tests {
                 .unwrap(),
             [0x42]
         );
+        let indication = connection
+            .receive_property_info_indication(Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(indication.object_type, 0x0012);
+        assert_eq!(indication.object_instance, 1);
+        assert_eq!(indication.property_id, 5);
+        assert_eq!(indication.data, [0x7F]);
         connection
             .write_property(property, &[0x12, 0x34], Duration::from_secs(2))
             .await
