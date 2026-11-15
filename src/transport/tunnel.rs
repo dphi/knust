@@ -15,6 +15,8 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+#[cfg(feature = "secure")]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
@@ -92,6 +94,10 @@ pub struct Tunnel {
     heartbeat: std::sync::RwLock<Option<Arc<HeartbeatMonitor>>>,
     #[cfg(feature = "secure")]
     secure_session: Option<Arc<tokio::sync::RwLock<SecureSession>>>,
+    #[cfg(feature = "secure")]
+    secure_wrapped_tunneling_seen: AtomicBool,
+    #[cfg(feature = "secure")]
+    secure_unwrapped_warning_logged: AtomicBool,
     #[cfg(feature = "secure")]
     secure_activity: Arc<SecureActivity>,
     #[cfg(feature = "secure")]
@@ -177,6 +183,10 @@ impl Tunnel {
             heartbeat: std::sync::RwLock::new(None),
             #[cfg(feature = "secure")]
             secure_session: None,
+            #[cfg(feature = "secure")]
+            secure_wrapped_tunneling_seen: AtomicBool::new(false),
+            #[cfg(feature = "secure")]
+            secure_unwrapped_warning_logged: AtomicBool::new(false),
             #[cfg(feature = "secure")]
             secure_activity: Arc::new(SecureActivity::default()),
             #[cfg(feature = "secure")]
@@ -533,6 +543,10 @@ impl Tunnel {
         session.complete_authentication(status_data[7]).await?;
 
         self.secure_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
+        self.secure_wrapped_tunneling_seen
+            .store(false, Ordering::SeqCst);
+        self.secure_unwrapped_warning_logged
+            .store(false, Ordering::SeqCst);
         self.start_secure_keepalive(Duration::from_secs(config.keepalive_interval as u64))?;
         log_transport!(LogLevel::Info, "Secure session established");
 
@@ -823,17 +837,50 @@ impl Tunnel {
     pub async fn recv_frame(&self) -> Result<Vec<u8>> {
         let result = async {
             let transport = self.transport()?;
-            let raw = transport.recv_frame().await?;
             #[cfg(feature = "secure")]
-            let data = if let Some(ref session) = self.secure_session {
-                session.read().await.decrypt_frame(&raw).await?
-            } else {
-                raw
+            let (data, was_secure) = loop {
+                let raw = transport.recv_frame().await?;
+                let (data, was_secure) = if let Some(ref session) = self.secure_session {
+                    let service = match KnxIpFrame::parse(&raw) {
+                        Ok(frame) => frame.header.service_type,
+                        Err(_) => continue,
+                    };
+                    if service == ServiceType::SecureWrapper {
+                        let data = session.read().await.decrypt_frame(&raw).await?;
+                        if KnxIpFrame::parse(&data)
+                            .is_ok_and(|frame| frame.header.service_type == ServiceType::TunnellingRequest)
+                        {
+                            self.secure_wrapped_tunneling_seen.store(true, Ordering::SeqCst);
+                        }
+                        (data, true)
+                    } else if !self.secure_wrapped_tunneling_seen.load(Ordering::SeqCst)
+                        && matches!(
+                            service,
+                            ServiceType::TunnellingRequest | ServiceType::DisconnectRequest
+                        )
+                    {
+                        if !self
+                            .secure_unwrapped_warning_logged
+                            .swap(true, Ordering::SeqCst)
+                        {
+                            log_transport!(
+                                LogLevel::Warn,
+                                "Accepting initial unwrapped tunnel control frame in KNX IP Secure session"
+                            );
+                        }
+                        (raw, false)
+                    } else {
+                        continue;
+                    }
+                } else {
+                    (raw, false)
+                };
+                break (data, was_secure);
             };
             #[cfg(not(feature = "secure"))]
-            let data = raw;
+            let data = transport.recv_frame().await?;
             #[cfg(feature = "secure")]
-            if self.secure_session.is_some() {
+            if was_secure {
                 self.secure_activity.touch().await;
             }
             Ok(data)
@@ -1142,19 +1189,27 @@ mod tunneling_address_tests {
     use super::*;
 
     #[cfg(feature = "secure")]
-    struct KeepaliveTestTransport(tokio::sync::mpsc::UnboundedSender<Vec<u8>>);
+    struct KeepaliveTestTransport {
+        sent: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+        incoming: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>,
+    }
 
     #[cfg(feature = "secure")]
     #[async_trait::async_trait]
     impl FrameTransport for KeepaliveTestTransport {
         async fn send_frame(&self, frame: &[u8]) -> Result<()> {
-            self.0
+            self.sent
                 .send(frame.to_vec())
                 .map_err(|_| TransportError::ConnectionClosed.into())
         }
 
         async fn recv_frame(&self) -> Result<Vec<u8>> {
-            Err(TransportError::ConnectionClosed.into())
+            self.incoming
+                .lock()
+                .await
+                .recv()
+                .await
+                .ok_or_else(|| TransportError::ConnectionClosed.into())
         }
 
         fn kind(&self) -> TransportKind {
@@ -1193,8 +1248,12 @@ mod tunneling_address_tests {
         client.complete_authentication(0).await.unwrap();
 
         let (sent_tx, mut sent_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_incoming_tx, incoming_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut tunnel = Tunnel::new_udp(gateway());
-        tunnel.transport = std::sync::Mutex::new(Some(Arc::new(KeepaliveTestTransport(sent_tx))));
+        tunnel.transport = std::sync::Mutex::new(Some(Arc::new(KeepaliveTestTransport {
+            sent: sent_tx,
+            incoming: tokio::sync::Mutex::new(incoming_rx),
+        })));
         tunnel.secure_session = Some(Arc::new(tokio::sync::RwLock::new(client)));
         tunnel
             .start_secure_keepalive(Duration::from_secs(15))
@@ -1219,6 +1278,75 @@ mod tunneling_address_tests {
         if let Some(cancel) = tunnel.secure_keepalive_cancel.take() {
             let _ = cancel.send(());
         }
+    }
+
+    #[cfg(feature = "secure")]
+    #[tokio::test(start_paused = true)]
+    async fn secure_tunnel_accepts_only_initial_unwrapped_control_frames() {
+        let config = SessionConfig {
+            user_id: 1,
+            user_password: crate::security::generate_password(),
+            device_auth_password: Some(crate::security::generate_password()),
+            keepalive_interval: 15,
+        };
+        let mut client = SecureSession::new(&config);
+        let mut server = SecureSession::new(&config);
+        let client_pub: [u8; 32] = client.initialize().await.try_into().unwrap();
+        let server_pub: [u8; 32] = server.initialize().await.try_into().unwrap();
+        let response_mac = server
+            .process_session_request(&client_pub, 42)
+            .await
+            .unwrap();
+        let auth_mac = client
+            .process_session_response(42, &server_pub, &response_mac)
+            .await
+            .unwrap();
+        assert!(
+            server
+                .verify_authenticate_mac(&client_pub, 1, &auth_mac)
+                .await
+                .unwrap()
+        );
+        client.complete_authentication(0).await.unwrap();
+
+        let (sent_tx, _sent_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (incoming_tx, incoming_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut tunnel = Tunnel::new_udp(gateway());
+        *tunnel.transport.lock().unwrap() = Some(Arc::new(KeepaliveTestTransport {
+            sent: sent_tx,
+            incoming: tokio::sync::Mutex::new(incoming_rx),
+        }));
+        tunnel.secure_session = Some(Arc::new(tokio::sync::RwLock::new(client)));
+
+        let initial_request =
+            KnxIpFrame::new(ServiceType::TunnellingRequest, vec![4, 1, 0, 0]).serialize();
+        incoming_tx.send(initial_request.clone()).unwrap();
+        assert_eq!(tunnel.recv_frame().await.unwrap(), initial_request);
+
+        let unrelated =
+            KnxIpFrame::new(ServiceType::ConnectionstateResponse, vec![0; 8]).serialize();
+        let initial_disconnect =
+            KnxIpFrame::new(ServiceType::DisconnectRequest, vec![1, 0, 0]).serialize();
+        incoming_tx.send(unrelated).unwrap();
+        incoming_tx.send(initial_disconnect.clone()).unwrap();
+        assert_eq!(tunnel.recv_frame().await.unwrap(), initial_disconnect);
+
+        let wrapped_request =
+            KnxIpFrame::new(ServiceType::TunnellingRequest, vec![4, 1, 0, 0]).serialize();
+        incoming_tx
+            .send(server.encrypt_frame(&wrapped_request).await.unwrap())
+            .unwrap();
+        assert_eq!(tunnel.recv_frame().await.unwrap(), wrapped_request);
+
+        incoming_tx
+            .send(KnxIpFrame::new(ServiceType::DisconnectRequest, vec![1, 0, 0]).serialize())
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), tunnel.recv_frame())
+                .await
+                .is_err(),
+            "unwrapped disconnects are discarded after a wrapped tunnelling request"
+        );
     }
 
     fn gateway() -> SocketAddr {
