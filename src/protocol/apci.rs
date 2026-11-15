@@ -71,6 +71,14 @@ impl GroupValueService {
             apci_data.len()
         );
 
+        if matches!(service, 0x0040 | 0x0080) && apci_data.len() > 1 && first_apci & 0x3F != 0 {
+            return Err(ProtocolError::DptError {
+                dpt_type: "APCI".to_string(),
+                details: "Multi-octet group payload has nonzero compact data bits".to_string(),
+            }
+            .into());
+        }
+
         match service {
             0x0000 if first_apci == 0 && apci_data.len() == 1 => Ok(Self::Read),
             0x0000 => Err(ProtocolError::DptError {
@@ -157,5 +165,11 @@ mod tests {
     fn group_value_read_rejects_reserved_bits_and_trailing_payload() {
         assert!(GroupValueService::decode(0x00, &[0x01]).is_err());
         assert!(GroupValueService::decode(0x00, &[0x00, 0x01]).is_err());
+    }
+
+    #[test]
+    fn group_value_response_and_write_reject_compact_bits_with_octet_payloads() {
+        assert!(GroupValueService::decode(0x00, &[0x41, 0xAA]).is_err());
+        assert!(GroupValueService::decode(0x00, &[0x81, 0xAA]).is_err());
     }
 }
