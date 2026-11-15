@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use tokio::net::UdpSocket;
 
+use super::frame_transport::{FrameTransport, TcpFrameTransport};
 use crate::error::{ProtocolError, Result, TransportError};
 use crate::protocol::cemi::MessageCode;
 use crate::protocol::knxip::{
@@ -16,12 +17,12 @@ use crate::protocol::knxip::{
     TunnellingAck, TunnellingRequest,
 };
 
-/// An unencrypted UDP KNXnet/IP device-management connection.
+/// An unencrypted KNXnet/IP device-management connection over UDP or TCP.
 ///
 /// Use [`request_cemi`](Self::request_cemi) to send one cEMI request and await
 /// its matching response. Requests on a connection are serialized.
 pub struct DeviceManagementConnection {
-    socket: UdpSocket,
+    transport: ManagementTransport,
     gateway: SocketAddr,
     data_endpoint: SocketAddr,
     local_hpai: Hpai,
@@ -29,6 +30,30 @@ pub struct DeviceManagementConnection {
     send_sequence: u8,
     receive_sequence: u8,
     closed: bool,
+}
+
+enum ManagementTransport {
+    Udp(UdpSocket),
+    Tcp(TcpFrameTransport),
+}
+
+impl ManagementTransport {
+    async fn send(&self, destination: SocketAddr, frame: &[u8]) -> Result<()> {
+        match self {
+            Self::Udp(socket) => send_udp_frame(socket, destination, frame).await,
+            Self::Tcp(transport) => transport.send_frame(frame).await,
+        }
+    }
+
+    async fn receive(&self) -> Result<(KnxIpFrame, Option<SocketAddr>)> {
+        match self {
+            Self::Udp(socket) => {
+                let (frame, source) = receive_udp_frame(socket).await?;
+                Ok((frame, Some(source)))
+            }
+            Self::Tcp(transport) => Ok((KnxIpFrame::parse(&transport.recv_frame().await?)?, None)),
+        }
+    }
 }
 
 impl DeviceManagementConnection {
@@ -56,24 +81,60 @@ impl DeviceManagementConnection {
         } else {
             Hpai::new(bound_addr)
         };
-        let mut connect = ConnectRequest::new(local_hpai.socket_addr(), local_hpai.socket_addr());
-        connect.cri = ConnectionRequestInfo::new_device_management();
-        send_frame(
-            &socket,
+        Self::establish(
+            ManagementTransport::Udp(socket),
             gateway,
-            &KnxIpFrame::new(ServiceType::ConnectRequest, connect.serialize()).serialize(),
+            local_hpai.clone(),
+            local_hpai.clone(),
+            local_hpai,
+            timeout,
         )
-        .await?;
+        .await
+    }
+
+    /// Open a TCP device-management connection.
+    pub async fn connect_tcp(gateway: SocketAddr, timeout: Duration) -> Result<Self> {
+        let (transport, _) = TcpFrameTransport::connect(gateway, timeout).await?;
+        let hpai = Hpai::new_tcp_route_back();
+        Self::establish(
+            ManagementTransport::Tcp(transport),
+            gateway,
+            hpai.clone(),
+            hpai.clone(),
+            hpai,
+            timeout,
+        )
+        .await
+    }
+
+    async fn establish(
+        transport: ManagementTransport,
+        gateway: SocketAddr,
+        control_endpoint: Hpai,
+        data_endpoint: Hpai,
+        local_hpai: Hpai,
+        timeout: Duration,
+    ) -> Result<Self> {
+        let connect = ConnectRequest {
+            control_endpoint,
+            data_endpoint,
+            cri: ConnectionRequestInfo::new_device_management(),
+        };
+        let frame = KnxIpFrame::new(ServiceType::ConnectRequest, connect.serialize()).serialize();
+        transport.send(gateway, &frame).await?;
 
         let response = loop {
-            let (frame, source) = tokio::time::timeout(timeout, receive_frame(&socket))
+            let (frame, source) = tokio::time::timeout(timeout, transport.receive())
                 .await
                 .map_err(|_| TransportError::Timeout {
                     timeout_ms: timeout.as_millis() as u64,
                 })??;
-            if source == gateway && frame.header.service_type == ServiceType::ConnectResponse {
-                break ConnectResponse::parse(&frame.body)?;
+            if source.is_some_and(|source| source != gateway)
+                || frame.header.service_type != ServiceType::ConnectResponse
+            {
+                continue;
             }
+            break ConnectResponse::parse(&frame.body)?;
         };
         if !response.is_success() {
             return Err(TransportError::ConnectionFailed {
@@ -85,16 +146,21 @@ impl DeviceManagementConnection {
             }
             .into());
         }
-        let data_endpoint = if response.data_endpoint.port == 0
+        let response_endpoint = if response.data_endpoint.port == 0
             || response.data_endpoint.ip_addr.is_unspecified()
         {
             gateway
         } else {
             response.data_endpoint.socket_addr()
         };
+        let data_endpoint = if matches!(transport, ManagementTransport::Tcp(_)) {
+            gateway
+        } else {
+            response_endpoint
+        };
 
         Ok(Self {
-            socket,
+            transport,
             gateway,
             data_endpoint,
             local_hpai,
@@ -217,7 +283,7 @@ impl DeviceManagementConnection {
         let mut acknowledged = false;
 
         for _ in 0..=3 {
-            send_frame(&self.socket, self.data_endpoint, &frame).await?;
+            self.transport.send(self.data_endpoint, &frame).await?;
             let deadline = tokio::time::Instant::now() + timeout;
             loop {
                 let event =
@@ -280,20 +346,21 @@ impl DeviceManagementConnection {
             return Err(TransportError::ConnectionClosed.into());
         }
         let request = ConnectionstateRequest::new(self.channel_id, self.local_hpai.clone());
-        send_frame(
-            &self.socket,
-            self.gateway,
-            &KnxIpFrame::new(ServiceType::ConnectionstateRequest, request.serialize()).serialize(),
-        )
-        .await?;
+        self.transport
+            .send(
+                self.gateway,
+                &KnxIpFrame::new(ServiceType::ConnectionstateRequest, request.serialize())
+                    .serialize(),
+            )
+            .await?;
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            let (frame, source) = tokio::time::timeout_at(deadline, receive_frame(&self.socket))
+            let (frame, source) = tokio::time::timeout_at(deadline, self.transport.receive())
                 .await
                 .map_err(|_| TransportError::Timeout {
                     timeout_ms: timeout.as_millis() as u64,
                 })??;
-            if source != self.gateway
+            if source.is_some_and(|source| source != self.gateway)
                 || frame.header.service_type != ServiceType::ConnectionstateResponse
             {
                 continue;
@@ -315,20 +382,20 @@ impl DeviceManagementConnection {
             return Ok(());
         }
         let request = DisconnectRequest::new(self.channel_id, self.local_hpai.clone());
-        send_frame(
-            &self.socket,
-            self.gateway,
-            &KnxIpFrame::new(ServiceType::DisconnectRequest, request.serialize()).serialize(),
-        )
-        .await?;
+        self.transport
+            .send(
+                self.gateway,
+                &KnxIpFrame::new(ServiceType::DisconnectRequest, request.serialize()).serialize(),
+            )
+            .await?;
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            let (frame, source) = tokio::time::timeout_at(deadline, receive_frame(&self.socket))
+            let (frame, source) = tokio::time::timeout_at(deadline, self.transport.receive())
                 .await
                 .map_err(|_| TransportError::Timeout {
                     timeout_ms: timeout.as_millis() as u64,
                 })??;
-            if source != self.gateway
+            if source.is_some_and(|source| source != self.gateway)
                 || frame.header.service_type != ServiceType::DisconnectResponse
             {
                 continue;
@@ -346,8 +413,8 @@ impl DeviceManagementConnection {
     }
 
     async fn next_event(&mut self, expected: MessageCode) -> Result<DeviceManagementEvent> {
-        let (frame, source) = receive_frame(&self.socket).await?;
-        if source != self.gateway && source != self.data_endpoint {
+        let (frame, source) = self.transport.receive().await?;
+        if source.is_some_and(|source| source != self.gateway && source != self.data_endpoint) {
             return Ok(DeviceManagementEvent::Ignored);
         }
         match frame.header.service_type {
@@ -396,12 +463,12 @@ impl DeviceManagementConnection {
 
     async fn send_device_configuration_ack(&self, sequence: u8) -> Result<()> {
         let ack = TunnellingAck::new(self.channel_id, sequence, TunnellingAck::STATUS_OK);
-        send_frame(
-            &self.socket,
-            self.data_endpoint,
-            &KnxIpFrame::new(ServiceType::DeviceConfigurationAck, ack.serialize()).serialize(),
-        )
-        .await
+        self.transport
+            .send(
+                self.data_endpoint,
+                &KnxIpFrame::new(ServiceType::DeviceConfigurationAck, ack.serialize()).serialize(),
+            )
+            .await
     }
 }
 
@@ -420,7 +487,7 @@ fn same_property(
         && left.property_id == right.property_id
 }
 
-async fn send_frame(socket: &UdpSocket, destination: SocketAddr, frame: &[u8]) -> Result<()> {
+async fn send_udp_frame(socket: &UdpSocket, destination: SocketAddr, frame: &[u8]) -> Result<()> {
     socket
         .send_to(frame, destination)
         .await
@@ -434,7 +501,7 @@ async fn send_frame(socket: &UdpSocket, destination: SocketAddr, frame: &[u8]) -
         })
 }
 
-async fn receive_frame(socket: &UdpSocket) -> Result<(KnxIpFrame, SocketAddr)> {
+async fn receive_udp_frame(socket: &UdpSocket) -> Result<(KnxIpFrame, SocketAddr)> {
     let mut buffer = [0; u16::MAX as usize];
     let (length, source) =
         socket
@@ -685,6 +752,185 @@ mod tests {
             .write_property(property, &[0x12, 0x34], Duration::from_secs(2))
             .await
             .unwrap();
+        connection.disconnect(Duration::from_secs(2)).await.unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tcp_device_management_client_reads_properties_with_loopback_server() {
+        use crate::protocol::cemi::{
+            CemiPropertyInfo, CemiPropertyReadRequest, CemiPropertyReadResponse,
+        };
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway = listener.local_addr().unwrap();
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = timeout(Duration::from_secs(2), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let transport = TcpFrameTransport::from_accepted_stream(stream);
+            let frame = KnxIpFrame::parse(
+                &timeout(Duration::from_secs(2), transport.recv_frame())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(frame.header.service_type, ServiceType::ConnectRequest);
+            let request = ConnectRequest::parse(&frame.body).unwrap();
+            assert_eq!(request.cri.serialize(), [0x02, 0x03]);
+            assert_eq!(
+                request.control_endpoint.host_protocol_code,
+                Hpai::PROTOCOL_TCP
+            );
+            assert_eq!(request.data_endpoint.host_protocol_code, Hpai::PROTOCOL_TCP);
+            let response = ConnectResponse {
+                channel_id: 7,
+                status: ConnectResponse::STATUS_OK,
+                data_endpoint: Hpai::new_tcp_route_back(),
+                crd: vec![0x02, 0x03],
+                assigned_address: None,
+            };
+            transport
+                .send_frame(
+                    &KnxIpFrame::new(ServiceType::ConnectResponse, response.serialize())
+                        .serialize(),
+                )
+                .await
+                .unwrap();
+
+            let property = CemiPropertyInfo {
+                object_type: 0x0011,
+                object_instance: 1,
+                property_id: 2,
+                number_of_elements: 1,
+                start_index: 1,
+            };
+            let frame = KnxIpFrame::parse(
+                &timeout(Duration::from_secs(2), transport.recv_frame())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                frame.header.service_type,
+                ServiceType::DeviceConfigurationRequest
+            );
+            let request = TunnellingRequest::parse(&frame.body).unwrap();
+            assert_eq!(request.sequence_counter, 0);
+            assert_eq!(
+                CemiPropertyReadRequest::decode(&request.raw_cemi)
+                    .unwrap()
+                    .property,
+                property
+            );
+
+            transport
+                .send_frame(
+                    &KnxIpFrame::new(
+                        ServiceType::DeviceConfigurationAck,
+                        TunnellingAck::new_ok(7, 0).serialize(),
+                    )
+                    .serialize(),
+                )
+                .await
+                .unwrap();
+            let response = CemiPropertyReadResponse {
+                property,
+                data: vec![0x24],
+                error_code: None,
+            }
+            .encode()
+            .unwrap();
+            transport
+                .send_frame(
+                    &KnxIpFrame::new(
+                        ServiceType::DeviceConfigurationRequest,
+                        TunnellingRequest::new(7, 0, response).serialize(),
+                    )
+                    .serialize(),
+                )
+                .await
+                .unwrap();
+
+            let frame = KnxIpFrame::parse(
+                &timeout(Duration::from_secs(2), transport.recv_frame())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                frame.header.service_type,
+                ServiceType::DeviceConfigurationAck
+            );
+            assert_eq!(
+                TunnellingAck::parse(&frame.body).unwrap().sequence_counter,
+                0
+            );
+
+            let frame = KnxIpFrame::parse(
+                &timeout(Duration::from_secs(2), transport.recv_frame())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                frame.header.service_type,
+                ServiceType::ConnectionstateRequest
+            );
+            let request = ConnectionstateRequest::parse(&frame.body).unwrap();
+            assert_eq!(request.communication_channel_id, 7);
+            let response = ConnectionstateResponse::new(7, ConnectionstateResponse::STATUS_OK);
+            transport
+                .send_frame(
+                    &KnxIpFrame::new(ServiceType::ConnectionstateResponse, response.serialize())
+                        .serialize(),
+                )
+                .await
+                .unwrap();
+
+            let frame = KnxIpFrame::parse(
+                &timeout(Duration::from_secs(2), transport.recv_frame())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(frame.header.service_type, ServiceType::DisconnectRequest);
+            let response = DisconnectResponse::new(7, DisconnectResponse::STATUS_OK);
+            transport
+                .send_frame(
+                    &KnxIpFrame::new(ServiceType::DisconnectResponse, response.serialize())
+                        .serialize(),
+                )
+                .await
+                .unwrap();
+        });
+
+        let mut connection =
+            DeviceManagementConnection::connect_tcp(gateway, Duration::from_secs(2))
+                .await
+                .unwrap();
+        let property = CemiPropertyInfo {
+            object_type: 0x0011,
+            object_instance: 1,
+            property_id: 2,
+            number_of_elements: 1,
+            start_index: 1,
+        };
+        assert_eq!(
+            connection
+                .read_property(property, Duration::from_secs(2))
+                .await
+                .unwrap(),
+            [0x24]
+        );
+        connection.heartbeat(Duration::from_secs(2)).await.unwrap();
         connection.disconnect(Duration::from_secs(2)).await.unwrap();
         server_task.await.unwrap();
     }
