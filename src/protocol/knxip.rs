@@ -625,24 +625,30 @@ impl KnxIpFrame {
     /// # Errors
     ///
     /// Returns the same errors as [`KnxIpHeader::parse`], plus
-    /// [`ProtocolError::ParseError`] if `data` is shorter than the header's
-    /// declared `total_length`.
+    /// [`ProtocolError::ParseError`] if the declared total length is shorter
+    /// than the header or differs from the supplied frame length.
     pub fn parse(data: &[u8]) -> Result<Self> {
         let header = KnxIpHeader::parse(data)?;
-
-        if data.len() < header.total_length as usize {
+        let total_length = header.total_length as usize;
+        if total_length < KnxIpHeader::LENGTH {
             return Err(ProtocolError::ParseError {
-                offset: 0,
+                offset: 4,
+                reason: format!("Invalid KNX/IP total length: {total_length}"),
+            }
+            .into());
+        }
+        if data.len() != total_length {
+            return Err(ProtocolError::ParseError {
+                offset: 4,
                 reason: format!(
-                    "Frame too short: expected {} bytes, got {}",
-                    header.total_length,
+                    "Frame length mismatch: expected {total_length} bytes, got {}",
                     data.len()
                 ),
             }
             .into());
         }
 
-        let body = data[KnxIpHeader::LENGTH..header.total_length as usize].to_vec();
+        let body = data[KnxIpHeader::LENGTH..total_length].to_vec();
 
         log_protocol!(
             LogLevel::Trace,
@@ -1320,5 +1326,20 @@ mod tests {
         };
         let parsed = SessionStatus::parse(&status.serialize()).unwrap();
         assert!(parsed.is_success());
+    }
+
+    #[test]
+    fn knxip_frame_rejects_invalid_total_lengths_and_trailing_bytes() {
+        let mut frame = KnxIpFrame::new(ServiceType::DescriptionRequest, vec![]).serialize();
+
+        frame[4..6].copy_from_slice(&5_u16.to_be_bytes());
+        assert!(KnxIpFrame::parse(&frame).is_err());
+
+        frame[4..6].copy_from_slice(&7_u16.to_be_bytes());
+        assert!(KnxIpFrame::parse(&frame).is_err());
+
+        frame[4..6].copy_from_slice(&6_u16.to_be_bytes());
+        frame.push(0);
+        assert!(KnxIpFrame::parse(&frame).is_err());
     }
 }
