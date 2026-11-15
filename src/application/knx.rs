@@ -3837,6 +3837,128 @@ impl P2pConnection {
         Ok(data)
     }
 
+    /// Write a standard-memory range in bounded chunks, optionally reading each back.
+    pub async fn write_memory_range(
+        &mut self,
+        address: u16,
+        data: &[u8],
+        max_apdu_length: usize,
+        verify: bool,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        if data.is_empty() || max_apdu_length <= 4 || data.len() > 0x1_0000 - usize::from(address) {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "Memory write data, APDU length, or address range is invalid".to_owned(),
+            }
+            .into());
+        }
+        let chunk_limit = (max_apdu_length - 4).min(63);
+        let mut offset = 0;
+        while offset < data.len() {
+            let chunk = &data[offset..(offset + chunk_limit).min(data.len())];
+            let current_address = usize::from(address) + offset;
+            let response = self
+                .write_memory(
+                    crate::protocol::management::MemoryWrite {
+                        address: current_address as u16,
+                        count: chunk.len() as u8,
+                        data: chunk.to_vec(),
+                    },
+                    timeout,
+                )
+                .await?;
+            if usize::from(response.count) != chunk.len() {
+                return Err(crate::error::ProtocolError::InvalidFrame {
+                    details: format!(
+                        "Memory write at 0x{current_address:04X} requested {} bytes, got {}",
+                        chunk.len(),
+                        response.count
+                    ),
+                }
+                .into());
+            }
+            if verify
+                && self
+                    .read_memory_range(
+                        current_address as u16,
+                        chunk.len(),
+                        max_apdu_length,
+                        timeout,
+                    )
+                    .await?
+                    != chunk
+            {
+                return Err(crate::error::ProtocolError::InvalidFrame {
+                    details: format!("Memory verification failed at 0x{current_address:04X}"),
+                }
+                .into());
+            }
+            offset += chunk.len();
+        }
+        Ok(())
+    }
+
+    /// Write a user-memory range in bounded chunks, optionally reading each back.
+    pub async fn write_user_memory_range(
+        &mut self,
+        address: u32,
+        data: &[u8],
+        max_apdu_length: usize,
+        verify: bool,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        if data.is_empty()
+            || max_apdu_length <= 5
+            || address > 0x10_0000
+            || data.len() > 0x10_0000 - address as usize
+        {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "User memory write data, APDU length, or address range is invalid"
+                    .to_owned(),
+            }
+            .into());
+        }
+        let chunk_limit = (max_apdu_length - 5).min(15);
+        let mut offset = 0;
+        while offset < data.len() {
+            let chunk = &data[offset..(offset + chunk_limit).min(data.len())];
+            let current_address = address + offset as u32;
+            let response = self
+                .write_user_memory(
+                    crate::protocol::management::UserMemoryWrite {
+                        address: current_address,
+                        count: chunk.len() as u8,
+                        data: chunk.to_vec(),
+                    },
+                    timeout,
+                )
+                .await?;
+            if usize::from(response.count) != chunk.len() {
+                return Err(crate::error::ProtocolError::InvalidFrame {
+                    details: format!(
+                        "User memory write at 0x{current_address:05X} requested {} bytes, got {}",
+                        chunk.len(),
+                        response.count
+                    ),
+                }
+                .into());
+            }
+            if verify
+                && self
+                    .read_user_memory_range(current_address, chunk.len(), max_apdu_length, timeout)
+                    .await?
+                    != chunk
+            {
+                return Err(crate::error::ProtocolError::InvalidFrame {
+                    details: format!("User memory verification failed at 0x{current_address:05X}"),
+                }
+                .into());
+            }
+            offset += chunk.len();
+        }
+        Ok(())
+    }
+
     /// Read metadata for one interface-object property over this P2P session.
     pub async fn read_property_description(
         &mut self,
@@ -5137,6 +5259,294 @@ mod integration_tests {
         assert_eq!(
             second_user_memory_chunk_response_ack.tpci,
             TpciFrame::Ack { sequence: 0 }.encode()
+        );
+
+        assert!(
+            p2p.write_memory_range(0xFFFF, &[1, 2], 15, false, Duration::from_secs(2),)
+                .await
+                .is_err()
+        );
+        assert!(
+            p2p.write_user_memory_range(0x0F_FFFF, &[1, 2], 15, false, Duration::from_secs(2),)
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), peer_traffic.recv())
+                .await
+                .is_err()
+        );
+
+        let writing_user_memory_range = tokio::spawn(async move {
+            p2p.write_user_memory_range(
+                0xABC00,
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                15,
+                false,
+                Duration::from_secs(2),
+            )
+            .await?;
+            Ok::<_, KnxError>(p2p)
+        });
+        let first_user_memory_write =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            crate::protocol::management::UserMemoryWrite::decode(&first_user_memory_write.payload)
+                .unwrap(),
+            crate::protocol::management::UserMemoryWrite {
+                address: 0xABC00,
+                count: 10,
+                data: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            }
+        );
+        let mut first_user_memory_write_ack = Telegram::individual_data(client_address, Vec::new());
+        first_user_memory_write_ack.source = device_address;
+        first_user_memory_write_ack.telegram_type = TelegramType::IndividualControl;
+        first_user_memory_write_ack.tpci = TpciFrame::Ack { sequence: 2 }.encode();
+        server.send(first_user_memory_write_ack).await.unwrap();
+        let mut first_user_memory_write_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::UserMemoryResponse {
+                address: 0xABC00,
+                count: 10,
+                data: Vec::new(),
+            }
+            .encode()
+            .unwrap(),
+        );
+        first_user_memory_write_response.source = device_address;
+        first_user_memory_write_response.tpci = TpciFrame::DataConnected { sequence: 1 }.encode();
+        server.send(first_user_memory_write_response).await.unwrap();
+        let first_user_memory_write_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            first_user_memory_write_response_ack.tpci,
+            TpciFrame::Ack { sequence: 1 }.encode()
+        );
+        let second_user_memory_write =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            crate::protocol::management::UserMemoryWrite::decode(&second_user_memory_write.payload)
+                .unwrap(),
+            crate::protocol::management::UserMemoryWrite {
+                address: 0xABC0A,
+                count: 6,
+                data: vec![11, 12, 13, 14, 15, 16],
+            }
+        );
+        let mut second_user_memory_write_ack =
+            Telegram::individual_data(client_address, Vec::new());
+        second_user_memory_write_ack.source = device_address;
+        second_user_memory_write_ack.telegram_type = TelegramType::IndividualControl;
+        second_user_memory_write_ack.tpci = TpciFrame::Ack { sequence: 3 }.encode();
+        server.send(second_user_memory_write_ack).await.unwrap();
+        let mut second_user_memory_write_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::UserMemoryResponse {
+                address: 0xABC0A,
+                count: 6,
+                data: Vec::new(),
+            }
+            .encode()
+            .unwrap(),
+        );
+        second_user_memory_write_response.source = device_address;
+        second_user_memory_write_response.tpci = TpciFrame::DataConnected { sequence: 2 }.encode();
+        server
+            .send(second_user_memory_write_response)
+            .await
+            .unwrap();
+        let mut p2p = writing_user_memory_range.await.unwrap().unwrap();
+        let second_user_memory_write_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            second_user_memory_write_response_ack.tpci,
+            TpciFrame::Ack { sequence: 2 }.encode()
+        );
+
+        let writing_verified_memory = tokio::spawn(async move {
+            let result = p2p
+                .write_memory_range(
+                    0x2000,
+                    &(1..=18).collect::<Vec<u8>>(),
+                    10,
+                    true,
+                    Duration::from_secs(2),
+                )
+                .await;
+            Ok::<_, KnxError>((p2p, result))
+        });
+        let first_verified_write =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            crate::protocol::management::MemoryWrite::decode(&first_verified_write.payload)
+                .unwrap()
+                .count,
+            6
+        );
+        let mut first_verified_write_ack = Telegram::individual_data(client_address, Vec::new());
+        first_verified_write_ack.source = device_address;
+        first_verified_write_ack.telegram_type = TelegramType::IndividualControl;
+        first_verified_write_ack.tpci = TpciFrame::Ack { sequence: 4 }.encode();
+        server.send(first_verified_write_ack).await.unwrap();
+        let mut first_verified_write_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::MemoryResponse {
+                address: 0x2000,
+                count: 6,
+                data: Vec::new(),
+            }
+            .encode()
+            .unwrap(),
+        );
+        first_verified_write_response.source = device_address;
+        first_verified_write_response.tpci = TpciFrame::DataConnected { sequence: 3 }.encode();
+        server.send(first_verified_write_response).await.unwrap();
+        let first_verified_write_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            first_verified_write_response_ack.tpci,
+            TpciFrame::Ack { sequence: 3 }.encode()
+        );
+        let first_verification_read =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            crate::protocol::management::MemoryRead::decode(&first_verification_read.payload)
+                .unwrap()
+                .address,
+            0x2000
+        );
+        let mut first_verification_read_ack = Telegram::individual_data(client_address, Vec::new());
+        first_verification_read_ack.source = device_address;
+        first_verification_read_ack.telegram_type = TelegramType::IndividualControl;
+        first_verification_read_ack.tpci = TpciFrame::Ack { sequence: 5 }.encode();
+        server.send(first_verification_read_ack).await.unwrap();
+        let mut first_verification_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::MemoryResponse {
+                address: 0x2000,
+                count: 6,
+                data: vec![1, 2, 3, 4, 5, 6],
+            }
+            .encode()
+            .unwrap(),
+        );
+        first_verification_response.source = device_address;
+        first_verification_response.tpci = TpciFrame::DataConnected { sequence: 4 }.encode();
+        server.send(first_verification_response).await.unwrap();
+        let first_verification_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            first_verification_response_ack.tpci,
+            TpciFrame::Ack { sequence: 4 }.encode()
+        );
+        let second_verified_write =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            crate::protocol::management::MemoryWrite::decode(&second_verified_write.payload)
+                .unwrap()
+                .address,
+            0x2006
+        );
+        let mut second_verified_write_ack = Telegram::individual_data(client_address, Vec::new());
+        second_verified_write_ack.source = device_address;
+        second_verified_write_ack.telegram_type = TelegramType::IndividualControl;
+        second_verified_write_ack.tpci = TpciFrame::Ack { sequence: 6 }.encode();
+        server.send(second_verified_write_ack).await.unwrap();
+        let mut second_verified_write_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::MemoryResponse {
+                address: 0x2006,
+                count: 6,
+                data: Vec::new(),
+            }
+            .encode()
+            .unwrap(),
+        );
+        second_verified_write_response.source = device_address;
+        second_verified_write_response.tpci = TpciFrame::DataConnected { sequence: 5 }.encode();
+        server.send(second_verified_write_response).await.unwrap();
+        let second_verified_write_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            second_verified_write_response_ack.tpci,
+            TpciFrame::Ack { sequence: 5 }.encode()
+        );
+        let second_verification_read =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            crate::protocol::management::MemoryRead::decode(&second_verification_read.payload)
+                .unwrap()
+                .address,
+            0x2006
+        );
+        let mut second_verification_read_ack =
+            Telegram::individual_data(client_address, Vec::new());
+        second_verification_read_ack.source = device_address;
+        second_verification_read_ack.telegram_type = TelegramType::IndividualControl;
+        second_verification_read_ack.tpci = TpciFrame::Ack { sequence: 7 }.encode();
+        server.send(second_verification_read_ack).await.unwrap();
+        let mut mismatched_verification_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::MemoryResponse {
+                address: 0x2006,
+                count: 6,
+                data: vec![0xFF; 6],
+            }
+            .encode()
+            .unwrap(),
+        );
+        mismatched_verification_response.source = device_address;
+        mismatched_verification_response.tpci = TpciFrame::DataConnected { sequence: 6 }.encode();
+        server.send(mismatched_verification_response).await.unwrap();
+        let (mut p2p, result) = writing_verified_memory.await.unwrap().unwrap();
+        assert!(result.is_err());
+        let mismatched_verification_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            mismatched_verification_ack.tpci,
+            TpciFrame::Ack { sequence: 6 }.encode()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), peer_traffic.recv())
+                .await
+                .is_err()
         );
 
         p2p.close().await.unwrap();
