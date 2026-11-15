@@ -2,8 +2,8 @@
 use knust::protocol::dpt::{
     DPTChannelActivation8, DPTChannelActivation16, DPTForceSign, DPTForceSignCool, DPTFuelTypeSet,
     DPTLightActuatorErrorInfo, DPTMedia, DPTPhasesStatus, DPTRFFilterInfo, DPTRFModeInfo,
-    DPTSecurityReport, DPTStatusAHU, DPTStatusDHWC, DPTStatusRCC, DPTStatusRHC, DPTStatusSDHWC,
-    DPTVirtualDryContact, DptPayload, DptRegistry, DptType, DptValue, RFModeInfo,
+    DPTSecurityReport, DPTStatusAHU, DPTStatusDHWC, DPTStatusRCC, DPTStatusRHC, DPTStatusRHCC,
+    DPTStatusSDHWC, DPTVirtualDryContact, DptPayload, DptRegistry, DptType, DptValue, RFModeInfo,
 };
 use knust::protocol::{Telegram, address::GroupAddress};
 
@@ -172,4 +172,5 @@ fn dhw_media_and_channel_statuses_preserve_defined_bits() {
     check_typed_status16!(DPTStatusDHWC, "22.100", 0x00ff, 8);
     check_typed_status16!(DPTMedia, "22.1000", 0x0036, 4);
     check_typed_status16!(DPTChannelActivation16, "22.1010", 0xffff, 16);
+    check_typed_status16!(DPTStatusRHCC, "22.101", 0x7fff, 15);
 }

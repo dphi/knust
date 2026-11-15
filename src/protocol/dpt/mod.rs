@@ -146,12 +146,12 @@ pub use view::{
     I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
     MeteringValueView, ModeNextView, PhasesStatusView, PrioritisedModeControlView,
     RFFilterInfoView, RFModeInfoView, RelativeColorView, RgbView, RgbwView,
-    RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
-    SceneConfigView, SceneInfoView, SceneView, SecurityReportView, Setpoints3View, Setpoints4View,
-    SolarDHWControllerStatusView, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView,
-    StrView, SupportedMediaView, TimeView, U8View, U16View, U32View,
-    VentilationControllerStatusView, VersionView, VirtualDryContactView, XYYColorTransitionView,
-    XyyView,
+    RoomCoolingControllerStatusView, RoomHeatingControllerStatusView,
+    RoomHeatingCoolingControllerStatusView, ScalingTimeView, SceneConfigView, SceneInfoView,
+    SceneView, SecurityReportView, Setpoints3View, Setpoints4View, SolarDHWControllerStatusView,
+    StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, SupportedMediaView,
+    TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
+    VirtualDryContactView, XYYColorTransitionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -762,6 +762,7 @@ impl DptRegistry {
         registry.register::<DPTStatusDHWC>();
         registry.register::<DPTMedia>();
         registry.register::<DPTChannelActivation16>();
+        registry.register::<DPTStatusRHCC>();
         registry.register::<DPTCombinedStatusHVA>();
         registry.register::<DPTCombinedStatusRTC>();
         registry.register::<DPTForecastTemperature>();

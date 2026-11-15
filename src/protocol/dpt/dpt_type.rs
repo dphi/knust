@@ -12,12 +12,12 @@ use super::view::{
     I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
     MeteringValueView, ModeNextView, PhasesStatusView, PrioritisedModeControlView,
     RFFilterInfoView, RFModeInfoView, RelativeColorView, RgbView, RgbwView,
-    RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
-    SceneConfigView, SceneInfoView, SceneView, SecurityReportView, Setpoints3View, Setpoints4View,
-    SolarDHWControllerStatusView, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView,
-    StrView, SupportedMediaView, TimeView, U8View, U16View, U32View,
-    VentilationControllerStatusView, VersionView, VirtualDryContactView, XYYColorTransitionView,
-    XyyView,
+    RoomCoolingControllerStatusView, RoomHeatingControllerStatusView,
+    RoomHeatingCoolingControllerStatusView, ScalingTimeView, SceneConfigView, SceneInfoView,
+    SceneView, SecurityReportView, Setpoints3View, Setpoints4View, SolarDHWControllerStatusView,
+    StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, SupportedMediaView,
+    TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
+    VirtualDryContactView, XYYColorTransitionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -315,6 +315,7 @@ pub enum DptType {
     DHWControllerStatus = 2_200_100,
     SupportedMedia = 2_201_000,
     ChannelActivation16 = 2_201_010,
+    RoomHeatingCoolingControllerStatus = 2_200_101,
     CombinedStatusHVA = 2_200_102,
     CombinedStatusRTC = 2_200_103,
     ForecastTemperature = 27_300_001,
@@ -869,6 +870,9 @@ impl DptType {
             22 if self.sub() == 1010 => {
                 Ok(DptView::ChannelActivation16(ChannelActivation16View(bytes)))
             }
+            22 if self.sub() == 101 => Ok(DptView::RoomHeatingCoolingControllerStatus(
+                RoomHeatingCoolingControllerStatusView(bytes),
+            )),
             22 if self.sub() == 102 => Ok(DptView::StatusHVA(StatusHVAView(bytes))),
             22 => Ok(DptView::StatusRTC(StatusRTCView(bytes))),
             225 => Ok(DptView::ScalingTime(ScalingTimeView(bytes, self.sub()))),
@@ -1293,6 +1297,9 @@ impl DptType {
                 Ok(value.encode().to_vec())
             }
             (22, DptPayload::ChannelActivation16(value)) if self.sub() == 1010 => {
+                Ok(value.encode().to_vec())
+            }
+            (22, DptPayload::RoomHeatingCoolingControllerStatus(value)) if self.sub() == 101 => {
                 Ok(value.encode().to_vec())
             }
             (22, DptPayload::StatusHVA(value)) if self.sub() == 102 => Ok(value.encode().to_vec()),

@@ -73,6 +73,7 @@ pub enum DptPayload {
     DHWControllerStatus(super::dpt_hvac_status::DHWControllerStatus),
     SupportedMedia(super::dpt_hvac_status::SupportedMedia),
     ChannelActivation16(super::dpt_hvac_status::ChannelActivation16),
+    RoomHeatingCoolingControllerStatus(super::dpt_hvac_status::RoomHeatingCoolingControllerStatus),
     StatusHVA(super::dpt_hvac_status::CombinedStatusHVA),
     StatusRTC(super::dpt_hvac_status::CombinedStatusRTC),
     Forecast(super::dpt273::Forecast),
@@ -227,6 +228,7 @@ impl DptPayload {
             Self::DHWControllerStatus(v) => v.to_string(),
             Self::SupportedMedia(v) => v.to_string(),
             Self::ChannelActivation16(v) => v.to_string(),
+            Self::RoomHeatingCoolingControllerStatus(v) => v.to_string(),
             Self::StatusHVA(v) => v.to_string(),
             Self::StatusRTC(v) => v.to_string(),
             Self::Forecast(v) => v.to_string(),
@@ -343,6 +345,9 @@ impl<'a> From<DptView<'a>> for DptPayload {
             DptView::DHWControllerStatus(v) => Self::DHWControllerStatus(v.value()),
             DptView::SupportedMedia(v) => Self::SupportedMedia(v.value()),
             DptView::ChannelActivation16(v) => Self::ChannelActivation16(v.value()),
+            DptView::RoomHeatingCoolingControllerStatus(v) => {
+                Self::RoomHeatingCoolingControllerStatus(v.value())
+            }
             DptView::StatusHVA(v) => Self::StatusHVA(v.value()),
             DptView::StatusRTC(v) => Self::StatusRTC(v.value()),
             DptView::Forecast(v) => Self::Forecast(v.value()),
