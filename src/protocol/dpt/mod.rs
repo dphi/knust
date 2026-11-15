@@ -139,13 +139,14 @@ pub use view::{
     ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
     ConverterInfoView, ConverterStatusView, ConverterTestInfoView, ConverterTestResultView,
-    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
-    DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
-    PrioritisedModeControlView, RelativeColorView, RgbView, RgbwView, ScalingTimeView,
-    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View, StatusHVAView,
-    StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View, U16View, U32View,
-    VersionView, XYYColorTransitionView, XyyView,
+    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DeviceControlView,
+    DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
+    GeneralStatusView, GeographicalLocationView, I8View, I16View, I32View, I64View,
+    MBusAddressView, MeteringValueView, ModeNextView, PrioritisedModeControlView,
+    RelativeColorView, RgbView, RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView,
+    SceneView, Setpoints3View, Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView,
+    StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView,
+    XYYColorTransitionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -737,6 +738,8 @@ impl DptRegistry {
         registry.register::<DPTRelativeControlXYY>();
         registry.register::<DPTRelativeControlRGB>();
         registry.register::<DPTCombinedStatusRTSM>();
+        registry.register::<DPTStatusGen>();
+        registry.register::<DPTDeviceControl>();
         registry.register::<DPTCombinedStatusHVA>();
         registry.register::<DPTCombinedStatusRTC>();
         registry.register::<DPTForecastTemperature>();

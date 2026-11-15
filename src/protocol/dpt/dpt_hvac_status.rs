@@ -50,6 +50,8 @@ macro_rules! status {
         impl WriteValue<$dpt> for $value { fn resolve(self, _: DptType) -> Result<$dpt> { Ok($dpt::new(self)) } }
     };
 }
+status!(GeneralStatus,DPTStatusGen,1,"21.001","general_status",out_of_service:0,fault:1,overridden:2,in_alarm:3,alarm_un_ack:4);
+status!(DeviceControl,DPTDeviceControl,1,"21.002","device_control",user_stopped:0,own_ia:1,verify_mode:2);
 status!(CombinedStatusRTSM,DPTCombinedStatusRTSM,1,"21.107","combined_status_rtsm",window_open:0,presence:1,comfort_push_button:2,comfort_prolongation_user:3,hvac_mode_user:4);
 status!(CombinedStatusHVA,DPTCombinedStatusHVA,2,"22.102","combined_status_hva",valve_open:0,short_circuit:1,overload:2,valve_kick:3,service_mode:4,manual_operation:5,forced_position:6,locked_position:7,calibration_mode:8);
 // In KNX heat/cool encoding, true selects heating and false selects cooling.

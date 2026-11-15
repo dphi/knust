@@ -368,6 +368,8 @@ macro_rules! status_view {
     };
 }
 status_view!(StatusRTSMView, CombinedStatusRTSM);
+status_view!(GeneralStatusView, GeneralStatus);
+status_view!(DeviceControlView, DeviceControl);
 status_view!(StatusHVAView, CombinedStatusHVA);
 status_view!(StatusRTCView, CombinedStatusRTC);
 
@@ -942,6 +944,8 @@ pub enum DptView<'a> {
     RelativeColor(RelativeColorView<'a>),
     XYYColorTransition(XYYColorTransitionView<'a>),
     StatusRTSM(StatusRTSMView<'a>),
+    GeneralStatus(GeneralStatusView<'a>),
+    DeviceControl(DeviceControlView<'a>),
     StatusHVA(StatusHVAView<'a>),
     StatusRTC(StatusRTCView<'a>),
     Forecast(ForecastView<'a>),
@@ -1007,6 +1011,8 @@ impl<'a> DptView<'a> {
             | Self::RelativeColor(_)
             | Self::XYYColorTransition(_)
             | Self::StatusRTSM(_)
+            | Self::GeneralStatus(_)
+            | Self::DeviceControl(_)
             | Self::StatusHVA(_)
             | Self::StatusRTC(_)
             | Self::Forecast(_)
@@ -1076,6 +1082,8 @@ impl<'a> DptView<'a> {
             Self::RelativeColor(v) => v.raw(),
             Self::XYYColorTransition(v) => v.raw(),
             Self::StatusRTSM(v) => v.raw(),
+            Self::GeneralStatus(v) => v.raw(),
+            Self::DeviceControl(v) => v.raw(),
             Self::StatusHVA(v) => v.raw(),
             Self::StatusRTC(v) => v.raw(),
             Self::Forecast(v) => v.raw(),
@@ -1152,6 +1160,8 @@ impl DptView<'_> {
             Self::RelativeColor(v) => v.value().formatted(None),
             Self::XYYColorTransition(v) => v.value().to_string(),
             Self::StatusRTSM(v) => v.value().to_string(),
+            Self::GeneralStatus(v) => v.value().to_string(),
+            Self::DeviceControl(v) => v.value().to_string(),
             Self::StatusHVA(v) => v.value().to_string(),
             Self::StatusRTC(v) => v.value().to_string(),
             Self::Forecast(v) => v.value().to_string(),
@@ -1616,6 +1626,8 @@ impl DptType {
             249 => s.parse().map(DptPayload::ColorTemperatureTransition),
             250 | 252..=254 => super::dpt_relative_color::parse_payload(s,self.main()),
             243 => s.parse().map(DptPayload::XYYColorTransition),
+            21 if self.sub() == 1 => s.parse().map(DptPayload::GeneralStatus),
+            21 if self.sub() == 2 => s.parse().map(DptPayload::DeviceControl),
             21 => s.parse().map(DptPayload::StatusRTSM),
             22 if self.sub() == 102 => s.parse().map(DptPayload::StatusHVA),
             22 => s.parse().map(DptPayload::StatusRTC),

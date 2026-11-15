@@ -5,13 +5,14 @@ use super::view::{
     ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
     ConverterInfoView, ConverterStatusView, ConverterTestInfoView, ConverterTestResultView,
-    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DoubleNibbleView,
-    DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, MBusAddressView, MeteringValueView, ModeNextView,
-    PrioritisedModeControlView, RelativeColorView, RgbView, RgbwView, ScalingTimeView,
-    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View, StatusHVAView,
-    StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View, U16View, U32View,
-    VersionView, XYYColorTransitionView, XyyView,
+    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DeviceControlView,
+    DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
+    GeneralStatusView, GeographicalLocationView, I8View, I16View, I32View, I64View,
+    MBusAddressView, MeteringValueView, ModeNextView, PrioritisedModeControlView,
+    RelativeColorView, RgbView, RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView,
+    SceneView, Setpoints3View, Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView,
+    StatusSABView, StrView, TimeView, U8View, U16View, U32View, VersionView,
+    XYYColorTransitionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -290,6 +291,8 @@ pub enum DptType {
     RelativeControlXYY = 25_300_600,
     RelativeControlRGB = 25_400_600,
     CombinedStatusRTSM = 2_100_107,
+    GeneralStatus = 2_100_001,
+    DeviceControl = 2_100_002,
     CombinedStatusHVA = 2_200_102,
     CombinedStatusRTC = 2_200_103,
     ForecastTemperature = 27_300_001,
@@ -806,6 +809,8 @@ impl DptType {
                 super::dpt229::MeteringValue::decode(bytes.try_into().expect("validated length"))?;
                 Ok(DptView::MeteringValue(MeteringValueView(bytes)))
             }
+            21 if self.sub() == 1 => Ok(DptView::GeneralStatus(GeneralStatusView(bytes))),
+            21 if self.sub() == 2 => Ok(DptView::DeviceControl(DeviceControlView(bytes))),
             21 => Ok(DptView::StatusRTSM(StatusRTSMView(bytes))),
             22 if self.sub() == 102 => Ok(DptView::StatusHVA(StatusHVAView(bytes))),
             22 => Ok(DptView::StatusRTC(StatusRTCView(bytes))),
@@ -1175,7 +1180,13 @@ impl DptType {
                 Ok(value.encode()?.to_vec())
             }
             (229, DptPayload::MeteringValue(value)) => Ok(value.encode()?.to_vec()),
-            (21, DptPayload::StatusRTSM(value)) => Ok(value.encode().to_vec()),
+            (21, DptPayload::StatusRTSM(value)) if self.sub() == 107 => Ok(value.encode().to_vec()),
+            (21, DptPayload::GeneralStatus(value)) if self.sub() == 1 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::DeviceControl(value)) if self.sub() == 2 => {
+                Ok(value.encode().to_vec())
+            }
             (22, DptPayload::StatusHVA(value)) if self.sub() == 102 => Ok(value.encode().to_vec()),
             (22, DptPayload::StatusRTC(value)) if self.sub() == 103 => Ok(value.encode().to_vec()),
             (225, DptPayload::ScalingTime(value)) => Ok(value.encode(self.sub())?.to_vec()),
