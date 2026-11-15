@@ -941,12 +941,19 @@ fn build_tunnelling_frame_with_code(
     sequence: u8,
     message_code: MessageCode,
 ) -> Result<Vec<u8>> {
-    let cemi = CemiFrame::new(
+    let mut cemi = CemiFrame::new(
         message_code,
         telegram.source,
         telegram.destination,
         telegram.encode_apdu(),
     );
+    if matches!(
+        telegram.telegram_type,
+        crate::protocol::TelegramType::IndividualData
+            | crate::protocol::TelegramType::IndividualControl
+    ) {
+        cemi.tpci = telegram.tpci;
+    }
     let request = TunnellingRequest::new(channel_id, sequence, cemi.serialize()?);
     Ok(KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize())
 }
@@ -1004,6 +1011,41 @@ mod tests {
             TelegramType::GroupValueWrite,
             vec![payload],
         )
+    }
+
+    #[test]
+    fn server_serialization_preserves_individual_tpci() {
+        use crate::protocol::knxip::{KnxIpFrame, TunnellingRequest};
+        use crate::protocol::{Address, IndividualAddress, TpciFrame};
+
+        for (telegram_type, tpci, apdu) in [
+            (
+                TelegramType::IndividualData,
+                TpciFrame::DataConnected { sequence: 3 },
+                vec![0x02, 0xC8],
+            ),
+            (
+                TelegramType::IndividualControl,
+                TpciFrame::Ack { sequence: 3 },
+                vec![],
+            ),
+        ] {
+            let mut telegram =
+                Telegram::individual_data(IndividualAddress::new(1, 2, 3), apdu.clone());
+            telegram.telegram_type = telegram_type;
+            telegram.tpci = tpci.encode();
+            let wire =
+                build_tunnelling_frame_with_code(&telegram, 1, 0, MessageCode::LDataInd).unwrap();
+            let frame = KnxIpFrame::parse(&wire).unwrap();
+            let request = TunnellingRequest::parse(&frame.body).unwrap();
+            let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
+            assert_eq!(
+                cemi.dest_addr,
+                Address::Individual(IndividualAddress::new(1, 2, 3))
+            );
+            assert_eq!(cemi.tpci, tpci.encode());
+            assert_eq!(cemi.apci_data, apdu);
+        }
     }
 
     #[cfg(feature = "dpt")]
