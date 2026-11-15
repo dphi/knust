@@ -368,6 +368,9 @@ macro_rules! status_view {
     };
 }
 status_view!(LightActuatorErrorInfoView, LightActuatorErrorInfo);
+status_view!(RFFilterInfoView, RFFilterInfo);
+status_view!(SecurityReportView, SecurityReport);
+status_view!(ChannelActivation8View, ChannelActivation8);
 status_view!(StatusRTSMView, CombinedStatusRTSM);
 status_view!(ForcingSignalView, ForcingSignal);
 status_view!(ForcingSignalCoolView, ForcingSignalCool);
@@ -959,6 +962,9 @@ pub enum DptView<'a> {
     RoomCoolingControllerStatus(RoomCoolingControllerStatusView<'a>),
     VentilationControllerStatus(VentilationControllerStatusView<'a>),
     LightActuatorErrorInfo(LightActuatorErrorInfoView<'a>),
+    RFFilterInfo(RFFilterInfoView<'a>),
+    SecurityReport(SecurityReportView<'a>),
+    ChannelActivation8(ChannelActivation8View<'a>),
     StatusRTSM(StatusRTSMView<'a>),
     GeneralStatus(GeneralStatusView<'a>),
     DeviceControl(DeviceControlView<'a>),
@@ -1034,6 +1040,9 @@ impl<'a> DptView<'a> {
             | Self::RoomCoolingControllerStatus(_)
             | Self::VentilationControllerStatus(_)
             | Self::LightActuatorErrorInfo(_)
+            | Self::RFFilterInfo(_)
+            | Self::SecurityReport(_)
+            | Self::ChannelActivation8(_)
             | Self::StatusRTSM(_)
             | Self::GeneralStatus(_)
             | Self::DeviceControl(_)
@@ -1113,6 +1122,9 @@ impl<'a> DptView<'a> {
             Self::RoomCoolingControllerStatus(v) => v.raw(),
             Self::VentilationControllerStatus(v) => v.raw(),
             Self::LightActuatorErrorInfo(v) => v.raw(),
+            Self::RFFilterInfo(v) => v.raw(),
+            Self::SecurityReport(v) => v.raw(),
+            Self::ChannelActivation8(v) => v.raw(),
             Self::StatusRTSM(v) => v.raw(),
             Self::GeneralStatus(v) => v.raw(),
             Self::DeviceControl(v) => v.raw(),
@@ -1199,6 +1211,9 @@ impl DptView<'_> {
             Self::RoomCoolingControllerStatus(v) => v.value().to_string(),
             Self::VentilationControllerStatus(v) => v.value().to_string(),
             Self::LightActuatorErrorInfo(v) => v.value().to_string(),
+            Self::RFFilterInfo(v) => v.value().to_string(),
+            Self::SecurityReport(v) => v.value().to_string(),
+            Self::ChannelActivation8(v) => v.value().to_string(),
             Self::StatusRTSM(v) => v.value().to_string(),
             Self::GeneralStatus(v) => v.value().to_string(),
             Self::DeviceControl(v) => v.value().to_string(),
@@ -1667,6 +1682,9 @@ impl DptType {
             250 | 252..=254 => super::dpt_relative_color::parse_payload(s,self.main()),
             243 => s.parse().map(DptPayload::XYYColorTransition),
             21 if self.sub() == 1 => s.parse().map(DptPayload::GeneralStatus),
+            21 if self.sub() == 1001 => s.parse().map(DptPayload::RFFilterInfo),
+            21 if self.sub() == 1002 => s.parse().map(DptPayload::SecurityReport),
+            21 if self.sub() == 1010 => s.parse().map(DptPayload::ChannelActivation8),
             21 if self.sub() == 601 => s.parse().map(DptPayload::LightActuatorErrorInfo),
             21 if self.sub() == 100 => s.parse().map(DptPayload::ForcingSignal),
             21 if self.sub() == 101 => s.parse().map(DptPayload::ForcingSignalCool),

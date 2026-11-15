@@ -1,7 +1,7 @@
 use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
-    AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView,
+    AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView, ChannelActivation8View,
     ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
     ConverterInfoView, ConverterStatusView, ConverterTestInfoView, ConverterTestResultView,
@@ -9,12 +9,13 @@ use super::view::{
     DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForcingSignalCoolView,
     ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
-    MeteringValueView, ModeNextView, PrioritisedModeControlView, RelativeColorView, RgbView,
-    RgbwView, RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
-    SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
-    SolarDHWControllerStatusView, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView,
-    StrView, TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
-    XYYColorTransitionView, XyyView,
+    MeteringValueView, ModeNextView, PrioritisedModeControlView, RFFilterInfoView,
+    RelativeColorView, RgbView, RgbwView, RoomCoolingControllerStatusView,
+    RoomHeatingControllerStatusView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView,
+    SecurityReportView, Setpoints3View, Setpoints4View, SolarDHWControllerStatusView,
+    StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View,
+    U16View, U32View, VentilationControllerStatusView, VersionView, XYYColorTransitionView,
+    XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -300,6 +301,9 @@ pub enum DptType {
     RoomCoolingControllerStatus = 2_100_105,
     VentilationControllerStatus = 2_100_106,
     LightActuatorErrorInfo = 2_100_601,
+    RFFilterInfo = 2_101_001,
+    SecurityReport = 2_101_002,
+    ChannelActivation8 = 2_101_010,
     CombinedStatusRTSM = 2_100_107,
     GeneralStatus = 2_100_001,
     DeviceControl = 2_100_002,
@@ -820,6 +824,11 @@ impl DptType {
                 Ok(DptView::MeteringValue(MeteringValueView(bytes)))
             }
             21 if self.sub() == 1 => Ok(DptView::GeneralStatus(GeneralStatusView(bytes))),
+            21 if self.sub() == 1001 => Ok(DptView::RFFilterInfo(RFFilterInfoView(bytes))),
+            21 if self.sub() == 1002 => Ok(DptView::SecurityReport(SecurityReportView(bytes))),
+            21 if self.sub() == 1010 => {
+                Ok(DptView::ChannelActivation8(ChannelActivation8View(bytes)))
+            }
             21 if self.sub() == 601 => Ok(DptView::LightActuatorErrorInfo(
                 LightActuatorErrorInfoView(bytes),
             )),
@@ -1209,6 +1218,15 @@ impl DptType {
             }
             (229, DptPayload::MeteringValue(value)) => Ok(value.encode()?.to_vec()),
             (21, DptPayload::LightActuatorErrorInfo(value)) if self.sub() == 601 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::RFFilterInfo(value)) if self.sub() == 1001 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::SecurityReport(value)) if self.sub() == 1002 => {
+                Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::ChannelActivation8(value)) if self.sub() == 1010 => {
                 Ok(value.encode().to_vec())
             }
             (21, DptPayload::StatusRTSM(value)) if self.sub() == 107 => Ok(value.encode().to_vec()),

@@ -58,6 +58,9 @@ status!(FuelTypeSet,DPTFuelTypeSet,1,"21.104","fuel_type_set",oil:0,gas:1,solid_
 status!(RoomCoolingControllerStatus,DPTStatusRCC,1,"21.105","room_cooling_controller_status",fault:0);
 status!(VentilationControllerStatus,DPTStatusAHU,1,"21.106","ventilation_controller_status",fault:0,fan_active:1,heat:2,cool:3);
 status!(LightActuatorErrorInfo,DPTLightActuatorErrorInfo,1,"21.601","light_actuator_error_info",load_detection_error:0,undervoltage:1,overcurrent:2,underload:3,defective_load:4,lamp_failure:5,overheat:6);
+status!(RFFilterInfo,DPTRFFilterInfo,1,"21.1001","rf_filter_info",doa:0,knx_sn:1,doa_and_knx_sn:2);
+status!(SecurityReport,DPTSecurityReport,1,"21.1002","security_report",security_failure:0);
+status!(ChannelActivation8,DPTChannelActivation8,1,"21.1010","channel_activation_8",channel_1:0,channel_2:1,channel_3:2,channel_4:3,channel_5:4,channel_6:5,channel_7:6,channel_8:7);
 status!(GeneralStatus,DPTStatusGen,1,"21.001","general_status",out_of_service:0,fault:1,overridden:2,in_alarm:3,alarm_un_ack:4);
 status!(DeviceControl,DPTDeviceControl,1,"21.002","device_control",user_stopped:0,own_ia:1,verify_mode:2);
 status!(CombinedStatusRTSM,DPTCombinedStatusRTSM,1,"21.107","combined_status_rtsm",window_open:0,presence:1,comfort_push_button:2,comfort_prolongation_user:3,hvac_mode_user:4);
