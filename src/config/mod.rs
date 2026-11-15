@@ -18,7 +18,9 @@ mod tests;
 #[cfg(feature = "ets")]
 pub use ets_csv::{GroupAddressConfig, parse_ets_csv};
 #[cfg(feature = "secure")]
-pub use keyring::{KeyringConfig, KeyringDevice, KeyringInterface, KeyringParser};
+pub use keyring::{
+    KeyringConfig, KeyringDevice, KeyringGroupAssignment, KeyringInterface, KeyringParser,
+};
 #[cfg(feature = "secure")]
 pub use validation::{ConfigValidator, ValidationError, ValidationResult};
 

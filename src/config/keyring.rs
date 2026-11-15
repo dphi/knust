@@ -6,11 +6,20 @@
 use std::fmt::Write as _;
 use std::path::Path;
 use tokio::fs;
+use zeroize::Zeroizing;
+
+use aes::{
+    Aes128,
+    cipher::{BlockCipherDecrypt, KeyInit},
+};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use pbkdf2::pbkdf2_hmac;
+use sha2::Sha256;
 
 use crate::config::{escape_xml, unescape_xml};
 use crate::error::{ConfigurationError, Result};
 use crate::protocol::address::{GroupAddress, IndividualAddress};
-use crate::security::{KeyRing, SecurityKey};
+use crate::security::{KeyRing, SecurityKey, sha256_hash};
 
 /// Parsed keyring configuration data.
 #[derive(Debug, Clone)]
@@ -34,8 +43,10 @@ impl KeyringConfig {
             keyring.add_group_key(group.address, group.key.clone());
         }
         for interface in &self.interfaces {
-            for sender in &interface.data_secure_senders {
-                keyring.set_sequence_number(*sender, 0);
+            for assignment in &interface.group_assignments {
+                for sender in &assignment.senders {
+                    keyring.set_sequence_number(*sender, 0);
+                }
             }
         }
         for device in &self.devices {
@@ -75,8 +86,17 @@ pub struct KeyringInterface {
     pub device_authentication: Option<SecurityKey>,
     /// Backbone key for routing
     pub backbone_key: Option<SecurityKey>,
+    /// Group address assignments and permitted senders
+    pub group_assignments: Vec<KeyringGroupAssignment>,
+}
+
+/// Group address assignment for an interface.
+#[derive(Debug, Clone)]
+pub struct KeyringGroupAssignment {
+    /// Assigned group address
+    pub address: GroupAddress,
     /// Individual addresses permitted to send Data Secure group telegrams
-    pub data_secure_senders: Vec<IndividualAddress>,
+    pub senders: Vec<IndividualAddress>,
 }
 
 /// KNX device with security information.
@@ -128,6 +148,80 @@ impl KeyringParser {
         Self::parse_bytes(&data)
     }
 
+    /// Parse an ETS keyring file and decrypt its Data Secure group keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns a parse error if the password, signature, or encrypted group keys
+    /// are invalid.
+    pub async fn parse_file_with_password<P: AsRef<Path>>(
+        path: P,
+        password: &str,
+    ) -> Result<KeyringConfig> {
+        let data = fs::read(path)
+            .await
+            .map_err(|e| ConfigurationError::ParseError {
+                file: "keyring file".to_string(),
+                reason: format!("Failed to read keyring file: {e}"),
+            })?;
+        Self::parse_bytes_with_password(&data, password)
+    }
+
+    /// Parse an ETS keyring and decrypt its Data Secure group keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns a parse error if the password, signature, or encrypted group keys
+    /// are invalid.
+    pub fn parse_bytes_with_password(data: &[u8], password: &str) -> Result<KeyringConfig> {
+        let xml = std::str::from_utf8(data).map_err(|e| ConfigurationError::ParseError {
+            file: "keyring XML".to_string(),
+            reason: format!("Invalid UTF-8 in keyring XML: {e}"),
+        })?;
+        let config = Self::parse_xml_keyring(data)?;
+        let mut password_hash = Zeroizing::new([0u8; 16]);
+        pbkdf2_hmac::<Sha256>(
+            password.as_bytes(),
+            b"1.keyring.ets.knx.org",
+            65_536,
+            &mut password_hash[..],
+        );
+
+        let signature = Self::extract_xml_attribute(xml, "Signature")
+            .and_then(|signature| BASE64.decode(signature).ok())
+            .ok_or_else(|| ConfigurationError::ParseError {
+                file: "keyring XML".to_string(),
+                reason: "Missing or invalid keyring signature".to_string(),
+            })?;
+        let signature_data = Zeroizing::new(Self::keyring_signature_data(xml, &password_hash)?);
+        let digest = sha256_hash(&signature_data);
+        if signature.as_slice() != &digest[..16] {
+            return Err(ConfigurationError::ParseError {
+                file: "keyring XML".to_string(),
+                reason: "Keyring signature validation failed".to_string(),
+            }
+            .into());
+        }
+
+        let created =
+            config
+                .metadata
+                .created
+                .as_deref()
+                .ok_or_else(|| ConfigurationError::ParseError {
+                    file: "keyring XML".to_string(),
+                    reason: "Missing keyring creation timestamp".to_string(),
+                })?;
+        let digest = sha256_hash(created.as_bytes());
+        let iv = Zeroizing::new(<[u8; 16]>::try_from(&digest[..16]).expect("SHA-256 has 32 bytes"));
+        let group_addresses = Self::parse_encrypted_group_addresses(xml, &password_hash, &iv)?;
+
+        Ok(KeyringConfig {
+            group_addresses,
+            ..config
+        })
+    }
+
     /// Parse keyring data from bytes.
     ///
     /// # Errors
@@ -138,6 +232,15 @@ impl KeyringParser {
     pub fn parse_bytes(data: &[u8]) -> Result<KeyringConfig> {
         // Try to parse as XML first (most common format)
         if let Ok(config) = Self::parse_xml_keyring(data) {
+            if Self::has_unparsed_group_keys(data, &config) {
+                return Err(ConfigurationError::ParseError {
+                    file: "keyring XML".to_string(),
+                    reason:
+                        "Password required for encrypted group keys; use parse_bytes_with_password"
+                            .to_string(),
+                }
+                .into());
+            }
             return Ok(config);
         }
 
@@ -165,7 +268,8 @@ impl KeyringParser {
                 created: None,
                 creator: None,
                 project: None,
-                signature: None,
+                signature: Self::extract_xml_attribute(xml_str, "Signature")
+                    .and_then(|signature| BASE64.decode(signature).ok()),
             },
             interfaces: Vec::new(),
             devices: Vec::new(),
@@ -245,37 +349,27 @@ impl KeyringParser {
         None
     }
 
-    /// Parse interfaces from XML (simplified).
     fn parse_xml_interfaces(xml: &str) -> Vec<KeyringInterface> {
         let mut interfaces = Vec::new();
-
         let mut pos = 0;
-        while let Some(start) = xml[pos..].find("<Interface") {
-            let start = pos + start;
-            // Look for self-closing tag first
-            if let Some(end) = xml[start..].find(" />") {
-                let end = start + end + 3;
-                let interface_xml = &xml[start..end];
-
-                if let Ok(interface) = Self::parse_single_interface(interface_xml) {
-                    interfaces.push(interface);
-                }
-
-                pos = end;
-            } else if let Some(end) = xml[start..].find("</Interface>") {
-                let end = start + end + "</Interface>".len();
-                let interface_xml = &xml[start..end];
-
-                if let Ok(interface) = Self::parse_single_interface(interface_xml) {
-                    interfaces.push(interface);
-                }
-
-                pos = end;
+        while let Some(offset) = xml[pos..].find("<Interface") {
+            let start = pos + offset;
+            let Ok(tag_end) = Self::find_xml_tag_end(xml, start) else {
+                break;
+            };
+            let is_self_closing = xml[start..tag_end].trim_end().ends_with('/');
+            let end = if is_self_closing {
+                tag_end + 1
+            } else if let Some(close_offset) = xml[tag_end + 1..].find("</Interface>") {
+                tag_end + 1 + close_offset + "</Interface>".len()
             } else {
                 break;
+            };
+            if let Ok(interface) = Self::parse_single_interface(&xml[start..end]) {
+                interfaces.push(interface);
             }
+            pos = end;
         }
-
         interfaces
     }
 
@@ -308,16 +402,25 @@ impl KeyringParser {
         let backbone_key = Self::extract_xml_attribute(xml, "BackboneKey")
             .and_then(|key| SecurityKey::from_hex(&key).ok());
 
-        let data_secure_senders = xml
+        let group_assignments = xml
             .split("<Group ")
             .skip(1)
             .filter_map(|group| group.split('>').next())
-            .filter_map(|group| Self::extract_xml_attribute(group, "Senders"))
-            .flat_map(|senders| {
-                senders
+            .filter_map(|group| {
+                let address = Self::extract_xml_attribute(group, "Address").and_then(|value| {
+                    value.parse::<GroupAddress>().ok().or_else(|| {
+                        value
+                            .parse::<u16>()
+                            .ok()
+                            .and_then(|raw| GroupAddress::try_from_raw(raw).ok())
+                    })
+                })?;
+                let senders = Self::extract_xml_attribute(group, "Senders")
+                    .unwrap_or_default()
                     .split_whitespace()
                     .filter_map(|sender| sender.parse().ok())
-                    .collect::<Vec<IndividualAddress>>()
+                    .collect();
+                Some(KeyringGroupAssignment { address, senders })
             })
             .collect();
 
@@ -329,7 +432,7 @@ impl KeyringParser {
             user_password,
             device_authentication,
             backbone_key,
-            data_secure_senders,
+            group_assignments,
         })
     }
 
@@ -401,35 +504,273 @@ impl KeyringParser {
         })
     }
 
-    /// Parse group addresses from XML (simplified).
+    fn keyring_signature_data(xml: &str, password_hash: &[u8; 16]) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        let mut pos = 0;
+        while let Some(offset) = xml[pos..].find('<') {
+            let start = pos + offset;
+            if xml[start..].starts_with("<!--") {
+                pos = start
+                    + xml[start..]
+                        .find("-->")
+                        .ok_or_else(|| Self::xml_error("Unclosed XML comment"))?
+                    + 3;
+                continue;
+            }
+            if xml[start..].starts_with("<?") {
+                pos = start
+                    + xml[start..]
+                        .find("?>")
+                        .ok_or_else(|| Self::xml_error("Unclosed XML declaration"))?
+                    + 2;
+                continue;
+            }
+            if xml[start..].starts_with("<!") {
+                return Err(Self::xml_error("Unsupported XML declaration"));
+            }
+
+            let end = Self::find_xml_tag_end(xml, start)?;
+            let raw_tag = xml[start + 1..end].trim();
+            let closing = raw_tag.starts_with('/');
+            let self_closing = raw_tag.ends_with('/');
+            let tag = raw_tag.trim_start_matches('/').trim_end_matches('/').trim();
+            let name_end = tag.find(char::is_whitespace).unwrap_or(tag.len());
+            let name = &tag[..name_end];
+            if name.is_empty() {
+                return Err(Self::xml_error("Empty XML tag"));
+            }
+
+            if closing {
+                output.push(2);
+            } else {
+                output.push(1);
+                Self::append_signature_string(&mut output, name)?;
+                let mut attributes = Self::parse_xml_attributes(&tag[name_end..])?;
+                attributes.retain(|(name, _)| name != "xmlns" && name != "Signature");
+                attributes.sort_by(|a, b| a.0.cmp(&b.0));
+                for (name, value) in attributes {
+                    Self::append_signature_string(&mut output, &name)?;
+                    Self::append_signature_string(&mut output, &value)?;
+                }
+                if self_closing {
+                    output.push(2);
+                }
+            }
+            pos = end + 1;
+        }
+        Self::append_signature_bytes(&mut output, BASE64.encode(password_hash).as_bytes())?;
+        Ok(output)
+    }
+
+    fn parse_xml_attributes(mut text: &str) -> Result<Vec<(String, String)>> {
+        let mut attributes = Vec::new();
+        loop {
+            text = text.trim_start();
+            if text.is_empty() || text == "/" {
+                return Ok(attributes);
+            }
+            let name_end = text
+                .find(|c: char| c.is_whitespace() || c == '=' || c == '/')
+                .unwrap_or(text.len());
+            if name_end == 0 {
+                return Err(Self::xml_error("Invalid XML attribute"));
+            }
+            let name = &text[..name_end];
+            text = text[name_end..].trim_start();
+            let Some(value_text) = text.strip_prefix('=') else {
+                return Err(Self::xml_error("XML attribute has no value"));
+            };
+            text = value_text.trim_start();
+            let quote = text
+                .chars()
+                .next()
+                .filter(|quote| *quote == '"' || *quote == '\'')
+                .ok_or_else(|| Self::xml_error("XML attribute value is not quoted"))?;
+            text = &text[quote.len_utf8()..];
+            let value_end = text
+                .find(quote)
+                .ok_or_else(|| Self::xml_error("Unclosed XML attribute"))?;
+            let value = Self::unescape_xml_attribute(&text[..value_end])?;
+            attributes.push((name.to_string(), value));
+            text = &text[value_end + quote.len_utf8()..];
+        }
+    }
+
+    fn unescape_xml_attribute(value: &str) -> Result<String> {
+        let mut decoded = String::with_capacity(value.len());
+        let mut remaining = value;
+        while let Some(offset) = remaining.find('&') {
+            decoded.push_str(&remaining[..offset]);
+            let entity = &remaining[offset + 1..];
+            let end = entity
+                .find(';')
+                .ok_or_else(|| Self::xml_error("Unclosed XML entity reference"))?;
+            let entity_value = &entity[..end];
+            let character = match entity_value {
+                "amp" => '&',
+                "lt" => '<',
+                "gt" => '>',
+                "quot" => '"',
+                "apos" => '\'',
+                value if value.starts_with("#x") || value.starts_with("#X") => {
+                    u32::from_str_radix(&value[2..], 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                        .ok_or_else(|| Self::xml_error("Invalid hexadecimal XML character"))?
+                }
+                value if value.starts_with('#') => value[1..]
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| Self::xml_error("Invalid decimal XML character"))?,
+                _ => return Err(Self::xml_error("Unknown XML entity reference")),
+            };
+            decoded.push(character);
+            remaining = &entity[end + 1..];
+        }
+        decoded.push_str(remaining);
+        Ok(decoded)
+    }
+
+    fn append_signature_string(output: &mut Vec<u8>, value: &str) -> Result<()> {
+        Self::append_signature_bytes(output, value.as_bytes())
+    }
+
+    fn append_signature_bytes(output: &mut Vec<u8>, value: &[u8]) -> Result<()> {
+        let length = u8::try_from(value.len())
+            .map_err(|_| Self::xml_error("Signed XML value exceeds 255 bytes"))?;
+        output.push(length);
+        output.extend_from_slice(value);
+        Ok(())
+    }
+
+    fn find_xml_tag_end(xml: &str, start: usize) -> Result<usize> {
+        let mut quote = None;
+        for (offset, character) in xml[start + 1..].char_indices() {
+            if Some(character) == quote {
+                quote = None;
+            } else if quote.is_none() && (character == '"' || character == '\'') {
+                quote = Some(character);
+            } else if quote.is_none() && character == '>' {
+                return Ok(start + 1 + offset);
+            }
+        }
+        Err(Self::xml_error("Unclosed XML tag"))
+    }
+
+    fn parse_encrypted_group_addresses(
+        xml: &str,
+        password_hash: &[u8; 16],
+        iv: &[u8; 16],
+    ) -> Result<Vec<KeyringGroupAddress>> {
+        let section_start = xml
+            .find("<GroupAddresses")
+            .ok_or_else(|| Self::xml_error("Missing GroupAddresses section"))?;
+        let content_start = Self::find_xml_tag_end(xml, section_start)? + 1;
+        let section_end = xml[content_start..]
+            .find("</GroupAddresses>")
+            .map(|offset| content_start + offset)
+            .ok_or_else(|| Self::xml_error("Unclosed GroupAddresses section"))?;
+        let section = &xml[content_start..section_end];
+        let mut groups = Vec::new();
+        let mut pos = 0;
+        while let Some(offset) = section[pos..].find("<Group ") {
+            let start = pos + offset;
+            let end = Self::find_xml_tag_end(section, start)?;
+            let tag = &section[start..=end];
+            let address = Self::extract_xml_attribute(tag, "Address")
+                .and_then(|value| {
+                    value.parse::<GroupAddress>().ok().or_else(|| {
+                        value
+                            .parse::<u16>()
+                            .ok()
+                            .and_then(|raw| GroupAddress::try_from_raw(raw).ok())
+                    })
+                })
+                .ok_or_else(|| Self::xml_error("Missing or invalid group address"))?;
+            let encrypted_key = Self::extract_xml_attribute(tag, "Key")
+                .ok_or_else(|| Self::xml_error("Missing group key"))?;
+            let mut key = BASE64
+                .decode(encrypted_key)
+                .map_err(|_| Self::xml_error("Invalid base64 group key"))?;
+            if key.len() != 16 {
+                return Err(Self::xml_error("Encrypted group key must be 16 bytes"));
+            }
+            let cipher =
+                Aes128::new_from_slice(password_hash).expect("PBKDF2 derives an AES-128 key");
+            let ciphertext: [u8; 16] = key.as_slice().try_into().expect("length checked");
+            let mut block = aes::cipher::Block::<Aes128>::try_from(&ciphertext[..])
+                .expect("AES-128 block has 16 bytes");
+            cipher.decrypt_block(&mut block);
+            for (byte, iv_byte) in block.iter_mut().zip(iv) {
+                *byte ^= iv_byte;
+            }
+            key.copy_from_slice(&block);
+            let description = Self::extract_xml_attribute(tag, "Description");
+            groups.push(KeyringGroupAddress {
+                address,
+                key: SecurityKey::new(key),
+                description,
+            });
+            pos = end + 1;
+        }
+        Ok(groups)
+    }
+
+    fn xml_error(reason: &str) -> crate::error::KnxError {
+        ConfigurationError::ParseError {
+            file: "keyring XML".to_string(),
+            reason: reason.to_string(),
+        }
+        .into()
+    }
+
+    fn has_unparsed_group_keys(data: &[u8], config: &KeyringConfig) -> bool {
+        let Ok(xml) = std::str::from_utf8(data) else {
+            return false;
+        };
+        let Some(section_start) = xml.find("<GroupAddresses") else {
+            return false;
+        };
+        let Some(section_end) = xml[section_start..].find("</GroupAddresses>") else {
+            return false;
+        };
+        let section = &xml[section_start..section_start + section_end];
+        section.matches("<Group ").count() != config.group_addresses.len()
+    }
+
     fn parse_xml_group_addresses(xml: &str) -> Vec<KeyringGroupAddress> {
         let mut group_addresses = Vec::new();
 
-        let mut pos = 0;
-        while let Some(start) = xml[pos..].find("<GroupAddress") {
-            let start = pos + start;
-            // Look for self-closing tag first
-            if let Some(end) = xml[start..].find(" />") {
-                let end = start + end + 3;
-                let ga_xml = &xml[start..end];
-
-                if let Ok(ga) = Self::parse_single_group_address(ga_xml) {
-                    group_addresses.push(ga);
+        if let Some(section_start) = xml.find("<GroupAddresses")
+            && let Ok(section_tag_end) = Self::find_xml_tag_end(xml, section_start)
+            && let Some(section_close) = xml[section_tag_end + 1..].find("</GroupAddresses>")
+        {
+            let section = &xml[section_tag_end + 1..section_tag_end + 1 + section_close];
+            let mut pos = 0;
+            while let Some(offset) = section[pos..].find("<Group ") {
+                let start = pos + offset;
+                let Ok(end) = Self::find_xml_tag_end(section, start) else {
+                    break;
+                };
+                if let Ok(group) = Self::parse_single_group_address(&section[start..=end]) {
+                    group_addresses.push(group);
                 }
-
-                pos = end;
-            } else if let Some(end) = xml[start..].find("</GroupAddress>") {
-                let end = start + end + "</GroupAddress>".len();
-                let ga_xml = &xml[start..end];
-
-                if let Ok(ga) = Self::parse_single_group_address(ga_xml) {
-                    group_addresses.push(ga);
-                }
-
-                pos = end;
-            } else {
-                break;
+                pos = end + 1;
             }
+            return group_addresses;
+        }
+
+        let mut pos = 0;
+        while let Some(offset) = xml[pos..].find("<GroupAddress ") {
+            let start = pos + offset;
+            let Ok(end) = Self::find_xml_tag_end(xml, start) else {
+                break;
+            };
+            if let Ok(group) = Self::parse_single_group_address(&xml[start..=end]) {
+                group_addresses.push(group);
+            }
+            pos = end + 1;
         }
 
         group_addresses
@@ -438,7 +779,14 @@ impl KeyringParser {
     /// Parse a single group address from XML.
     fn parse_single_group_address(xml: &str) -> Result<KeyringGroupAddress> {
         let address = Self::extract_xml_attribute(xml, "Address")
-            .and_then(|addr| addr.parse().ok())
+            .and_then(|value| {
+                value.parse::<GroupAddress>().ok().or_else(|| {
+                    value
+                        .parse::<u16>()
+                        .ok()
+                        .and_then(|raw| GroupAddress::try_from_raw(raw).ok())
+                })
+            })
             .ok_or_else(|| ConfigurationError::ParseError {
                 file: "group address XML".to_string(),
                 reason: "Missing or invalid Address in group address".to_string(),
@@ -515,7 +863,25 @@ impl KeyringParser {
                 );
             }
 
-            xml.push_str(" />\n");
+            if interface.group_assignments.is_empty() {
+                xml.push_str(" />\n");
+            } else {
+                xml.push_str(">\n");
+                for assignment in &interface.group_assignments {
+                    let senders = assignment
+                        .senders
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let _ = writeln!(
+                        xml,
+                        "    <Group Address=\"{}\" Senders=\"{}\" />",
+                        assignment.address, senders
+                    );
+                }
+                xml.push_str("  </Interface>\n");
+            }
         }
 
         // Serialize devices
@@ -547,6 +913,7 @@ impl KeyringParser {
                 );
             }
 
+            let _ = write!(xml, " SequenceNumber=\"{}\"", device.sequence_number);
             xml.push_str(" />\n");
         }
 

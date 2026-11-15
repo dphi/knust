@@ -97,6 +97,42 @@ mod unit_tests {
 
     #[cfg(feature = "secure")]
     #[test]
+    fn password_protected_keyring_import_decrypts_group_keys() {
+        let xml = br#"<Keyring Project="Fixture" CreatedBy="ETS" Created="2023-01-30T19:17:06" Signature="QFnVlHOxUII53UXCypUqOQ==">
+  <Interface IndividualAddress="4.0.1" Type="Tunneling" Host="4.0.0"><Group Address="1024" Senders="4.0.9 5.0.1" /><Group Address="1027" Senders="4.0.1" /></Interface>
+  <GroupAddresses><Group Address="1024" Key="B8nWiBBMs/wH3I3aYKmHlw==" /></GroupAddresses>
+  <Devices><Device IndividualAddress="4.0.9" SequenceNumber="155806854915" /></Devices>
+</Keyring>"#;
+        let config = KeyringParser::parse_bytes_with_password(xml, "test").unwrap();
+        let keyring = config.into_data_secure_keyring();
+        let group = GroupAddress::try_from_raw(1024).unwrap();
+        let sender: IndividualAddress = "4.0.9".parse().unwrap();
+
+        assert_eq!(
+            keyring.get_group_key(&group).unwrap().as_bytes(),
+            &hex::decode("dfdf23a59fbb40404091d1c162087e8b").unwrap()
+        );
+        assert_eq!(keyring.get_sequence_number(&sender), Some(155_806_854_915));
+
+        let round_trip = KeyringParser::parse_bytes(&KeyringParser::serialize(&config)).unwrap();
+        assert_eq!(
+            round_trip.interfaces[0].group_assignments[0].senders[0].to_string(),
+            "4.0.9"
+        );
+        assert_eq!(round_trip.interfaces[0].group_assignments.len(), 2);
+        assert_eq!(
+            round_trip.interfaces[0].group_assignments[1]
+                .address
+                .to_string(),
+            "0/4/3"
+        );
+        assert_eq!(round_trip.devices[0].sequence_number, 155_806_854_915);
+        assert!(KeyringParser::parse_bytes(xml).is_err());
+        assert!(KeyringParser::parse_bytes_with_password(xml, "wrong").is_err());
+    }
+
+    #[cfg(feature = "secure")]
+    #[test]
     fn test_validation_result() {
         let result = ValidationResult {
             is_valid: true,
@@ -195,7 +231,7 @@ mod property_tests {
                     user_password: SecurityKey::new(vec![i as u8; 16]),
                     device_authentication: None,
                     backbone_key: None,
-                    data_secure_senders: vec![],
+                    group_assignments: vec![],
                 };
                 keyring.interfaces.push(interface);
             }
@@ -292,7 +328,7 @@ mod property_tests {
                     user_password: SecurityKey::new(vec![1; 16]),
                     device_authentication: None,
                     backbone_key: None,
-                    data_secure_senders: vec![],
+                    group_assignments: vec![],
                 };
                 keyring.interfaces.push(interface);
             }
