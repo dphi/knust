@@ -4,10 +4,14 @@
 //! separate from [`super::Connection`], which carries telegrams to the KNX bus.
 
 use std::net::SocketAddr;
+#[cfg(feature = "secure")]
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
 
+#[cfg(feature = "secure")]
+use super::SecurityConfig;
 use super::frame_transport::{FrameTransport, TcpFrameTransport};
 use crate::error::{ProtocolError, Result, TransportError};
 use crate::protocol::cemi::MessageCode;
@@ -16,8 +20,13 @@ use crate::protocol::knxip::{
     ConnectionstateResponse, DisconnectRequest, DisconnectResponse, Hpai, KnxIpFrame, ServiceType,
     TunnellingAck, TunnellingRequest,
 };
+#[cfg(feature = "secure")]
+use crate::protocol::knxip::{SessionAuthenticate, SessionRequest, SessionResponse, SessionStatus};
+#[cfg(feature = "secure")]
+use crate::security::{SecureSession, SessionConfig};
 
-/// An unencrypted KNXnet/IP device-management connection over UDP or TCP.
+/// A KNXnet/IP device-management connection over UDP or TCP, optionally using
+/// IP Secure.
 ///
 /// Use [`request_cemi`](Self::request_cemi) to send one cEMI request and await
 /// its matching response. Requests on a connection are serialized.
@@ -35,9 +44,18 @@ pub struct DeviceManagementConnection {
 enum ManagementTransport {
     Udp(UdpSocket),
     Tcp(TcpFrameTransport),
+    #[cfg(feature = "secure")]
+    Secure(SecureManagementTransport),
 }
 
-impl ManagementTransport {
+#[cfg(feature = "secure")]
+enum PlainManagementTransport {
+    Udp(UdpSocket),
+    Tcp(TcpFrameTransport),
+}
+
+#[cfg(feature = "secure")]
+impl PlainManagementTransport {
     async fn send(&self, destination: SocketAddr, frame: &[u8]) -> Result<()> {
         match self {
             Self::Udp(socket) => send_udp_frame(socket, destination, frame).await,
@@ -54,6 +72,215 @@ impl ManagementTransport {
             Self::Tcp(transport) => Ok((KnxIpFrame::parse(&transport.recv_frame().await?)?, None)),
         }
     }
+}
+
+#[cfg(feature = "secure")]
+struct SecureManagementTransport {
+    transport: Arc<PlainManagementTransport>,
+    session: Arc<tokio::sync::RwLock<SecureSession>>,
+    send_lock: Arc<tokio::sync::Mutex<()>>,
+    last_activity: Arc<tokio::sync::Mutex<tokio::time::Instant>>,
+    activity_changed: Arc<tokio::sync::Notify>,
+    keepalive_cancel: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+#[cfg(feature = "secure")]
+impl SecureManagementTransport {
+    fn new(
+        transport: PlainManagementTransport,
+        session: SecureSession,
+        destination: SocketAddr,
+        interval: Duration,
+    ) -> Self {
+        let transport = Arc::new(transport);
+        let session = Arc::new(tokio::sync::RwLock::new(session));
+        let send_lock = Arc::new(tokio::sync::Mutex::new(()));
+        let last_activity = Arc::new(tokio::sync::Mutex::new(tokio::time::Instant::now()));
+        let activity_changed = Arc::new(tokio::sync::Notify::new());
+        let (cancel, mut cancelled) = tokio::sync::oneshot::channel();
+        let task_transport = transport.clone();
+        let task_session = session.clone();
+        let task_send_lock = send_lock.clone();
+        let task_activity = last_activity.clone();
+        let task_changed = activity_changed.clone();
+        let task_destination = destination;
+        tokio::spawn(async move {
+            let interval = interval.max(Duration::from_secs(1));
+            loop {
+                let deadline = *task_activity.lock().await + interval;
+                tokio::select! {
+                    _ = tokio::time::sleep_until(deadline) => {
+                        let _guard = task_send_lock.lock().await;
+                        if tokio::time::Instant::now() < *task_activity.lock().await + interval {
+                            continue;
+                        }
+                        let keepalive = [0x06, 0x10, 0x09, 0x54, 0x00, 0x08, 0x00, 0x04];
+                        let encrypted = match task_session.read().await.encrypt_frame(&keepalive).await {
+                            Ok(frame) => frame,
+                            Err(_) => break,
+                        };
+                        if task_transport.send(task_destination, &encrypted).await.is_err() {
+                            break;
+                        }
+                        *task_activity.lock().await = tokio::time::Instant::now();
+                        task_changed.notify_one();
+                    }
+                    _ = task_changed.notified() => {}
+                    _ = &mut cancelled => break,
+                }
+            }
+        });
+        Self {
+            transport,
+            session,
+            send_lock,
+            last_activity,
+            activity_changed,
+            keepalive_cancel: Some(cancel),
+        }
+    }
+
+    async fn send(&self, destination: SocketAddr, frame: &[u8]) -> Result<()> {
+        let _guard = self.send_lock.lock().await;
+        let encrypted = self.session.read().await.encrypt_frame(frame).await?;
+        self.transport.send(destination, &encrypted).await?;
+        *self.last_activity.lock().await = tokio::time::Instant::now();
+        self.activity_changed.notify_one();
+        Ok(())
+    }
+
+    async fn receive(&self) -> Result<(KnxIpFrame, Option<SocketAddr>)> {
+        loop {
+            let (frame, source) = self.transport.receive().await?;
+            if frame.header.service_type != ServiceType::SecureWrapper {
+                continue;
+            }
+            let plain = self
+                .session
+                .read()
+                .await
+                .decrypt_frame(&frame.serialize())
+                .await?;
+            let frame = KnxIpFrame::parse(&plain)?;
+            *self.last_activity.lock().await = tokio::time::Instant::now();
+            self.activity_changed.notify_one();
+            return Ok((frame, source));
+        }
+    }
+}
+
+impl ManagementTransport {
+    async fn send(&self, destination: SocketAddr, frame: &[u8]) -> Result<()> {
+        match self {
+            Self::Udp(socket) => send_udp_frame(socket, destination, frame).await,
+            Self::Tcp(transport) => transport.send_frame(frame).await,
+            #[cfg(feature = "secure")]
+            Self::Secure(transport) => transport.send(destination, frame).await,
+        }
+    }
+
+    async fn receive(&self) -> Result<(KnxIpFrame, Option<SocketAddr>)> {
+        match self {
+            Self::Udp(socket) => {
+                let (frame, source) = receive_udp_frame(socket).await?;
+                Ok((frame, Some(source)))
+            }
+            Self::Tcp(transport) => Ok((KnxIpFrame::parse(&transport.recv_frame().await?)?, None)),
+            #[cfg(feature = "secure")]
+            Self::Secure(transport) => transport.receive().await,
+        }
+    }
+
+    fn stop_keepalive(&mut self) {
+        #[cfg(feature = "secure")]
+        if let Self::Secure(transport) = self {
+            transport.keepalive_cancel.take();
+        }
+    }
+}
+
+#[cfg(feature = "secure")]
+async fn secure_management_transport(
+    transport: PlainManagementTransport,
+    gateway: SocketAddr,
+    local_hpai: Hpai,
+    security: &SecurityConfig,
+    timeout: Duration,
+) -> Result<ManagementTransport> {
+    let config = SessionConfig {
+        user_id: 1,
+        user_password: security.user_password.clone().unwrap_or_default(),
+        device_auth_password: Some(security.device_auth_password.clone()),
+        keepalive_interval: security.session_timeout.clamp(1, 15),
+    };
+    let mut session = SecureSession::new(&config);
+    let public_key: [u8; 32] = session.initialize().await.try_into().map_err(|_| {
+        TransportError::InvalidConfiguration {
+            details: "ECDH public key was not 32 bytes".into(),
+        }
+    })?;
+    let request = SessionRequest {
+        control_endpoint: local_hpai,
+        public_key,
+    };
+    transport
+        .send(
+            gateway,
+            &KnxIpFrame::new(ServiceType::SessionRequest, request.serialize()).serialize(),
+        )
+        .await?;
+
+    let response = loop {
+        let (frame, source) = tokio::time::timeout(timeout, transport.receive())
+            .await
+            .map_err(|_| TransportError::Timeout {
+                timeout_ms: timeout.as_millis() as u64,
+            })??;
+        if source.is_some_and(|source| source != gateway)
+            || frame.header.service_type != ServiceType::SessionResponse
+        {
+            continue;
+        }
+        break SessionResponse::parse(&frame.body)?;
+    };
+    let auth_mac = session
+        .process_session_response(response.session_id, &response.public_key, &response.mac)
+        .await?;
+    let auth = SessionAuthenticate {
+        user_id: config.user_id,
+        mac: auth_mac
+            .try_into()
+            .map_err(|_| TransportError::InvalidConfiguration {
+                details: "SessionAuthenticate MAC was not 16 bytes".into(),
+            })?,
+    };
+    transport
+        .send(
+            gateway,
+            &KnxIpFrame::new(ServiceType::SessionAuthenticate, auth.serialize()).serialize(),
+        )
+        .await?;
+
+    let status = loop {
+        let (frame, source) = tokio::time::timeout(timeout, transport.receive())
+            .await
+            .map_err(|_| TransportError::Timeout {
+                timeout_ms: timeout.as_millis() as u64,
+            })??;
+        if source.is_some_and(|source| source != gateway)
+            || frame.header.service_type != ServiceType::SessionStatus
+        {
+            continue;
+        }
+        break SessionStatus::parse(&frame.body)?;
+    };
+    session.complete_authentication(status.status).await?;
+    Ok(ManagementTransport::Secure(SecureManagementTransport::new(
+        transport,
+        session,
+        gateway,
+        Duration::from_secs(config.keepalive_interval.into()),
+    )))
 }
 
 impl DeviceManagementConnection {
@@ -92,6 +319,51 @@ impl DeviceManagementConnection {
         .await
     }
 
+    #[cfg(feature = "secure")]
+    /// Open a UDP device-management connection over KNX IP Secure.
+    pub async fn connect_secure(
+        gateway: SocketAddr,
+        local: SocketAddr,
+        security: &SecurityConfig,
+        timeout: Duration,
+    ) -> Result<Self> {
+        let socket =
+            UdpSocket::bind(local)
+                .await
+                .map_err(|source| TransportError::SocketError {
+                    operation: "bind secure device-management UDP socket".into(),
+                    source,
+                })?;
+        let bound_addr = socket
+            .local_addr()
+            .map_err(|source| TransportError::SocketError {
+                operation: "read secure device-management UDP socket address".into(),
+                source,
+            })?;
+        let local_hpai = if bound_addr.ip().is_unspecified() {
+            Hpai::route_back()
+        } else {
+            Hpai::new(bound_addr)
+        };
+        let transport = secure_management_transport(
+            PlainManagementTransport::Udp(socket),
+            gateway,
+            local_hpai.clone(),
+            security,
+            timeout,
+        )
+        .await?;
+        Self::establish(
+            transport,
+            gateway,
+            local_hpai.clone(),
+            local_hpai.clone(),
+            local_hpai,
+            timeout,
+        )
+        .await
+    }
+
     /// Open a TCP device-management connection.
     pub async fn connect_tcp(gateway: SocketAddr, timeout: Duration) -> Result<Self> {
         let (transport, _) = TcpFrameTransport::connect(gateway, timeout).await?;
@@ -102,6 +374,34 @@ impl DeviceManagementConnection {
             hpai.clone(),
             hpai.clone(),
             hpai,
+            timeout,
+        )
+        .await
+    }
+
+    #[cfg(feature = "secure")]
+    /// Open a TCP device-management connection over KNX IP Secure.
+    pub async fn connect_tcp_secure(
+        gateway: SocketAddr,
+        security: &SecurityConfig,
+        timeout: Duration,
+    ) -> Result<Self> {
+        let (transport, _) = TcpFrameTransport::connect(gateway, timeout).await?;
+        let local_hpai = Hpai::new_tcp_route_back();
+        let transport = secure_management_transport(
+            PlainManagementTransport::Tcp(transport),
+            gateway,
+            local_hpai.clone(),
+            security,
+            timeout,
+        )
+        .await?;
+        Self::establish(
+            transport,
+            gateway,
+            local_hpai.clone(),
+            local_hpai.clone(),
+            local_hpai,
             timeout,
         )
         .await
@@ -403,6 +703,7 @@ impl DeviceManagementConnection {
             let response = DisconnectResponse::parse(&frame.body)?;
             if response.communication_channel_id == self.channel_id {
                 self.closed = true;
+                self.transport.stop_keepalive();
                 return if response.is_success() {
                     Ok(())
                 } else {
@@ -988,5 +1289,274 @@ mod tests {
         connection.heartbeat(Duration::from_secs(2)).await.unwrap();
         connection.disconnect(Duration::from_secs(2)).await.unwrap();
         server_task.await.unwrap();
+    }
+
+    #[cfg(feature = "secure")]
+    #[tokio::test]
+    async fn secure_device_management_reads_property_over_udp_and_tcp_loopback() {
+        use crate::protocol::cemi::{
+            CemiPropertyInfo, CemiPropertyReadRequest, CemiPropertyReadResponse,
+        };
+        use crate::security::{SecureSession, SessionConfig};
+        use crate::transport::SecurityConfig;
+        use tokio::net::TcpListener;
+
+        async fn serve(transport: PlainManagementTransport, gateway: SocketAddr) {
+            async fn receive_secure(
+                transport: &PlainManagementTransport,
+                session: &SecureSession,
+            ) -> (KnxIpFrame, Option<SocketAddr>) {
+                let (wrapper, source) = timeout(Duration::from_secs(3), transport.receive())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(wrapper.header.service_type, ServiceType::SecureWrapper);
+                let plain = session.decrypt_frame(&wrapper.serialize()).await.unwrap();
+                (KnxIpFrame::parse(&plain).unwrap(), source)
+            }
+
+            async fn send_secure(
+                transport: &PlainManagementTransport,
+                peer: SocketAddr,
+                session: &SecureSession,
+                service: ServiceType,
+                body: Vec<u8>,
+            ) {
+                let plain = KnxIpFrame::new(service, body).serialize();
+                let encrypted = session.encrypt_frame(&plain).await.unwrap();
+                transport.send(peer, &encrypted).await.unwrap();
+            }
+
+            let (frame, source) = timeout(Duration::from_secs(3), transport.receive())
+                .await
+                .unwrap()
+                .unwrap();
+            let peer = source.unwrap_or(gateway);
+            assert_eq!(frame.header.service_type, ServiceType::SessionRequest);
+            let request = SessionRequest::parse(&frame.body).unwrap();
+
+            let config = SessionConfig {
+                user_id: 1,
+                user_password: "user password".into(),
+                device_auth_password: Some("device password".into()),
+                keepalive_interval: 5,
+            };
+            let mut session = SecureSession::new(&config);
+            let public_key: [u8; 32] = session.initialize().await.try_into().unwrap();
+            let session_id = 9;
+            let mac: [u8; 16] = session
+                .process_session_request(&request.public_key, session_id)
+                .await
+                .unwrap()
+                .try_into()
+                .unwrap();
+            let response = SessionResponse {
+                session_id,
+                public_key,
+                mac,
+            };
+            transport
+                .send(
+                    peer,
+                    &KnxIpFrame::new(ServiceType::SessionResponse, response.serialize())
+                        .serialize(),
+                )
+                .await
+                .unwrap();
+
+            let (frame, _) = timeout(Duration::from_secs(3), transport.receive())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(frame.header.service_type, ServiceType::SessionAuthenticate);
+            let auth = SessionAuthenticate::parse(&frame.body).unwrap();
+            assert!(
+                session
+                    .verify_authenticate_mac(&request.public_key, auth.user_id, &auth.mac)
+                    .await
+                    .unwrap()
+            );
+            let status = SessionStatus {
+                status: SessionStatus::STATUS_OK,
+            };
+            transport
+                .send(
+                    peer,
+                    &KnxIpFrame::new(ServiceType::SessionStatus, status.serialize()).serialize(),
+                )
+                .await
+                .unwrap();
+
+            let (frame, _) = receive_secure(&transport, &session).await;
+            assert_eq!(frame.header.service_type, ServiceType::ConnectRequest);
+            let connect = ConnectRequest::parse(&frame.body).unwrap();
+            assert_eq!(connect.cri.serialize(), [0x02, 0x03]);
+            let response = ConnectResponse {
+                channel_id: 9,
+                status: ConnectResponse::STATUS_OK,
+                data_endpoint: Hpai::new(gateway),
+                crd: vec![0x02, 0x03],
+                assigned_address: None,
+            };
+            send_secure(
+                &transport,
+                peer,
+                &session,
+                ServiceType::ConnectResponse,
+                response.serialize(),
+            )
+            .await;
+
+            let mut keepalive_count = 0;
+            let frame = loop {
+                let (frame, _) = receive_secure(&transport, &session).await;
+                if frame.header.service_type == ServiceType::SessionStatus {
+                    assert_eq!(frame.body, [0x00, 0x04]);
+                    keepalive_count += 1;
+                } else {
+                    break frame;
+                }
+            };
+            assert!(keepalive_count > 0);
+            assert_eq!(
+                frame.header.service_type,
+                ServiceType::DeviceConfigurationRequest
+            );
+
+            let property = CemiPropertyInfo {
+                object_type: 0x0011,
+                object_instance: 1,
+                property_id: 2,
+                number_of_elements: 1,
+                start_index: 1,
+            };
+            let request = TunnellingRequest::parse(&frame.body).unwrap();
+            assert_eq!(request.sequence_counter, 0);
+            assert_eq!(
+                CemiPropertyReadRequest::decode(&request.raw_cemi)
+                    .unwrap()
+                    .property,
+                property
+            );
+            send_secure(
+                &transport,
+                peer,
+                &session,
+                ServiceType::DeviceConfigurationAck,
+                TunnellingAck::new_ok(9, 0).serialize(),
+            )
+            .await;
+            let response = CemiPropertyReadResponse {
+                property,
+                data: vec![0x42],
+                error_code: None,
+            }
+            .encode()
+            .unwrap();
+            send_secure(
+                &transport,
+                peer,
+                &session,
+                ServiceType::DeviceConfigurationRequest,
+                TunnellingRequest::new(9, 0, response).serialize(),
+            )
+            .await;
+
+            let (frame, _) = receive_secure(&transport, &session).await;
+            assert_eq!(
+                frame.header.service_type,
+                ServiceType::DeviceConfigurationAck
+            );
+            assert_eq!(
+                TunnellingAck::parse(&frame.body).unwrap().sequence_counter,
+                0
+            );
+
+            let (frame, _) = receive_secure(&transport, &session).await;
+            assert_eq!(frame.header.service_type, ServiceType::DisconnectRequest);
+            let disconnect = DisconnectRequest::parse(&frame.body).unwrap();
+            let response = DisconnectResponse::new(
+                disconnect.communication_channel_id,
+                DisconnectResponse::STATUS_OK,
+            );
+            send_secure(
+                &transport,
+                peer,
+                &session,
+                ServiceType::DisconnectResponse,
+                response.serialize(),
+            )
+            .await;
+        }
+
+        let security = SecurityConfig {
+            device_auth_password: "device password".into(),
+            user_password: Some("user password".into()),
+            keyring_path: None,
+            session_timeout: 1,
+        };
+        for tcp in [false, true] {
+            let (gateway, server_task) = if tcp {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let gateway = listener.local_addr().unwrap();
+                let task = tokio::spawn(async move {
+                    let (stream, _) = timeout(Duration::from_secs(3), listener.accept())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    serve(
+                        PlainManagementTransport::Tcp(TcpFrameTransport::from_accepted_stream(
+                            stream,
+                        )),
+                        gateway,
+                    )
+                    .await;
+                });
+                (gateway, task)
+            } else {
+                let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+                let gateway = server.local_addr().unwrap();
+                let task = tokio::spawn(async move {
+                    serve(PlainManagementTransport::Udp(server), gateway).await;
+                });
+                (gateway, task)
+            };
+
+            let mut connection = if tcp {
+                DeviceManagementConnection::connect_tcp_secure(
+                    gateway,
+                    &security,
+                    Duration::from_secs(3),
+                )
+                .await
+                .unwrap()
+            } else {
+                DeviceManagementConnection::connect_secure(
+                    gateway,
+                    "127.0.0.1:0".parse().unwrap(),
+                    &security,
+                    Duration::from_secs(3),
+                )
+                .await
+                .unwrap()
+            };
+            let property = CemiPropertyInfo {
+                object_type: 0x0011,
+                object_instance: 1,
+                property_id: 2,
+                number_of_elements: 1,
+                start_index: 1,
+            };
+            tokio::time::sleep(Duration::from_millis(2_200)).await;
+            assert_eq!(
+                connection
+                    .read_property(property, Duration::from_secs(3))
+                    .await
+                    .unwrap(),
+                [0x42]
+            );
+            connection.disconnect(Duration::from_secs(3)).await.unwrap();
+            server_task.await.unwrap();
+        }
     }
 }
