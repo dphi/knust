@@ -12,8 +12,10 @@ pub enum TelegramType {
     GroupValueResponse,
     /// `A_GroupValue_Write` — writing/commanding a new value
     GroupValueWrite,
-    /// Connectionless individual-address APDU; payload includes the APCI service bytes.
+    /// Individual-address APDU; payload includes the APCI service bytes.
     IndividualData,
+    /// Individual-address TPCI control frame (connect, disconnect, ACK or NAK).
+    IndividualControl,
 }
 
 impl std::fmt::Display for TelegramType {
@@ -23,6 +25,7 @@ impl std::fmt::Display for TelegramType {
             Self::GroupValueResponse => write!(f, "GroupValueResponse"),
             Self::GroupValueWrite => write!(f, "GroupValueWrite"),
             Self::IndividualData => write!(f, "IndividualData"),
+            Self::IndividualControl => write!(f, "IndividualControl"),
         }
     }
 }
@@ -105,19 +108,31 @@ impl Telegram {
 
     pub(crate) fn from_cemi_frame(frame: super::CemiFrame) -> crate::Result<Self> {
         let individual = matches!(frame.dest_addr, Address::Individual(_));
+        let tpci = super::TpciFrame::decode(frame.tpci);
         let individual_data = individual
             && matches!(
-                super::TpciFrame::decode(frame.tpci),
+                tpci,
                 super::TpciFrame::DataUnconnected | super::TpciFrame::DataConnected { .. }
             );
-        if individual && (!individual_data || frame.apci_data.is_empty()) {
+        let individual_control = individual
+            && matches!(
+                tpci,
+                super::TpciFrame::Connect
+                    | super::TpciFrame::Disconnect
+                    | super::TpciFrame::Ack { .. }
+                    | super::TpciFrame::Nak { .. }
+            );
+        if (individual_data && frame.apci_data.is_empty())
+            || (individual_control && !frame.apci_data.is_empty())
+            || (individual && !individual_data && !individual_control)
+        {
             return Err(crate::error::ProtocolError::InvalidFrame {
-                details: "Unsupported or empty individual-address data frame".to_owned(),
+                details: "Unsupported or malformed individual-address frame".to_owned(),
             }
             .into());
         }
 
-        let service = (!individual_data)
+        let service = (!individual_data && !individual_control)
             .then(|| super::GroupValueService::decode(frame.tpci, &frame.apci_data).ok())
             .flatten();
         let payload = if individual_data {
@@ -130,6 +145,8 @@ impl Telegram {
         };
         let telegram_type = if individual_data {
             TelegramType::IndividualData
+        } else if individual_control {
+            TelegramType::IndividualControl
         } else {
             match &service {
                 Some(super::GroupValueService::Read) => TelegramType::GroupValueRead,
@@ -157,7 +174,10 @@ impl Telegram {
 
     /// Encode the raw individual APDU or a group-value service with its payload format.
     pub(crate) fn encode_apdu(&self) -> Vec<u8> {
-        if self.telegram_type == TelegramType::IndividualData {
+        if matches!(
+            self.telegram_type,
+            TelegramType::IndividualData | TelegramType::IndividualControl
+        ) {
             return self.payload.clone();
         }
         use super::GroupValueService;
@@ -165,7 +185,9 @@ impl Telegram {
             TelegramType::GroupValueRead => GroupValueService::Read,
             TelegramType::GroupValueResponse => GroupValueService::Response(self.payload.clone()),
             TelegramType::GroupValueWrite => GroupValueService::Write(self.payload.clone()),
-            TelegramType::IndividualData => unreachable!("handled above"),
+            TelegramType::IndividualData | TelegramType::IndividualControl => {
+                unreachable!("handled above")
+            }
         };
         service.encode_with_compact_payload(self.compact_payload)
     }

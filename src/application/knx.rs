@@ -2945,7 +2945,10 @@ impl Knx {
             telegram.destination,
             telegram.encode_apdu(),
         );
-        if telegram.telegram_type == TelegramType::IndividualData {
+        if matches!(
+            telegram.telegram_type,
+            TelegramType::IndividualData | TelegramType::IndividualControl
+        ) {
             frame.tpci = telegram.tpci;
         }
         frame
@@ -3212,6 +3215,7 @@ mod integration_tests {
     fn individual_apdus_preserve_connectionless_and_connected_tpci() {
         use crate::protocol::knxip::{KnxIpFrame, TunnellingRequest};
         let destination = crate::protocol::IndividualAddress::new(1, 2, 3);
+        let source = crate::protocol::IndividualAddress::new(1, 2, 4);
         let apdu = vec![0x02, 0xC8, 1, 2, 0x42];
         let telegram = Telegram::individual_data(destination, apdu.clone());
         let connection: Arc<dyn Connection> =
@@ -3239,6 +3243,25 @@ mod integration_tests {
         let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
         assert_eq!(cemi.tpci, 0x44);
         assert_eq!(cemi.apci_data, apdu);
+
+        for tpci in [0x80, 0x81, 0xC2, 0xC3] {
+            let mut control = CemiFrame::new(
+                crate::protocol::cemi::MessageCode::LDataInd,
+                source,
+                Address::Individual(destination),
+                Vec::new(),
+            );
+            control.tpci = tpci;
+            let received = Telegram::from_cemi_frame(control).unwrap();
+            assert_eq!(received.telegram_type, TelegramType::IndividualControl);
+            assert_eq!(received.tpci, tpci);
+            let wire = Knx::build_outgoing_frame_for_connection(&received, &connection).unwrap();
+            let frame = KnxIpFrame::parse(&wire).unwrap();
+            let request = TunnellingRequest::parse(&frame.body).unwrap();
+            let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
+            assert_eq!(cemi.tpci, tpci);
+            assert!(cemi.apci_data.is_empty());
+        }
     }
 
     #[cfg(feature = "dpt")]

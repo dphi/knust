@@ -281,9 +281,15 @@ impl CemiFrame {
         // the leading TPCI octet is present when data_length is non-zero.
         let zero_length_control_tpci = data_length == 0
             && matches!(message_code, MessageCode::LDataReq | MessageCode::LDataInd)
-            && data
-                .get(offset)
-                .is_some_and(|tpci| matches!(*tpci, 0x80 | 0x81));
+            && data.get(offset).is_some_and(|tpci| {
+                matches!(
+                    super::TpciFrame::decode(*tpci),
+                    super::TpciFrame::Connect
+                        | super::TpciFrame::Disconnect
+                        | super::TpciFrame::Ack { .. }
+                        | super::TpciFrame::Nak { .. }
+                )
+            });
         let tpdu_length = if data_length == 0 {
             usize::from(zero_length_control_tpci)
         } else {
@@ -435,7 +441,13 @@ impl CemiFrame {
         if self.data_length > 0 {
             result.push(self.tpci);
             result.extend_from_slice(&self.apci_data);
-        } else if matches!(self.tpci, 0x80 | 0x81) {
+        } else if matches!(
+            super::TpciFrame::decode(self.tpci),
+            super::TpciFrame::Connect
+                | super::TpciFrame::Disconnect
+                | super::TpciFrame::Ack { .. }
+                | super::TpciFrame::Nak { .. }
+        ) {
             result.push(self.tpci);
         }
 
@@ -1277,8 +1289,8 @@ mod tests {
     }
 
     #[test]
-    fn preserves_connect_and_disconnect_tpci_with_zero_npdu_length() {
-        for tpci in [0x80, 0x81] {
+    fn preserves_individual_control_tpci_with_zero_npdu_length() {
+        for tpci in [0x80, 0x81, 0xC2, 0xC3, 0xFE, 0xFF] {
             let wire = [0x11, 0x00, 0xBC, 0xE0, 0x12, 0x34, 0x56, 0x78, 0x00, tpci];
             let frame = CemiFrame::parse(&wire).unwrap();
             assert_eq!(frame.tpci, tpci);
