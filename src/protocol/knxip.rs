@@ -292,6 +292,7 @@ impl ConnectionRequestInfo {
     pub const LENGTH: usize = 4;
     /// Length of the extended CRI carrying a requested individual address.
     pub const EXTENDED_LENGTH: usize = 6;
+    pub const DEVICE_MANAGEMENT_CONNECTION: u8 = 0x03;
     pub const TUNNEL_CONNECTION: u8 = 0x04;
     pub const TUNNEL_LINKLAYER: u8 = 0x02;
 
@@ -305,12 +306,27 @@ impl ConnectionRequestInfo {
         }
     }
 
+    /// Build a CRI for a KNXnet/IP device-management connection.
+    #[must_use]
+    pub fn new_device_management() -> Self {
+        Self {
+            connection_type: Self::DEVICE_MANAGEMENT_CONNECTION,
+            knx_layer: 0,
+            reserved: 0,
+            individual_address: None,
+        }
+    }
+
     /// # Errors
     ///
     /// Returns [`ProtocolError::ParseError`] if `data` is shorter than
     /// [`Self::LENGTH`] or the declared structure length field is wrong.
+    /// # Errors
+    ///
+    /// Returns a parse error when the CRI length does not match its connection
+    /// type or the input is truncated.
     pub fn parse(data: &[u8]) -> Result<Self> {
-        if data.len() < Self::LENGTH {
+        if data.len() < 2 {
             return Err(ProtocolError::ParseError {
                 offset: 0,
                 reason: format!("CRI too short: {} bytes", data.len()),
@@ -318,29 +334,58 @@ impl ConnectionRequestInfo {
             .into());
         }
 
-        let structure_length = data[0];
+        let structure_length = data[0] as usize;
         let connection_type = data[1];
-        let knx_layer = data[2];
-        let reserved = data[3];
-
-        if structure_length != Self::LENGTH as u8 {
+        if data.len() < structure_length {
             return Err(ProtocolError::ParseError {
                 offset: 0,
-                reason: format!("Invalid CRI length: {structure_length}"),
+                reason: format!("CRI too short: {} bytes", data.len()),
             }
             .into());
         }
 
-        Ok(Self {
-            connection_type,
-            knx_layer,
-            reserved,
-            individual_address: None,
-        })
+        if connection_type == Self::TUNNEL_CONNECTION
+            && matches!(structure_length, Self::LENGTH | Self::EXTENDED_LENGTH)
+        {
+            let individual_address = if structure_length == Self::EXTENDED_LENGTH {
+                Some(IndividualAddress::from_raw(u16::from_be_bytes([
+                    data[4], data[5],
+                ])))
+            } else {
+                None
+            };
+            return Ok(Self {
+                connection_type,
+                knx_layer: data[2],
+                reserved: data[3],
+                individual_address,
+            });
+        }
+
+        if structure_length == 2 && connection_type != Self::TUNNEL_CONNECTION {
+            return Ok(Self {
+                connection_type,
+                knx_layer: 0,
+                reserved: 0,
+                individual_address: None,
+            });
+        }
+
+        Err(ProtocolError::ParseError {
+            offset: 0,
+            reason: format!(
+                "Invalid CRI length {structure_length} for connection type 0x{connection_type:02X}"
+            ),
+        }
+        .into())
     }
 
     #[must_use]
     pub fn serialize(&self) -> Vec<u8> {
+        if self.connection_type != Self::TUNNEL_CONNECTION {
+            return vec![2, self.connection_type];
+        }
+
         if let Some(addr) = self.individual_address {
             log_protocol!(
                 LogLevel::Debug,
@@ -1275,12 +1320,35 @@ mod tests {
     }
 
     #[test]
+    fn device_management_cri_uses_two_byte_connection_type() {
+        let addr: SocketAddr = "192.168.1.10:3671".parse().unwrap();
+        let mut req = ConnectRequest::new(addr, addr);
+        req.cri = ConnectionRequestInfo::new_device_management();
+        let cri = cri_bytes(&req);
+        assert_eq!(cri, [0x02, 0x03]);
+
+        let parsed = ConnectionRequestInfo::parse(&cri).unwrap();
+        assert_eq!(
+            parsed.connection_type,
+            ConnectionRequestInfo::DEVICE_MANAGEMENT_CONNECTION
+        );
+        assert_eq!(parsed.serialize(), cri);
+    }
+
+    #[test]
     fn connect_request_extended_cri_carries_requested_address() {
         // 1.1.5 -> raw 0x1105.
         let addr: SocketAddr = "192.168.1.10:3671".parse().unwrap();
         let mut req = ConnectRequest::new(addr, addr);
         req.cri.individual_address = Some(IndividualAddress::new(1, 1, 5));
-        assert_eq!(cri_bytes(&req), vec![0x06, 0x04, 0x02, 0x00, 0x11, 0x05]);
+        let cri = cri_bytes(&req);
+        assert_eq!(cri, vec![0x06, 0x04, 0x02, 0x00, 0x11, 0x05]);
+        assert_eq!(
+            ConnectionRequestInfo::parse(&cri)
+                .unwrap()
+                .individual_address,
+            Some(IndividualAddress::new(1, 1, 5))
+        );
     }
 
     #[test]
