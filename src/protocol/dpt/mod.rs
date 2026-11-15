@@ -52,6 +52,7 @@ pub mod dpt251;
 pub mod dpt255;
 pub mod dpt26;
 pub mod dpt27;
+pub mod dpt272;
 pub mod dpt273;
 pub mod dpt29; // Signed 64-bit
 pub mod dpt3; // Control
@@ -124,6 +125,7 @@ pub use dpt248::*;
 pub use dpt249::*;
 pub use dpt251::*;
 pub use dpt255::*;
+pub use dpt272::*;
 pub use dpt273::*;
 pub use group_registry::{GroupAddressRegistry, GroupAddressState};
 pub use payload::DptPayload;
@@ -132,9 +134,9 @@ pub use view::{
     AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView,
     ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
-    ConverterStatusView, DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView,
-    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
-    GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
+    ConverterInfoView, ConverterStatusView, DALIControlGearDiagnosticView, DALIDiagnosticsView,
+    DateTimeView, DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView,
+    ForecastView, GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
     MeteringValueView, ModeNextView, PrioritisedModeControlView, RelativeColorView, RgbView,
     RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View,
     Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView,
@@ -720,6 +722,7 @@ impl DptRegistry {
         registry.register::<DPTBatteryInfo>();
         registry.register::<DPTConverterStatus>();
         registry.register::<DPTConverterInfoFix>();
+        registry.register::<DPTConverterInfo>();
         registry.register::<DPTColorTemperatureTransition>();
         registry.register::<DPTColorXYYTransition>();
         registry.register::<DPTColorTemperatureControl>();

@@ -4,9 +4,9 @@ use super::view::{
     AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView,
     ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
     CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
-    ConverterStatusView, DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView,
-    DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
-    GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
+    ConverterInfoView, ConverterStatusView, DALIControlGearDiagnosticView, DALIDiagnosticsView,
+    DateTimeView, DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView,
+    ForecastView, GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
     MeteringValueView, ModeNextView, PrioritisedModeControlView, RelativeColorView, RgbView,
     RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View,
     Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView,
@@ -279,6 +279,7 @@ pub enum DptType {
     BatteryInfo = 24_600_600,
     ConverterStatus = 24_400_600,
     ConverterInfoFix = 24_800_600,
+    ConverterInfo = 27_200_600,
     ColorTemperatureTransition = 24_900_600,
     XYYColorTransition = 24_300_600,
     ColorTemperatureControl = 25_000_600,
@@ -525,6 +526,7 @@ impl DptType {
             7..=9 | 22 | 207 | 217 | 234 | 237 | 244 | 246 => 2,
             10 | 11 | 30 | 206 | 225 | 232 | 240 | 250 | 254 => 3,
             248 | 252 => 5,
+            272 => 7,
             12..=15 | 27 | 241 | 253 => 4,
             16 => 14,
             19 | 29 | 230 | 243 | 255 | 273 | 275 => 8,
@@ -755,6 +757,10 @@ impl DptType {
             27 => Ok(DptView::CombinedInfoOnOff(CombinedInfoOnOffView(bytes))),
             30 => Ok(DptView::ChannelActivation24(ChannelActivation24View(bytes))),
             230 => Ok(DptView::MBusAddress(MBusAddressView(bytes))),
+            272 => {
+                super::dpt272::ConverterInfo::decode(bytes.try_into().expect("validated length"))?;
+                Ok(DptView::ConverterInfo(ConverterInfoView(bytes)))
+            }
             248 => {
                 super::dpt248::ConverterInfoFix::decode(
                     bytes.try_into().expect("validated length"),
@@ -1123,6 +1129,7 @@ impl DptType {
             (27, DptPayload::CombinedInfoOnOff(value)) => Ok(value.encode().to_vec()),
             (30, DptPayload::ChannelActivation24(value)) => Ok(value.encode().to_vec()),
             (230, DptPayload::MBusAddress(value)) => Ok(value.encode().to_vec()),
+            (272, DptPayload::ConverterInfo(value)) => Ok(value.encode()?.to_vec()),
             (248, DptPayload::ConverterInfoFix(value)) => Ok(value.encode()?.to_vec()),
             (246, DptPayload::BatteryInfo(value)) => Ok(value.encode()?.to_vec()),
             (244, DptPayload::ConverterStatus(value)) => Ok(value.encode()?.to_vec()),
