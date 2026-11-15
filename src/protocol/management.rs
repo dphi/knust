@@ -66,6 +66,28 @@ impl DeviceDescriptorRead {
     }
 }
 
+const APCI_FUNCTION_PROPERTY_STATE_RESPONSE: [u8; 2] = [0x02, 0xC9];
+const APCI_FUNCTION_PROPERTY_EXT_STATE_RESPONSE: [u8; 2] = [0x01, 0xD6];
+
+/// Function-specific state response; None is the KNX negative response without a return code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionPropertyStateResponse {
+    pub object_index: u8,
+    pub property_id: u8,
+    pub return_code: Option<u8>,
+    pub data: Vec<u8>,
+}
+
+/// Extended function-property response. Return codes stay raw because functions may define codes outside the generic enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionPropertyExtStateResponse {
+    pub interface_object_type: u16,
+    pub object_instance: u16,
+    pub property_id: u16,
+    pub return_code: u8,
+    pub data: Vec<u8>,
+}
+
 /// `A_PropertyDescription_Response` — metadata for one interface-object property.
 ///
 /// The `type_` and `access` octets are retained verbatim so unknown PDT values
@@ -411,6 +433,104 @@ impl PropertyValueWrite {
     }
 }
 
+impl FunctionPropertyStateResponse {
+    /// Encode A_FunctionPropertyState_Response.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let Some(return_code) = self.return_code else {
+            if !self.data.is_empty() {
+                return Err(ProtocolError::InvalidFrame {
+                    details: "Function-property data requires a return code".to_owned(),
+                }
+                .into());
+            }
+            return Ok(vec![
+                APCI_FUNCTION_PROPERTY_STATE_RESPONSE[0],
+                APCI_FUNCTION_PROPERTY_STATE_RESPONSE[1],
+                self.object_index,
+                self.property_id,
+            ]);
+        };
+        let mut result = vec![
+            APCI_FUNCTION_PROPERTY_STATE_RESPONSE[0],
+            APCI_FUNCTION_PROPERTY_STATE_RESPONSE[1],
+            self.object_index,
+            self.property_id,
+            return_code,
+        ];
+        result.extend_from_slice(&self.data);
+        Ok(result)
+    }
+
+    /// Decode A_FunctionPropertyState_Response; a four-byte response has no return code.
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        if apci_bytes.len() < 4 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_STATE_RESPONSE {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "Expected FunctionPropertyStateResponse APCI 0x02C9, got {} bytes",
+                    apci_bytes.len()
+                ),
+            }
+            .into());
+        }
+        let (return_code, data) = if apci_bytes.len() == 4 {
+            (None, Vec::new())
+        } else {
+            (Some(apci_bytes[4]), apci_bytes[5..].to_vec())
+        };
+        Ok(Self {
+            object_index: apci_bytes[2],
+            property_id: apci_bytes[3],
+            return_code,
+            data,
+        })
+    }
+}
+
+impl FunctionPropertyExtStateResponse {
+    /// Encode A_FunctionPropertyExtState_Response.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        if self.object_instance > 0x0FFF || self.property_id > 0x0FFF {
+            return Err(ProtocolError::InvalidFrame {
+                details: "Function-property object instance or property ID exceeds 12 bits"
+                    .to_owned(),
+            }
+            .into());
+        }
+        let mut result = vec![
+            APCI_FUNCTION_PROPERTY_EXT_STATE_RESPONSE[0],
+            APCI_FUNCTION_PROPERTY_EXT_STATE_RESPONSE[1],
+            (self.interface_object_type >> 8) as u8,
+            self.interface_object_type as u8,
+            (self.object_instance >> 4) as u8,
+            ((self.object_instance << 4) as u8) | (self.property_id >> 8) as u8,
+            self.property_id as u8,
+            self.return_code,
+        ];
+        result.extend_from_slice(&self.data);
+        Ok(result)
+    }
+
+    /// Decode A_FunctionPropertyExtState_Response, preserving function-specific return codes.
+    pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
+        if apci_bytes.len() < 8 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_EXT_STATE_RESPONSE {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "Expected FunctionPropertyExtStateResponse APCI 0x01D6, got {} bytes",
+                    apci_bytes.len()
+                ),
+            }
+            .into());
+        }
+        Ok(Self {
+            interface_object_type: u16::from_be_bytes([apci_bytes[2], apci_bytes[3]]),
+            object_instance: (u16::from(apci_bytes[4]) << 4) | u16::from(apci_bytes[5] >> 4),
+            property_id: (u16::from(apci_bytes[5] & 0x0F) << 8) | u16::from(apci_bytes[6]),
+            return_code: apci_bytes[7],
+            data: apci_bytes[8..].to_vec(),
+        })
+    }
+}
+
 impl PropertyDescriptionRead {
     /// Encode the request as APCI bytes, including service `0x03D8`.
     #[must_use]
@@ -451,9 +571,76 @@ impl PropertyDescriptionRead {
 #[cfg(test)]
 mod tests {
     use super::{
-        DeviceDescriptorRead, DeviceDescriptorResponse, PropertyDescriptionRead,
-        PropertyDescriptionResponse, PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
+        DeviceDescriptorRead, DeviceDescriptorResponse, FunctionPropertyExtStateResponse,
+        FunctionPropertyStateResponse, PropertyDescriptionRead, PropertyDescriptionResponse,
+        PropertyValueRead, PropertyValueResponse, PropertyValueWrite,
     };
+
+    #[test]
+    fn function_property_state_response_distinguishes_missing_and_zero_return_codes() {
+        let negative = FunctionPropertyStateResponse {
+            object_index: 2,
+            property_id: 7,
+            return_code: None,
+            data: vec![],
+        };
+        assert_eq!(negative.encode().unwrap(), [0x02, 0xC9, 2, 7]);
+        assert_eq!(
+            FunctionPropertyStateResponse::decode(&negative.encode().unwrap()).unwrap(),
+            negative
+        );
+
+        let success = FunctionPropertyStateResponse {
+            return_code: Some(0),
+            data: vec![0xAA],
+            ..negative
+        };
+        assert_eq!(success.encode().unwrap(), [0x02, 0xC9, 2, 7, 0, 0xAA]);
+        assert_eq!(
+            FunctionPropertyStateResponse::decode(&success.encode().unwrap()).unwrap(),
+            success
+        );
+        assert!(
+            FunctionPropertyStateResponse {
+                return_code: None,
+                data: vec![1],
+                ..success.clone()
+            }
+            .encode()
+            .is_err()
+        );
+        assert!(FunctionPropertyStateResponse::decode(&[0x02, 0xC9, 1]).is_err());
+        assert!(FunctionPropertyStateResponse::decode(&[0x02, 0xC8, 1, 2]).is_err());
+    }
+
+    #[test]
+    fn function_property_ext_response_preserves_unknown_codes_and_checks_header() {
+        let response = FunctionPropertyExtStateResponse {
+            interface_object_type: 0x1234,
+            object_instance: 0xABC,
+            property_id: 0xDEF,
+            return_code: 0x42,
+            data: vec![0x10, 0x20],
+        };
+        let encoded = response.encode().unwrap();
+        assert_eq!(
+            encoded,
+            [0x01, 0xD6, 0x12, 0x34, 0xAB, 0xCD, 0xEF, 0x42, 0x10, 0x20]
+        );
+        assert_eq!(
+            FunctionPropertyExtStateResponse::decode(&encoded).unwrap(),
+            response
+        );
+        assert!(FunctionPropertyExtStateResponse::decode(&[0x01, 0xD6, 0, 1, 2, 3, 4]).is_err());
+        assert!(
+            FunctionPropertyExtStateResponse {
+                object_instance: 0x1000,
+                ..response
+            }
+            .encode()
+            .is_err()
+        );
+    }
 
     #[test]
     fn device_descriptor_read_encodes_to_apci_0x0300() {
