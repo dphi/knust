@@ -68,6 +68,8 @@ impl Drop for ReadCallbackGuard {
 
 type ActiveConnection = tokio::sync::watch::Sender<Option<Arc<dyn Connection>>>;
 
+const CEMI_CONFIRMATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Main Knx library interface
 ///
 /// Knx provides a high-level interface for KNX/IP communication.
@@ -140,6 +142,7 @@ pub struct Knx {
     individual_request_lock: Arc<tokio::sync::Mutex<()>>,
     active_p2p_sessions:
         Arc<std::sync::Mutex<std::collections::HashSet<crate::protocol::IndividualAddress>>>,
+    pending_cemi_confirmation: Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 
     /// Handle to the telegram processing task
     processing_task: TaskSlot,
@@ -801,6 +804,7 @@ impl Knx {
             lifecycle_lock: Arc::new(tokio::sync::Mutex::new(())),
             individual_request_lock: Arc::new(tokio::sync::Mutex::new(())),
             active_p2p_sessions: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            pending_cemi_confirmation: Arc::new(std::sync::Mutex::new(None)),
             processing_task: Arc::new(RwLock::new(None)),
             receiving_task: Arc::new(RwLock::new(None)),
             sending_task: Arc::new(RwLock::new(None)),
@@ -1755,6 +1759,7 @@ impl Knx {
         let telegram_queue = self.telegram_queue.clone();
         let control_tx = self.control_tx.clone();
         let receive_limiter = self.receive_limiter.clone();
+        let pending_cemi_confirmation = self.pending_cemi_confirmation.clone();
         #[cfg(feature = "secure")]
         let data_secure_keyring = self.data_secure_keyring.clone();
         let memory_monitor = self.memory_monitor.clone();
@@ -1825,6 +1830,7 @@ impl Knx {
                                 if let Err(error) = Self::handle_incoming_frame(
                                     &frame_data, &telegram_queue, &control_tx, channel_id,
                                     &connection, receive_limiter.as_deref(),
+                                    Some(&pending_cemi_confirmation),
                                     #[cfg(feature = "secure")] &data_secure_keyring,
                                 ).await {
                                     log_application!(LogLevel::Warn, "Failed to handle incoming frame: {}", error);
@@ -1962,6 +1968,7 @@ impl Knx {
         let auto_reconnect = self.config.auto_reconnect;
         let shutdown_flag = self.shutdown_flag.clone();
         let telegram_queue = self.telegram_queue.clone();
+        let pending_cemi_confirmation = self.pending_cemi_confirmation.clone();
         #[cfg(feature = "secure")]
         let data_secure_keyring = self.data_secure_keyring.clone();
         #[cfg(feature = "secure")]
@@ -2037,12 +2044,20 @@ impl Knx {
                         Self::build_outgoing_frame_for_connection(&telegram, &connection);
                     let mut result = match frame_result {
                         Ok(frame_data) => {
-                            Self::send_telegram_frame(&connection, &frame_data, 2, &mut receipt)
-                                .await
+                            Self::send_telegram_frame_with_confirmation(
+                                &connection,
+                                &frame_data,
+                                2,
+                                &mut receipt,
+                                &pending_cemi_confirmation,
+                            )
+                            .await
                         }
                         Err(error) => Err(error),
                     };
-                    if let Err(error) = &result {
+                    if let Err(error) = &result
+                        && !Self::is_cemi_confirmation_timeout(error)
+                    {
                         if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
                             continue;
                         }
@@ -2085,12 +2100,20 @@ impl Knx {
                                 Self::build_outgoing_frame_for_connection(&telegram, &replacement);
                             result = match replacement_frame_result {
                                 Ok(frame) => {
-                                    Self::send_telegram_frame(&replacement, &frame, 1, &mut receipt)
-                                        .await
+                                    Self::send_telegram_frame_with_confirmation(
+                                        &replacement,
+                                        &frame,
+                                        1,
+                                        &mut receipt,
+                                        &pending_cemi_confirmation,
+                                    )
+                                    .await
                                 }
                                 Err(error) => Err(error),
                             };
-                            if let Err(error) = &result {
+                            if let Err(error) = &result
+                                && !Self::is_cemi_confirmation_timeout(error)
+                            {
                                 Self::report_connection_failure(
                                     &control_tx,
                                     replacement,
@@ -2171,6 +2194,41 @@ impl Knx {
         }
     }
 
+    async fn send_telegram_frame_with_confirmation(
+        connection: &Arc<dyn Connection>,
+        frame: &[u8],
+        attempts: u8,
+        receipt: &mut Option<crate::transport::queue::SendReceipt>,
+        pending_confirmation: &std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    ) -> Result<()> {
+        let receiver = if connection.as_any().is::<Tunnel>() {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            *pending_confirmation.lock().unwrap() = Some(tx);
+            Some(rx)
+        } else {
+            None
+        };
+        if let Err(error) = Self::send_telegram_frame(connection, frame, attempts, receipt).await {
+            if receiver.is_some() {
+                pending_confirmation.lock().unwrap().take();
+            }
+            return Err(error);
+        }
+        if let Some(receiver) = receiver
+            && tokio::time::timeout(CEMI_CONFIRMATION_TIMEOUT, receiver)
+                .await
+                .is_err()
+        {
+            pending_confirmation.lock().unwrap().take();
+            return Err(DeviceError::CommunicationTimeout {
+                device: "L_Data.con".to_string(),
+                timeout_ms: CEMI_CONFIRMATION_TIMEOUT.as_millis() as u64,
+            }
+            .into());
+        }
+        Ok(())
+    }
+
     async fn report_connection_failure(
         control: &mpsc::Sender<ConnectionControlMessage>,
         connection: Arc<dyn Connection>,
@@ -2186,6 +2244,14 @@ impl Knx {
                 connection,
             })
             .await;
+    }
+
+    fn is_cemi_confirmation_timeout(error: &KnxError) -> bool {
+        matches!(
+            error,
+            KnxError::Device(DeviceError::CommunicationTimeout { device, .. })
+                if device == "L_Data.con"
+        )
     }
 
     /// Stop processing, allowing queued work to finish within bounded deadlines.
@@ -2522,6 +2588,7 @@ impl Knx {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Handle incoming KNX/IP frame based on service type (following Python pattern)
     async fn handle_incoming_frame(
         frame_data: &[u8],
@@ -2530,6 +2597,9 @@ impl Knx {
         current_channel_id: Option<u8>,
         connection: &Arc<dyn Connection>,
         receive_limiter: Option<&ReceiveRateLimiter>,
+        pending_cemi_confirmation: Option<
+            &std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        >,
         #[cfg(feature = "secure")] data_secure_keyring: &RwLock<Option<KeyRing>>,
     ) -> Result<bool> {
         use crate::protocol::knxip::{KnxIpFrame, ServiceType};
@@ -2552,6 +2622,7 @@ impl Knx {
                     telegram_queue,
                     connection,
                     receive_limiter,
+                    pending_cemi_confirmation,
                     #[cfg(feature = "secure")]
                     data_secure_keyring,
                 )
@@ -2620,6 +2691,9 @@ impl Knx {
         telegram_queue: &crate::transport::queue::TelegramQueue,
         connection: &Arc<dyn Connection>,
         receive_limiter: Option<&ReceiveRateLimiter>,
+        pending_cemi_confirmation: Option<
+            &std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        >,
         #[cfg(feature = "secure")] data_secure_keyring: &RwLock<Option<KeyRing>>,
     ) -> Result<()> {
         use crate::protocol::knxip::{TunnellingAck, TunnellingRequest};
@@ -2667,6 +2741,17 @@ impl Knx {
                         .await
                 {
                     log_application!(LogLevel::Warn, "Failed to send TunnellingAck: {}", e);
+                }
+
+                if crate::protocol::cemi::CemiFrame::parse(&tunnelling_request.raw_cemi).is_ok_and(
+                    |frame| frame.message_code == crate::protocol::cemi::MessageCode::LDataCon,
+                ) {
+                    if let Some(pending) = pending_cemi_confirmation
+                        && let Some(sender) = pending.lock().unwrap().take()
+                    {
+                        let _ = sender.send(());
+                    }
+                    return Ok(());
                 }
 
                 // Parse CEMI and enqueue telegram for processing
@@ -2774,6 +2859,11 @@ impl Knx {
     ) -> Result<()> {
         // RoutingIndication format: [cemi_data...]
         let cemi_data = &knx_frame.body;
+        if crate::protocol::cemi::CemiFrame::parse(cemi_data)
+            .is_ok_and(|frame| frame.message_code == crate::protocol::cemi::MessageCode::LDataCon)
+        {
+            return Ok(());
+        }
         #[cfg(feature = "secure")]
         let telegram =
             Self::parse_cemi_to_telegram_with_security(cemi_data, data_secure_keyring).await?;

@@ -416,7 +416,7 @@ impl TunnelServer {
     /// frame was a `ConnectRequest` that just assigned a new channel — the
     /// TCP accept loop uses this to know which channel to clean up when its
     /// stream closes.
-    async fn handle_frame(&self, data: &[u8], link: ClientLink) -> Result<Option<u8>> {
+    async fn handle_frame(self: &Arc<Self>, data: &[u8], link: ClientLink) -> Result<Option<u8>> {
         let frame = KnxIpFrame::parse(data)?;
         match frame.header.service_type {
             #[cfg(feature = "secure")]
@@ -470,7 +470,7 @@ impl TunnelServer {
     /// requires secure — matches a real secure gateway not falling back to
     /// plaintext.
     async fn dispatch_plain_frame(
-        &self,
+        self: &Arc<Self>,
         frame: KnxIpFrame,
         link: ClientLink,
         #[cfg_attr(not(feature = "secure"), allow(unused_variables))] was_encrypted: bool,
@@ -693,7 +693,11 @@ impl TunnelServer {
         Ok(Some(channel_id))
     }
 
-    async fn handle_tunnelling_request(&self, body: &[u8], link: ClientLink) -> Result<()> {
+    async fn handle_tunnelling_request(
+        self: &Arc<Self>,
+        body: &[u8],
+        link: ClientLink,
+    ) -> Result<()> {
         let request = TunnellingRequest::parse(body)?;
         let session = self
             .sessions
@@ -722,6 +726,20 @@ impl TunnelServer {
                 match parse_cemi_to_telegram(&request.raw_cemi) {
                     Ok(telegram) => {
                         let _ = self.telegram_tx.send(telegram);
+                        let server = self.clone();
+                        let session = session.clone();
+                        let raw_cemi = request.raw_cemi.clone();
+                        tokio::spawn(async move {
+                            if let Err(error) =
+                                server.send_cemi_confirmation(&session, &raw_cemi).await
+                            {
+                                log_transport!(
+                                    LogLevel::Warn,
+                                    "TunnelServer: failed to send L_Data.con: {}",
+                                    error
+                                );
+                            }
+                        });
                     }
                     Err(e) => {
                         log_transport!(
@@ -740,6 +758,18 @@ impl TunnelServer {
                 );
                 self.send_reply(ServiceType::TunnellingAck, &ack.serialize(), &session.link)
                     .await?;
+                let server = self.clone();
+                let session = session.clone();
+                let raw_cemi = request.raw_cemi.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = server.send_cemi_confirmation(&session, &raw_cemi).await {
+                        log_transport!(
+                            LogLevel::Warn,
+                            "TunnelServer: failed to resend L_Data.con: {}",
+                            error
+                        );
+                    }
+                });
             }
             SequenceValidationResult::Invalid { expected, received } => {
                 log_transport!(
@@ -758,6 +788,19 @@ impl TunnelServer {
             }
         }
         Ok(())
+    }
+
+    async fn send_cemi_confirmation(
+        &self,
+        session: &Arc<ClientSession>,
+        raw_cemi: &[u8],
+    ) -> Result<()> {
+        let mut cemi = CemiFrame::parse(raw_cemi)?;
+        if cemi.message_code != MessageCode::LDataReq {
+            return Ok(());
+        }
+        cemi.message_code = MessageCode::LDataCon;
+        self.send_cemi_to_session(session, &cemi.serialize()?).await
     }
 
     async fn handle_tunnelling_ack(&self, body: &[u8]) -> Result<()> {
@@ -838,23 +881,22 @@ impl TunnelServer {
         link.send_frame(&frame).await
     }
 
-    /// Send one telegram to one client session, retrying once on ack
-    /// timeout. Only bumps the session's outbound sequence counter after a
-    /// successful ack, per spec (a timed-out send is retried with the same
-    /// sequence number, not the next one).
     async fn send_to_session(
         &self,
         session: &Arc<ClientSession>,
         telegram: &Telegram,
     ) -> Result<()> {
+        let cemi = cemi_for_telegram(telegram, MessageCode::LDataInd).serialize()?;
+        self.send_cemi_to_session(session, &cemi).await
+    }
+
+    /// Send one CEMI frame, retrying once with the same sequence after an ACK timeout.
+    async fn send_cemi_to_session(&self, session: &Arc<ClientSession>, cemi: &[u8]) -> Result<()> {
         let _guard = session.send_lock.lock().await;
         let seq = session.send_seq.load(Ordering::SeqCst);
-        let frame = build_tunnelling_frame_with_code(
-            telegram,
-            session.channel_id,
-            seq,
-            MessageCode::LDataInd,
-        )?;
+        let request = TunnellingRequest::new(session.channel_id, seq, cemi.to_vec());
+        let frame =
+            KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize();
         let frame = self.maybe_encrypt(frame, session.link.peer_addr()).await?;
 
         for attempt in 0..2u8 {
@@ -935,12 +977,22 @@ impl TunnelServer {
     }
 }
 
+#[cfg(test)]
 fn build_tunnelling_frame_with_code(
     telegram: &Telegram,
     channel_id: u8,
     sequence: u8,
     message_code: MessageCode,
 ) -> Result<Vec<u8>> {
+    let request = TunnellingRequest::new(
+        channel_id,
+        sequence,
+        cemi_for_telegram(telegram, message_code).serialize()?,
+    );
+    Ok(KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize())
+}
+
+fn cemi_for_telegram(telegram: &Telegram, message_code: MessageCode) -> CemiFrame {
     let mut cemi = CemiFrame::new(
         message_code,
         telegram.source,
@@ -954,8 +1006,7 @@ fn build_tunnelling_frame_with_code(
     ) {
         cemi.tpci = telegram.tpci;
     }
-    let request = TunnellingRequest::new(channel_id, sequence, cemi.serialize()?);
-    Ok(KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize())
+    cemi
 }
 
 #[cfg(test)]

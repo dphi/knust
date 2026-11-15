@@ -203,12 +203,14 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
         async move {
             let mut bytes = [0; 1024];
             let mut generation = 0;
+            let mut server_send_sequence = 0u8;
             loop {
                 let (len, peer) = socket.recv_from(&mut bytes).await.unwrap();
                 let frame = KnxIpFrame::parse(&bytes[..len]).unwrap();
                 match frame.header.service_type {
                     ServiceType::ConnectRequest => {
                         generation += 1;
+                        server_send_sequence = 0;
                         let response = ConnectResponse {
                             channel_id: 7,
                             status: 0,
@@ -260,6 +262,25 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
                             )
                             .await
                             .unwrap();
+                        let mut confirmation = CemiFrame::parse(&request.raw_cemi).unwrap();
+                        confirmation.message_code = MessageCode::LDataCon;
+                        let confirmation = TunnellingRequest::new(
+                            7,
+                            server_send_sequence,
+                            confirmation.serialize().unwrap(),
+                        );
+                        socket
+                            .send_to(
+                                &KnxIpFrame::new(
+                                    ServiceType::TunnellingRequest,
+                                    confirmation.serialize(),
+                                )
+                                .serialize(),
+                                peer,
+                            )
+                            .await
+                            .unwrap();
+                        server_send_sequence = server_send_sequence.wrapping_add(1);
                         let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
                         let service =
                             GroupValueService::decode(cemi.tpci, &cemi.apci_data).unwrap();
@@ -326,7 +347,7 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
         );
         let incoming = KnxIpFrame::new(
             ServiceType::TunnellingRequest,
-            TunnellingRequest::new(7, 0, cemi.serialize().unwrap()).serialize(),
+            TunnellingRequest::new(7, 1, cemi.serialize().unwrap()).serialize(),
         );
         socket.send_to(&incoming.serialize(), peer).await.unwrap();
         assert_eq!(

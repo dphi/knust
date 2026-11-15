@@ -63,6 +63,109 @@ async fn assert_no_reply(peer: &UdpSocket) {
 }
 
 #[tokio::test]
+async fn tunnel_send_waits_for_cemi_confirmation_and_consumes_it() {
+    use crate::protocol::cemi::{CemiFrame, MessageCode};
+    use crate::protocol::{GroupAddress, MainGroup, MiddleGroup, Telegram};
+
+    let (connection, peer) = connected_tunnel().await;
+    let destination = connection
+        .as_any()
+        .downcast_ref::<Tunnel>()
+        .unwrap()
+        .local_addr();
+    let knx = Knx::new(ConnectionConfig {
+        connection_type: ConnectionType::Routing,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    knx.connection.send_replace(Some(connection));
+    knx.start_telegram_receiving_task().await.unwrap();
+    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+
+    let address = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+    for value in 1..=3 {
+        knx.send_telegram(&Telegram::group_write(address, vec![value]))
+            .await
+            .unwrap();
+    }
+
+    let first = TunnellingRequest::parse(&receive(&peer).await.body).unwrap();
+    assert_eq!(CemiFrame::parse(&first.raw_cemi).unwrap().apci_data, [0x81]);
+    let ack = TunnellingAck::new_ok(first.communication_channel_id, first.sequence_counter);
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+    let mut unexpected = [0; 1024];
+    assert!(
+        timeout(Duration::from_millis(150), peer.recv(&mut unexpected))
+            .await
+            .is_err()
+    );
+
+    let mut confirmation = CemiFrame::parse(&first.raw_cemi).unwrap();
+    confirmation.message_code = MessageCode::LDataCon;
+    let confirmation = TunnellingRequest::new(7, 0, confirmation.serialize().unwrap());
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingRequest, confirmation.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        receive(&peer).await.header.service_type,
+        ServiceType::TunnellingAck
+    );
+
+    let second = TunnellingRequest::parse(&receive(&peer).await.body).unwrap();
+    assert_eq!(
+        CemiFrame::parse(&second.raw_cemi).unwrap().apci_data,
+        [0x82]
+    );
+    let ack = TunnellingAck::new_ok(second.communication_channel_id, second.sequence_counter);
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+
+    let mut bytes = [0; 1024];
+    let len = timeout(Duration::from_secs(4), peer.recv(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    let third_frame = KnxIpFrame::parse(&bytes[..len]).unwrap();
+    let third = TunnellingRequest::parse(&third_frame.body).unwrap();
+    assert_eq!(CemiFrame::parse(&third.raw_cemi).unwrap().apci_data, [0x83]);
+    let ack = TunnellingAck::new_ok(third.communication_channel_id, third.sequence_counter);
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+    let mut confirmation = CemiFrame::parse(&third.raw_cemi).unwrap();
+    confirmation.message_code = MessageCode::LDataCon;
+    let confirmation = TunnellingRequest::new(7, 1, confirmation.serialize().unwrap());
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingRequest, confirmation.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        receive(&peer).await.header.service_type,
+        ServiceType::TunnellingAck
+    );
+    assert!(knx.telegram_queue.is_empty().await);
+    knx.stop().await;
+}
+
+#[tokio::test]
 async fn foreign_requests_do_not_ack_advance_sequence_or_deliver() {
     use crate::protocol::{
         CemiFrame, GroupValueService,
@@ -93,6 +196,7 @@ async fn foreign_requests_do_not_ack_advance_sequence_or_deliver() {
             Some(7),
             &connection,
             None,
+            None,
             #[cfg(feature = "secure")]
             &RwLock::new(None),
         )
@@ -120,6 +224,7 @@ async fn foreign_requests_do_not_ack_advance_sequence_or_deliver() {
             &control_tx,
             Some(7),
             &connection,
+            None,
             None,
             #[cfg(feature = "secure")]
             &RwLock::new(None),
@@ -152,6 +257,7 @@ async fn foreign_disconnect_replies_with_channel_error_without_losing_tunnel() {
             current_channel,
             &connection,
             None,
+            None,
             #[cfg(feature = "secure")]
             &RwLock::new(None),
         )
@@ -180,6 +286,7 @@ async fn foreign_disconnect_replies_with_channel_error_without_losing_tunnel() {
         &control_tx,
         Some(7),
         &connection,
+        None,
         None,
         #[cfg(feature = "secure")]
         &RwLock::new(None),
@@ -442,6 +549,19 @@ async fn shutdown_keeps_receiver_alive_until_queued_send_is_acknowledged() {
     )
     .await
     .unwrap();
+    let mut cemi = crate::protocol::CemiFrame::parse(&request.raw_cemi).unwrap();
+    cemi.message_code = crate::protocol::cemi::MessageCode::LDataCon;
+    let confirmation = TunnellingRequest::new(7, 0, cemi.serialize().unwrap());
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingRequest, confirmation.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        receive(&peer).await.header.service_type,
+        ServiceType::TunnellingAck
+    );
     timeout(Duration::from_millis(500), stopping)
         .await
         .expect("receiver exited before ACK was delivered")
