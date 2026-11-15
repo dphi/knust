@@ -4029,6 +4029,20 @@ impl P2pConnection {
         crate::protocol::management::AuthorizeResponse::decode(&response)
     }
 
+    /// Try free access and the configured key, returning the better access level.
+    pub async fn authorize_best(
+        &mut self,
+        client_key: u32,
+        timeout: std::time::Duration,
+    ) -> Result<u8> {
+        let free_level = self
+            .authorize(crate::protocol::management::FREE_ACCESS_KEY, timeout)
+            .await?
+            .level;
+        let client_level = self.authorize(client_key, timeout).await?.level;
+        Ok(free_level.min(client_level))
+    }
+
     /// Read one device descriptor over this P2P session.
     pub async fn read_device_descriptor(
         &mut self,
@@ -6216,6 +6230,78 @@ mod integration_tests {
         assert_eq!(
             authorize_response_ack.tpci,
             TpciFrame::Ack { sequence: 2 }.encode()
+        );
+
+        let authorizing_best = tokio::spawn(async move {
+            let level = p2p
+                .authorize_best(0x8765_4321, Duration::from_secs(2))
+                .await?;
+            Ok::<_, KnxError>((p2p, level))
+        });
+        let free_key_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::AuthorizeRequest::decode(&free_key_request.payload)
+                .unwrap()
+                .key,
+            crate::protocol::management::FREE_ACCESS_KEY
+        );
+        let mut free_key_ack = Telegram::individual_data(client_address, Vec::new());
+        free_key_ack.source = device_address;
+        free_key_ack.telegram_type = TelegramType::IndividualControl;
+        free_key_ack.tpci = TpciFrame::Ack { sequence: 4 }.encode();
+        server.send(free_key_ack).await.unwrap();
+        let mut free_key_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::AuthorizeResponse { level: 3 }.encode(),
+        );
+        free_key_response.source = device_address;
+        free_key_response.tpci = TpciFrame::DataConnected { sequence: 3 }.encode();
+        server.send(free_key_response).await.unwrap();
+        let free_key_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            free_key_response_ack.tpci,
+            TpciFrame::Ack { sequence: 3 }.encode()
+        );
+
+        let client_key_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::AuthorizeRequest::decode(&client_key_request.payload)
+                .unwrap()
+                .key,
+            0x8765_4321
+        );
+        let mut client_key_ack = Telegram::individual_data(client_address, Vec::new());
+        client_key_ack.source = device_address;
+        client_key_ack.telegram_type = TelegramType::IndividualControl;
+        client_key_ack.tpci = TpciFrame::Ack { sequence: 5 }.encode();
+        server.send(client_key_ack).await.unwrap();
+        let mut client_key_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::AuthorizeResponse { level: 1 }.encode(),
+        );
+        client_key_response.source = device_address;
+        client_key_response.tpci = TpciFrame::DataConnected { sequence: 4 }.encode();
+        server.send(client_key_response).await.unwrap();
+        let (mut p2p, best_level) = authorizing_best.await.unwrap().unwrap();
+        assert_eq!(best_level, 1);
+        let client_key_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            client_key_response_ack.tpci,
+            TpciFrame::Ack { sequence: 4 }.encode()
         );
 
         p2p.close().await.unwrap();

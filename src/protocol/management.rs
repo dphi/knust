@@ -22,6 +22,9 @@ use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
 use crate::logging::LogLevel;
 
+/// KNX free-access key used when a device has no configured access key.
+pub const FREE_ACCESS_KEY: u32 = 0xFFFF_FFFF;
+
 /// 10-bit APCI service code for `A_DeviceDescriptor_Read`.
 const APCI_DEVICE_DESCRIPTOR_READ: u16 = 0x0300;
 /// 10-bit APCI service code for `A_DeviceDescriptor_Response`.
