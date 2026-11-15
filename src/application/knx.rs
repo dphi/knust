@@ -3450,9 +3450,9 @@ impl P2pConnection {
                 }
             }
             let matches_service = expected_service.is_none_or(|service| {
-                // A_Memory_Response carries its count in the service octet's low six bits.
-                if service == [0x02, 0x40] {
-                    event.payload.first() == Some(&0x02)
+                // Memory and descriptor responses carry payload bits in the service octet.
+                if service[1] & 0xC0 == 0x40 && service[1] & 0x3F == 0 {
+                    event.payload.first() == Some(&service[0])
                         && event.payload.get(1).is_some_and(|byte| byte & 0xC0 == 0x40)
                 } else {
                     event.payload.starts_with(&service)
@@ -4011,6 +4011,47 @@ impl P2pConnection {
             .into());
         }
         Ok(response)
+    }
+
+    /// Read one device descriptor over this P2P session.
+    pub async fn read_device_descriptor(
+        &mut self,
+        descriptor: u8,
+        timeout: std::time::Duration,
+    ) -> Result<crate::protocol::management::DeviceDescriptorResponse> {
+        if descriptor > 0x3F {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!("Device descriptor type {descriptor} exceeds six bits"),
+            }
+            .into());
+        }
+        let response = self
+            .request(
+                crate::protocol::management::DeviceDescriptorRead { descriptor }.encode(),
+                [0x03, 0x40],
+                timeout,
+            )
+            .await?;
+        let response = crate::protocol::management::DeviceDescriptorResponse::decode(&response)?;
+        if response.descriptor != descriptor {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "DeviceDescriptorResponse type does not match the request".to_owned(),
+            }
+            .into());
+        }
+        Ok(response)
+    }
+
+    /// Confirm device management access and return the device mask version.
+    pub async fn read_mask_version(&mut self, timeout: std::time::Duration) -> Result<u16> {
+        let response = self.read_device_descriptor(0, timeout).await?;
+        if response.data.len() != 2 {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: "Mask version descriptor must contain two bytes".to_owned(),
+            }
+            .into());
+        }
+        Ok(u16::from_be_bytes([response.data[0], response.data[1]]))
     }
 
     /// Perform a confirmed Master Reset on the connected device.
@@ -6073,6 +6114,54 @@ mod integration_tests {
         assert_eq!(
             reset_error_response_ack.tpci,
             TpciFrame::Ack { sequence: 0 }.encode()
+        );
+
+        assert!(
+            p2p.read_device_descriptor(0x40, Duration::from_secs(2))
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), peer_traffic.recv())
+                .await
+                .is_err()
+        );
+
+        let reading_mask = tokio::spawn(async move {
+            let version = p2p.read_mask_version(Duration::from_secs(2)).await?;
+            Ok::<_, KnxError>((p2p, version))
+        });
+        let descriptor_read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(descriptor_read.payload, [0x03, 0x00]);
+        let mut descriptor_ack = Telegram::individual_data(client_address, Vec::new());
+        descriptor_ack.source = device_address;
+        descriptor_ack.telegram_type = TelegramType::IndividualControl;
+        descriptor_ack.tpci = TpciFrame::Ack { sequence: 2 }.encode();
+        server.send(descriptor_ack).await.unwrap();
+        let mut descriptor_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::DeviceDescriptorResponse {
+                descriptor: 0,
+                data: vec![0x06, 0x10],
+            }
+            .encode(),
+        );
+        descriptor_response.source = device_address;
+        descriptor_response.tpci = TpciFrame::DataConnected { sequence: 1 }.encode();
+        server.send(descriptor_response).await.unwrap();
+        let (mut p2p, mask_version) = reading_mask.await.unwrap().unwrap();
+        assert_eq!(mask_version, 0x0610);
+        let descriptor_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            descriptor_response_ack.tpci,
+            TpciFrame::Ack { sequence: 1 }.encode()
         );
 
         p2p.close().await.unwrap();
