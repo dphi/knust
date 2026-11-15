@@ -1,9 +1,9 @@
 #![cfg(feature = "dpt")]
 use knust::protocol::dpt::{
     DPTChannelActivation8, DPTForceSign, DPTForceSignCool, DPTFuelTypeSet,
-    DPTLightActuatorErrorInfo, DPTPhasesStatus, DPTRFFilterInfo, DPTSecurityReport, DPTStatusAHU,
-    DPTStatusRCC, DPTStatusRHC, DPTStatusSDHWC, DPTVirtualDryContact, DptPayload, DptRegistry,
-    DptType, DptValue,
+    DPTLightActuatorErrorInfo, DPTPhasesStatus, DPTRFFilterInfo, DPTRFModeInfo, DPTSecurityReport,
+    DPTStatusAHU, DPTStatusRCC, DPTStatusRHC, DPTStatusSDHWC, DPTVirtualDryContact, DptPayload,
+    DptRegistry, DptType, DptValue, RFModeInfo,
 };
 use knust::protocol::{Telegram, address::GroupAddress};
 
@@ -68,4 +68,64 @@ fn rf_filter_security_and_channel_activation_preserve_defined_bits() {
 fn dry_contact_and_phases_status_preserve_defined_bits() {
     check_typed_status!(DPTVirtualDryContact, "21.1200", 0xff);
     check_typed_status!(DPTPhasesStatus, "21.1201", 0x07);
+}
+
+#[test]
+fn rf_mode_info_decodes_invalid_received_flag_but_rejects_writes() {
+    let dpt = DptType::from_str("21.1000").unwrap();
+    let registry = DptRegistry::new();
+    assert!(RFModeInfo::default().asynchronous);
+
+    for raw in 0..=u8::MAX {
+        let bytes = [raw];
+        let typed = DPTRFModeInfo::decode(&bytes).unwrap();
+        let value = typed.value();
+        assert_eq!(value.asynchronous, raw & 1 != 0);
+        assert_eq!(value.bibat_master, raw & 2 != 0);
+        assert_eq!(value.bibat_slave, raw & 4 != 0);
+        assert!(
+            registry
+                .decode("21.1000", &bytes)
+                .unwrap()
+                .downcast_ref::<DPTRFModeInfo>()
+                .is_some()
+        );
+
+        let view = dpt.decode_ref(&bytes).unwrap();
+        let payload = DptPayload::from(view);
+        if raw & 1 == 0 {
+            assert!(typed.encode().is_err());
+            assert!(registry.encode("21.1000", &typed).is_err());
+            assert!(DPTRFModeInfo::new(value).is_err());
+            assert!(dpt.encode(&payload).is_err());
+            assert!(dpt.parse(&view.formatted(dpt)).is_err());
+            assert!(
+                Telegram::group_write_value::<DPTRFModeInfo>(
+                    GroupAddress::try_from_raw(1).unwrap(),
+                    value
+                )
+                .is_err()
+            );
+        } else {
+            let canonical = [raw & 0x07];
+            assert_eq!(typed.encode().unwrap(), canonical);
+            assert_eq!(registry.encode("21.1000", &typed).unwrap(), canonical);
+            assert_eq!(dpt.encode(&payload).unwrap(), canonical);
+            assert_eq!(dpt.parse(&view.formatted(dpt)).unwrap(), canonical);
+            assert_eq!(
+                Telegram::group_write_value::<DPTRFModeInfo>(
+                    GroupAddress::try_from_raw(1).unwrap(),
+                    value
+                )
+                .unwrap()
+                .payload,
+                canonical
+            );
+        }
+    }
+
+    assert!(DPTRFModeInfo::decode(&[]).is_err());
+    assert!(DPTRFModeInfo::decode(&[0, 1]).is_err());
+    assert!("000".parse::<RFModeInfo>().unwrap().encode().is_err());
+    assert!("1000".parse::<RFModeInfo>().is_err());
 }

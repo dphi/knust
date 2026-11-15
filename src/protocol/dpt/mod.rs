@@ -144,12 +144,12 @@ pub use view::{
     ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
     MeteringValueView, ModeNextView, PhasesStatusView, PrioritisedModeControlView,
-    RFFilterInfoView, RelativeColorView, RgbView, RgbwView, RoomCoolingControllerStatusView,
-    RoomHeatingControllerStatusView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView,
-    SecurityReportView, Setpoints3View, Setpoints4View, SolarDHWControllerStatusView,
-    StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View,
-    U16View, U32View, VentilationControllerStatusView, VersionView, VirtualDryContactView,
-    XYYColorTransitionView, XyyView,
+    RFFilterInfoView, RFModeInfoView, RelativeColorView, RgbView, RgbwView,
+    RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
+    SceneConfigView, SceneInfoView, SceneView, SecurityReportView, Setpoints3View, Setpoints4View,
+    SolarDHWControllerStatusView, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView,
+    StrView, TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
+    VirtualDryContactView, XYYColorTransitionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -445,7 +445,7 @@ impl<T: DptValue> DptDecoder for GenericDptDecoder<T> {
                 details: "Type mismatch in encoding".to_string(),
             })?;
 
-        Ok(typed_value.as_bytes().to_vec())
+        typed_value.encode()
     }
 
     fn dpt_number(&self) -> &'static str {
@@ -746,6 +746,7 @@ impl DptRegistry {
         registry.register::<DPTChannelActivation8>();
         registry.register::<DPTVirtualDryContact>();
         registry.register::<DPTPhasesStatus>();
+        registry.register::<DPTRFModeInfo>();
         registry.register::<DPTCombinedStatusRTSM>();
         registry.register::<DPTForceSign>();
         registry.register::<DPTForceSignCool>();

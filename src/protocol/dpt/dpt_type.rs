@@ -10,12 +10,12 @@ use super::view::{
     ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
     MeteringValueView, ModeNextView, PhasesStatusView, PrioritisedModeControlView,
-    RFFilterInfoView, RelativeColorView, RgbView, RgbwView, RoomCoolingControllerStatusView,
-    RoomHeatingControllerStatusView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView,
-    SecurityReportView, Setpoints3View, Setpoints4View, SolarDHWControllerStatusView,
-    StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View,
-    U16View, U32View, VentilationControllerStatusView, VersionView, VirtualDryContactView,
-    XYYColorTransitionView, XyyView,
+    RFFilterInfoView, RFModeInfoView, RelativeColorView, RgbView, RgbwView,
+    RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
+    SceneConfigView, SceneInfoView, SceneView, SecurityReportView, Setpoints3View, Setpoints4View,
+    SolarDHWControllerStatusView, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView,
+    StrView, TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
+    VirtualDryContactView, XYYColorTransitionView, XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -306,6 +306,7 @@ pub enum DptType {
     ChannelActivation8 = 2_101_010,
     VirtualDryContact = 2_101_200,
     PhasesStatus = 2_101_201,
+    RFModeInfo = 2_101_000,
     CombinedStatusRTSM = 2_100_107,
     GeneralStatus = 2_100_001,
     DeviceControl = 2_100_002,
@@ -825,6 +826,7 @@ impl DptType {
                 super::dpt229::MeteringValue::decode(bytes.try_into().expect("validated length"))?;
                 Ok(DptView::MeteringValue(MeteringValueView(bytes)))
             }
+            21 if self.sub() == 1000 => Ok(DptView::RFModeInfo(RFModeInfoView(bytes))),
             21 if self.sub() == 1 => Ok(DptView::GeneralStatus(GeneralStatusView(bytes))),
             21 if self.sub() == 1200 => {
                 Ok(DptView::VirtualDryContact(VirtualDryContactView(bytes)))
@@ -1240,6 +1242,9 @@ impl DptType {
             }
             (21, DptPayload::PhasesStatus(value)) if self.sub() == 1201 => {
                 Ok(value.encode().to_vec())
+            }
+            (21, DptPayload::RFModeInfo(value)) if self.sub() == 1000 => {
+                Ok(value.encode()?.to_vec())
             }
             (21, DptPayload::StatusRTSM(value)) if self.sub() == 107 => Ok(value.encode().to_vec()),
             (21, DptPayload::ForcingSignal(value)) if self.sub() == 100 => {

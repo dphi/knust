@@ -63,6 +63,106 @@ status!(SecurityReport,DPTSecurityReport,1,"21.1002","security_report",security_
 status!(ChannelActivation8,DPTChannelActivation8,1,"21.1010","channel_activation_8",channel_1:0,channel_2:1,channel_3:2,channel_4:3,channel_5:4,channel_6:5,channel_7:6,channel_8:7);
 status!(VirtualDryContact,DPTVirtualDryContact,1,"21.1200","virtual_dry_contact",contact_1:0,contact_2:1,contact_3:2,contact_4:3,contact_5:4,contact_6:5,contact_7:6,contact_8:7);
 status!(PhasesStatus,DPTPhasesStatus,1,"21.1201","phases_status",phase_1:0,phase_2:1,phase_3:2);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RFModeInfo {
+    pub asynchronous: bool,
+    pub bibat_master: bool,
+    pub bibat_slave: bool,
+}
+impl Default for RFModeInfo {
+    fn default() -> Self {
+        Self {
+            asynchronous: true,
+            bibat_master: false,
+            bibat_slave: false,
+        }
+    }
+}
+impl RFModeInfo {
+    pub fn encode(self) -> Result<[u8; 1]> {
+        if !self.asynchronous {
+            return Err(bad("21.1000"));
+        }
+        Ok([u8::from(self.asynchronous)
+            | (u8::from(self.bibat_master) << 1)
+            | (u8::from(self.bibat_slave) << 2)])
+    }
+    pub(super) fn decode(bytes: &[u8]) -> Self {
+        Self {
+            asynchronous: bytes[0] & 1 != 0,
+            bibat_master: bytes[0] & 2 != 0,
+            bibat_slave: bytes[0] & 4 != 0,
+        }
+    }
+}
+impl std::fmt::Display for RFModeInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}{}{}",
+            u8::from(self.asynchronous),
+            u8::from(self.bibat_master),
+            u8::from(self.bibat_slave)
+        )
+    }
+}
+impl std::str::FromStr for RFModeInfo {
+    type Err = crate::error::KnxError;
+    fn from_str(s: &str) -> Result<Self> {
+        let mut bytes = s.bytes();
+        let mut next = || -> Result<bool> {
+            match bytes.next() {
+                Some(b'0') => Ok(false),
+                Some(b'1') => Ok(true),
+                _ => Err(bad("21.1000")),
+            }
+        };
+        let result = Self {
+            asynchronous: next()?,
+            bibat_master: next()?,
+            bibat_slave: next()?,
+        };
+        if bytes.next().is_some() {
+            return Err(bad("21.1000"));
+        }
+        Ok(result)
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DPTRFModeInfo([u8; 1]);
+impl DPTRFModeInfo {
+    pub fn new(value: RFModeInfo) -> Result<Self> {
+        Ok(Self(value.encode()?))
+    }
+    pub fn value(&self) -> RFModeInfo {
+        RFModeInfo::decode(&self.0)
+    }
+}
+impl DptValue for DPTRFModeInfo {
+    const DPT_NUMBER: &'static str = "21.1000";
+    const VALUE_TYPE: &'static str = "rf_mode_info";
+    const BYTE_LENGTH: usize = 1;
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        Ok(Self(bytes.try_into().map_err(|_| bad("21.1000"))?))
+    }
+    fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+    fn value_range() -> (f64, f64) {
+        (0.0, 0.0)
+    }
+    fn encode(&self) -> Result<Vec<u8>> {
+        self.value().encode().map(|bytes| bytes.to_vec())
+    }
+}
+impl WriteValue<DPTRFModeInfo> for RFModeInfo {
+    fn resolve(self, _: DptType) -> Result<DPTRFModeInfo> {
+        DPTRFModeInfo::new(self)
+    }
+}
 status!(GeneralStatus,DPTStatusGen,1,"21.001","general_status",out_of_service:0,fault:1,overridden:2,in_alarm:3,alarm_un_ack:4);
 status!(DeviceControl,DPTDeviceControl,1,"21.002","device_control",user_stopped:0,own_ia:1,verify_mode:2);
 status!(CombinedStatusRTSM,DPTCombinedStatusRTSM,1,"21.107","combined_status_rtsm",window_open:0,presence:1,comfort_push_button:2,comfort_prolongation_user:3,hvac_mode_user:4);

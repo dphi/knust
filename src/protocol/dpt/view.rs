@@ -373,6 +373,7 @@ status_view!(SecurityReportView, SecurityReport);
 status_view!(ChannelActivation8View, ChannelActivation8);
 status_view!(VirtualDryContactView, VirtualDryContact);
 status_view!(PhasesStatusView, PhasesStatus);
+status_view!(RFModeInfoView, RFModeInfo);
 status_view!(StatusRTSMView, CombinedStatusRTSM);
 status_view!(ForcingSignalView, ForcingSignal);
 status_view!(ForcingSignalCoolView, ForcingSignalCool);
@@ -969,6 +970,7 @@ pub enum DptView<'a> {
     ChannelActivation8(ChannelActivation8View<'a>),
     VirtualDryContact(VirtualDryContactView<'a>),
     PhasesStatus(PhasesStatusView<'a>),
+    RFModeInfo(RFModeInfoView<'a>),
     StatusRTSM(StatusRTSMView<'a>),
     GeneralStatus(GeneralStatusView<'a>),
     DeviceControl(DeviceControlView<'a>),
@@ -1049,6 +1051,7 @@ impl<'a> DptView<'a> {
             | Self::ChannelActivation8(_)
             | Self::VirtualDryContact(_)
             | Self::PhasesStatus(_)
+            | Self::RFModeInfo(_)
             | Self::StatusRTSM(_)
             | Self::GeneralStatus(_)
             | Self::DeviceControl(_)
@@ -1133,6 +1136,7 @@ impl<'a> DptView<'a> {
             Self::ChannelActivation8(v) => v.raw(),
             Self::VirtualDryContact(v) => v.raw(),
             Self::PhasesStatus(v) => v.raw(),
+            Self::RFModeInfo(v) => v.raw(),
             Self::StatusRTSM(v) => v.raw(),
             Self::GeneralStatus(v) => v.raw(),
             Self::DeviceControl(v) => v.raw(),
@@ -1224,6 +1228,7 @@ impl DptView<'_> {
             Self::ChannelActivation8(v) => v.value().to_string(),
             Self::VirtualDryContact(v) => v.value().to_string(),
             Self::PhasesStatus(v) => v.value().to_string(),
+            Self::RFModeInfo(v) => v.value().to_string(),
             Self::StatusRTSM(v) => v.value().to_string(),
             Self::GeneralStatus(v) => v.value().to_string(),
             Self::DeviceControl(v) => v.value().to_string(),
@@ -1691,6 +1696,7 @@ impl DptType {
             249 => s.parse().map(DptPayload::ColorTemperatureTransition),
             250 | 252..=254 => super::dpt_relative_color::parse_payload(s,self.main()),
             243 => s.parse().map(DptPayload::XYYColorTransition),
+            21 if self.sub() == 1000 => s.parse().map(DptPayload::RFModeInfo),
             21 if self.sub() == 1 => s.parse().map(DptPayload::GeneralStatus),
             21 if self.sub() == 1200 => s.parse().map(DptPayload::VirtualDryContact),
             21 if self.sub() == 1201 => s.parse().map(DptPayload::PhasesStatus),
