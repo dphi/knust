@@ -754,20 +754,16 @@ impl Tunnel {
 
     // --- Heartbeat / router ---
 
-    /// Start the `ConnectionState` heartbeat loop (KNX spec 03.08.02 §5.4):
-    /// periodically sends `ConnectionState_Request`, correlates the response
-    /// through the [`FrameRouter`], and reports each outcome via the returned
-    /// handle. Declares the tunnel lost after `max_failures` consecutive
-    /// failures (see [`HeartbeatConfig`]).
+    /// Start the `ConnectionState` heartbeat loop and return its lifecycle handle.
     ///
-    /// Inert (no task spawned, [`HeartbeatHandle::lost`] never fires) if this
-    /// tunnel was built without `use_heartbeat` (see [`Tunnel::new_tcp_with_timeout`]).
+    /// The loop reports outcomes through the handle and declares this tunnel lost
+    /// after the configured consecutive failures. It is inert when this tunnel
+    /// was created without heartbeat support, as with TCP tunnelling.
     ///
     /// # Panics
     ///
-    /// Panics if the internal lock is poisoned.
-    #[must_use]
-    pub fn start_heartbeat(self: Arc<Self>, label: String) -> HeartbeatHandle {
+    /// Panics if the internal heartbeat lock is poisoned.
+    pub fn start_heartbeat(&self, label: String) -> HeartbeatHandle {
         let lost = Arc::new(tokio::sync::Notify::new());
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         if !self.use_heartbeat {
@@ -785,7 +781,14 @@ impl Tunnel {
         ));
         *self.heartbeat.write().unwrap() = Some(monitor.clone());
 
-        let conn = self;
+        let transport = self.transport().ok();
+        let router = self.router.clone();
+        let channel_id = self.channel_id;
+        let request = KnxIpFrame::new(
+            ServiceType::ConnectionstateRequest,
+            ConnectionstateRequest::new(channel_id, self.local_hpai.clone()).serialize(),
+        )
+        .serialize();
         let task_lost = lost.clone();
         let task = tokio::spawn(async move {
             let interval = monitor.config().interval;
@@ -795,12 +798,14 @@ impl Tunnel {
                     () = tokio::time::sleep(interval) => {}
                     () = task_lost.notified() => break,
                 }
-                let rx = conn.router().register_channel_response(
-                    ServiceType::ConnectionstateResponse,
-                    conn.channel_id(),
-                );
+                let rx = router
+                    .register_channel_response(ServiceType::ConnectionstateResponse, channel_id);
                 let t0 = Instant::now();
-                if conn.send_connectionstate_request().await.is_err() {
+                let sent = match transport.as_ref() {
+                    Some(transport) => transport.send_frame(&request).await.is_ok(),
+                    None => false,
+                };
+                if !sent {
                     let _ = event_tx.send(HeartbeatEvent {
                         ok: false,
                         latency_ms: None,
@@ -812,8 +817,11 @@ impl Tunnel {
                     continue;
                 }
                 let ok = match timeout(response_timeout, rx).await {
-                    Ok(Ok(frame)) => ConnectionstateResponse::parse(&frame.body)
-                        .is_ok_and(|r| r.status == ConnectionstateResponse::STATUS_OK),
+                    Ok(Ok(frame)) => {
+                        ConnectionstateResponse::parse(&frame.body).is_ok_and(|response| {
+                            response.status == ConnectionstateResponse::STATUS_OK
+                        })
+                    }
                     _ => false,
                 };
                 if ok {
@@ -1008,6 +1016,10 @@ impl Connection for Tunnel {
         self.send_disconnect().await
     }
 
+    fn start_heartbeat(&self, label: String) -> Option<HeartbeatHandle> {
+        Some(Tunnel::start_heartbeat(self, label))
+    }
+
     fn state(&self) -> ConnectionState {
         Tunnel::state(self)
     }
@@ -1033,7 +1045,11 @@ mod tunneling_address_tests {
     async fn dropping_heartbeat_handle_stops_its_task() {
         let tunnel = Arc::new(Tunnel::new_udp(gateway()));
         let weak = Arc::downgrade(&tunnel);
-        let handle = tunnel.clone().start_heartbeat("test".into());
+        let connection: Arc<dyn Connection> = tunnel.clone();
+        let handle = connection
+            .start_heartbeat("test".into())
+            .expect("tunnel provides a heartbeat");
+        drop(connection);
         drop(tunnel);
         drop(handle);
         tokio::task::yield_now().await;

@@ -1477,23 +1477,56 @@ impl Knx {
         let memory_monitor = self.memory_monitor.clone();
         let performance_optimizer = self.performance_optimizer.clone();
         let handle = tokio::spawn(async move {
+            let mut heartbeat: Option<(
+                Arc<dyn Connection>,
+                crate::transport::tunnel::HeartbeatHandle,
+            )> = None;
             while !shutdown_flag.load(Ordering::SeqCst) {
                 let connection = active.borrow_and_update().clone();
                 let Some(connection) = connection else {
+                    heartbeat = None;
                     tokio::select! {
                         _ = active.changed() => {}
                         _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                     }
                     continue;
                 };
+                if heartbeat
+                    .as_ref()
+                    .is_none_or(|(current, _)| !Arc::ptr_eq(current, &connection))
+                {
+                    heartbeat = connection
+                        .clone()
+                        .start_heartbeat("knust".to_string())
+                        .map(|handle| (connection.clone(), handle));
+                }
+                let heartbeat_lost = heartbeat.as_ref().map(|(_, handle)| handle.lost());
+                let channel_id = connection
+                    .as_any()
+                    .downcast_ref::<Tunnel>()
+                    .map(Tunnel::channel_id);
+
                 tokio::select! {
+                    _ = async {
+                        match heartbeat_lost.as_ref() {
+                            Some(lost) => lost.notified().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        let _ = control_tx.send(ConnectionControlMessage {
+                            event: ConnectionControlEvent::TunnelLost {
+                                channel_id: channel_id.unwrap_or(0),
+                                reason: "ConnectionState heartbeat failed".to_string(),
+                            },
+                            connection: connection.clone(),
+                        }).await;
+                    }
                     _ = active.changed() => {}
                     _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                     received = connection.recv() => {
                         let is_current = active.borrow().as_ref()
                             .is_some_and(|current| Arc::ptr_eq(current, &connection));
                         if !is_current { continue; }
-                        let channel_id = connection.as_any().downcast_ref::<Tunnel>().map(Tunnel::channel_id);
                         match received {
                             Ok(frame_data) => {
                                 if let Some(tunnel) = connection.as_any().downcast_ref::<Tunnel>()

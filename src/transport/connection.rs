@@ -30,6 +30,11 @@ pub trait Connection: Send + Sync {
         ConnectionHealth::from_state_and_stats(self.state(), self.stats())
     }
 
+    /// Start connection-specific liveness checks if this transport provides them.
+    fn start_heartbeat(&self, _label: String) -> Option<super::tunnel::HeartbeatHandle> {
+        None
+    }
+
     /// Get reference to underlying concrete type (for downcasting)
     fn as_any(&self) -> &dyn std::any::Any;
 }
