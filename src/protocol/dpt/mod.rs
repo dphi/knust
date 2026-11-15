@@ -136,10 +136,11 @@ pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
     AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView, ChannelActivation8View,
-    ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
-    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
-    ConverterInfoView, ConverterStatusView, ConverterTestInfoView, ConverterTestResultView,
-    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DeviceControlView,
+    ChannelActivation16View, ChannelActivation24View, CharacterView, CodeView,
+    ColorTemperatureTransitionView, CombinedInfoOnOffView, CombinedPositionView, Control2View,
+    ControlView, ConverterInfoFixView, ConverterInfoView, ConverterStatusView,
+    ConverterTestInfoView, ConverterTestResultView, DALIControlGearDiagnosticView,
+    DALIDiagnosticsView, DHWControllerStatusView, DateTimeView, DateView, DeviceControlView,
     DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForcingSignalCoolView,
     ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
@@ -148,8 +149,9 @@ pub use view::{
     RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
     SceneConfigView, SceneInfoView, SceneView, SecurityReportView, Setpoints3View, Setpoints4View,
     SolarDHWControllerStatusView, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView,
-    StrView, TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
-    VirtualDryContactView, XYYColorTransitionView, XyyView,
+    StrView, SupportedMediaView, TimeView, U8View, U16View, U32View,
+    VentilationControllerStatusView, VersionView, VirtualDryContactView, XYYColorTransitionView,
+    XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -757,6 +759,9 @@ impl DptRegistry {
         registry.register::<DPTStatusAHU>();
         registry.register::<DPTStatusGen>();
         registry.register::<DPTDeviceControl>();
+        registry.register::<DPTStatusDHWC>();
+        registry.register::<DPTMedia>();
+        registry.register::<DPTChannelActivation16>();
         registry.register::<DPTCombinedStatusHVA>();
         registry.register::<DPTCombinedStatusRTC>();
         registry.register::<DPTForecastTemperature>();

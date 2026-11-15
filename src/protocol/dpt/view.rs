@@ -384,6 +384,9 @@ status_view!(RoomCoolingControllerStatusView, RoomCoolingControllerStatus);
 status_view!(VentilationControllerStatusView, VentilationControllerStatus);
 status_view!(GeneralStatusView, GeneralStatus);
 status_view!(DeviceControlView, DeviceControl);
+status_view!(DHWControllerStatusView, DHWControllerStatus);
+status_view!(SupportedMediaView, SupportedMedia);
+status_view!(ChannelActivation16View, ChannelActivation16);
 status_view!(StatusHVAView, CombinedStatusHVA);
 status_view!(StatusRTCView, CombinedStatusRTC);
 
@@ -974,6 +977,9 @@ pub enum DptView<'a> {
     StatusRTSM(StatusRTSMView<'a>),
     GeneralStatus(GeneralStatusView<'a>),
     DeviceControl(DeviceControlView<'a>),
+    DHWControllerStatus(DHWControllerStatusView<'a>),
+    SupportedMedia(SupportedMediaView<'a>),
+    ChannelActivation16(ChannelActivation16View<'a>),
     StatusHVA(StatusHVAView<'a>),
     StatusRTC(StatusRTCView<'a>),
     Forecast(ForecastView<'a>),
@@ -1055,6 +1061,9 @@ impl<'a> DptView<'a> {
             | Self::StatusRTSM(_)
             | Self::GeneralStatus(_)
             | Self::DeviceControl(_)
+            | Self::DHWControllerStatus(_)
+            | Self::SupportedMedia(_)
+            | Self::ChannelActivation16(_)
             | Self::StatusHVA(_)
             | Self::StatusRTC(_)
             | Self::Forecast(_)
@@ -1140,6 +1149,9 @@ impl<'a> DptView<'a> {
             Self::StatusRTSM(v) => v.raw(),
             Self::GeneralStatus(v) => v.raw(),
             Self::DeviceControl(v) => v.raw(),
+            Self::DHWControllerStatus(v) => v.raw(),
+            Self::SupportedMedia(v) => v.raw(),
+            Self::ChannelActivation16(v) => v.raw(),
             Self::StatusHVA(v) => v.raw(),
             Self::StatusRTC(v) => v.raw(),
             Self::Forecast(v) => v.raw(),
@@ -1232,6 +1244,9 @@ impl DptView<'_> {
             Self::StatusRTSM(v) => v.value().to_string(),
             Self::GeneralStatus(v) => v.value().to_string(),
             Self::DeviceControl(v) => v.value().to_string(),
+            Self::DHWControllerStatus(v) => v.value().to_string(),
+            Self::SupportedMedia(v) => v.value().to_string(),
+            Self::ChannelActivation16(v) => v.value().to_string(),
             Self::StatusHVA(v) => v.value().to_string(),
             Self::StatusRTC(v) => v.value().to_string(),
             Self::Forecast(v) => v.value().to_string(),
@@ -1713,6 +1728,9 @@ impl DptType {
             21 if self.sub() == 106 => s.parse().map(DptPayload::VentilationControllerStatus),
             21 if self.sub() == 2 => s.parse().map(DptPayload::DeviceControl),
             21 => s.parse().map(DptPayload::StatusRTSM),
+            22 if self.sub() == 100 => s.parse().map(DptPayload::DHWControllerStatus),
+            22 if self.sub() == 1000 => s.parse().map(DptPayload::SupportedMedia),
+            22 if self.sub() == 1010 => s.parse().map(DptPayload::ChannelActivation16),
             22 if self.sub() == 102 => s.parse().map(DptPayload::StatusHVA),
             22 => s.parse().map(DptPayload::StatusRTC),
             273 => s.parse().map(DptPayload::Forecast),

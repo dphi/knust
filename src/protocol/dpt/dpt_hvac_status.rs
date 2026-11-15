@@ -166,6 +166,9 @@ impl WriteValue<DPTRFModeInfo> for RFModeInfo {
 status!(GeneralStatus,DPTStatusGen,1,"21.001","general_status",out_of_service:0,fault:1,overridden:2,in_alarm:3,alarm_un_ack:4);
 status!(DeviceControl,DPTDeviceControl,1,"21.002","device_control",user_stopped:0,own_ia:1,verify_mode:2);
 status!(CombinedStatusRTSM,DPTCombinedStatusRTSM,1,"21.107","combined_status_rtsm",window_open:0,presence:1,comfort_push_button:2,comfort_prolongation_user:3,hvac_mode_user:4);
+status!(DHWControllerStatus,DPTStatusDHWC,2,"22.100","dhw_controller_status",fault:0,dhw_load_active:1,legio_prot_active:2,dhw_push_active:3,other_energy_source_active:4,solar_energy_only:5,solar_energy_support:6,temp_optim_shift_active:7);
+status!(SupportedMedia,DPTMedia,2,"22.1000","supported_media",tp1:1,pl110:2,rf:4,knx_ip:5);
+status!(ChannelActivation16,DPTChannelActivation16,2,"22.1010","channel_activation_16",channel_1:0,channel_2:1,channel_3:2,channel_4:3,channel_5:4,channel_6:5,channel_7:6,channel_8:7,channel_9:8,channel_10:9,channel_11:10,channel_12:11,channel_13:12,channel_14:13,channel_15:14,channel_16:15);
 status!(CombinedStatusHVA,DPTCombinedStatusHVA,2,"22.102","combined_status_hva",valve_open:0,short_circuit:1,overload:2,valve_kick:3,service_mode:4,manual_operation:5,forced_position:6,locked_position:7,calibration_mode:8);
 // In KNX heat/cool encoding, true selects heating and false selects cooling.
 status!(CombinedStatusRTC,DPTCombinedStatusRTC,2,"22.103","combined_status_rtc",fault:0,heating_mode:1,dew_point_status:2,frost_alarm:3,overheat_alarm:4,controller_inactive:5,additional_stage:6,heating_enabled:7,cooling_enabled:8);

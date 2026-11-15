@@ -2,10 +2,11 @@ use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
     AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView, ChannelActivation8View,
-    ChannelActivation24View, CharacterView, CodeView, ColorTemperatureTransitionView,
-    CombinedInfoOnOffView, CombinedPositionView, Control2View, ControlView, ConverterInfoFixView,
-    ConverterInfoView, ConverterStatusView, ConverterTestInfoView, ConverterTestResultView,
-    DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView, DateView, DeviceControlView,
+    ChannelActivation16View, ChannelActivation24View, CharacterView, CodeView,
+    ColorTemperatureTransitionView, CombinedInfoOnOffView, CombinedPositionView, Control2View,
+    ControlView, ConverterInfoFixView, ConverterInfoView, ConverterStatusView,
+    ConverterTestInfoView, ConverterTestResultView, DALIControlGearDiagnosticView,
+    DALIDiagnosticsView, DHWControllerStatusView, DateTimeView, DateView, DeviceControlView,
     DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForcingSignalCoolView,
     ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
     I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
@@ -14,8 +15,9 @@ use super::view::{
     RoomCoolingControllerStatusView, RoomHeatingControllerStatusView, ScalingTimeView,
     SceneConfigView, SceneInfoView, SceneView, SecurityReportView, Setpoints3View, Setpoints4View,
     SolarDHWControllerStatusView, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView,
-    StrView, TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
-    VirtualDryContactView, XYYColorTransitionView, XyyView,
+    StrView, SupportedMediaView, TimeView, U8View, U16View, U32View,
+    VentilationControllerStatusView, VersionView, VirtualDryContactView, XYYColorTransitionView,
+    XyyView,
 };
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
@@ -310,6 +312,9 @@ pub enum DptType {
     CombinedStatusRTSM = 2_100_107,
     GeneralStatus = 2_100_001,
     DeviceControl = 2_100_002,
+    DHWControllerStatus = 2_200_100,
+    SupportedMedia = 2_201_000,
+    ChannelActivation16 = 2_201_010,
     CombinedStatusHVA = 2_200_102,
     CombinedStatusRTC = 2_200_103,
     ForecastTemperature = 27_300_001,
@@ -857,6 +862,13 @@ impl DptType {
             )),
             21 if self.sub() == 2 => Ok(DptView::DeviceControl(DeviceControlView(bytes))),
             21 => Ok(DptView::StatusRTSM(StatusRTSMView(bytes))),
+            22 if self.sub() == 100 => {
+                Ok(DptView::DHWControllerStatus(DHWControllerStatusView(bytes)))
+            }
+            22 if self.sub() == 1000 => Ok(DptView::SupportedMedia(SupportedMediaView(bytes))),
+            22 if self.sub() == 1010 => {
+                Ok(DptView::ChannelActivation16(ChannelActivation16View(bytes)))
+            }
             22 if self.sub() == 102 => Ok(DptView::StatusHVA(StatusHVAView(bytes))),
             22 => Ok(DptView::StatusRTC(StatusRTCView(bytes))),
             225 => Ok(DptView::ScalingTime(ScalingTimeView(bytes, self.sub()))),
@@ -1272,6 +1284,15 @@ impl DptType {
                 Ok(value.encode().to_vec())
             }
             (21, DptPayload::DeviceControl(value)) if self.sub() == 2 => {
+                Ok(value.encode().to_vec())
+            }
+            (22, DptPayload::DHWControllerStatus(value)) if self.sub() == 100 => {
+                Ok(value.encode().to_vec())
+            }
+            (22, DptPayload::SupportedMedia(value)) if self.sub() == 1000 => {
+                Ok(value.encode().to_vec())
+            }
+            (22, DptPayload::ChannelActivation16(value)) if self.sub() == 1010 => {
                 Ok(value.encode().to_vec())
             }
             (22, DptPayload::StatusHVA(value)) if self.sub() == 102 => Ok(value.encode().to_vec()),

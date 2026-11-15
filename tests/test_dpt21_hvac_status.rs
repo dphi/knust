@@ -1,9 +1,9 @@
 #![cfg(feature = "dpt")]
 use knust::protocol::dpt::{
-    DPTChannelActivation8, DPTForceSign, DPTForceSignCool, DPTFuelTypeSet,
-    DPTLightActuatorErrorInfo, DPTPhasesStatus, DPTRFFilterInfo, DPTRFModeInfo, DPTSecurityReport,
-    DPTStatusAHU, DPTStatusRCC, DPTStatusRHC, DPTStatusSDHWC, DPTVirtualDryContact, DptPayload,
-    DptRegistry, DptType, DptValue, RFModeInfo,
+    DPTChannelActivation8, DPTChannelActivation16, DPTForceSign, DPTForceSignCool, DPTFuelTypeSet,
+    DPTLightActuatorErrorInfo, DPTMedia, DPTPhasesStatus, DPTRFFilterInfo, DPTRFModeInfo,
+    DPTSecurityReport, DPTStatusAHU, DPTStatusDHWC, DPTStatusRCC, DPTStatusRHC, DPTStatusSDHWC,
+    DPTVirtualDryContact, DptPayload, DptRegistry, DptType, DptValue, RFModeInfo,
 };
 use knust::protocol::{Telegram, address::GroupAddress};
 
@@ -38,6 +38,43 @@ macro_rules! check_typed_status {
         }
         assert!(<$wrapper>::decode(&[]).is_err());
         assert!(<$wrapper>::decode(&[0, 1]).is_err());
+    }};
+}
+
+macro_rules! check_typed_status16 {
+    ($wrapper:ty, $number:literal, $mask:expr, $fields:expr) => {{
+        let dpt = DptType::from_str($number).unwrap();
+        let registry = DptRegistry::new();
+        assert_eq!(registry.metadata($number).unwrap().byte_length, 2);
+        for raw in 0..=u16::MAX {
+            let bytes = raw.to_be_bytes();
+            let canonical = (raw & $mask).to_be_bytes();
+            let value = <$wrapper>::decode(&bytes).unwrap().value();
+            assert_eq!(value.to_string().len(), $fields);
+            assert_eq!(<$wrapper>::new(value).as_bytes(), canonical);
+            assert_eq!(
+                Telegram::group_write_value::<$wrapper>(
+                    GroupAddress::try_from_raw(1).unwrap(),
+                    value
+                )
+                .unwrap()
+                .payload,
+                canonical
+            );
+            assert!(
+                registry
+                    .decode($number, &bytes)
+                    .unwrap()
+                    .downcast_ref::<$wrapper>()
+                    .is_some()
+            );
+            let view = dpt.decode_ref(&bytes).unwrap();
+            let payload = DptPayload::from(view);
+            assert_eq!(dpt.encode(&payload).unwrap(), canonical);
+            assert_eq!(dpt.parse(&view.formatted(dpt)).unwrap(), canonical);
+        }
+        assert!(<$wrapper>::decode(&[]).is_err());
+        assert!(<$wrapper>::decode(&[0, 0, 0]).is_err());
     }};
 }
 
@@ -128,4 +165,11 @@ fn rf_mode_info_decodes_invalid_received_flag_but_rejects_writes() {
     assert!(DPTRFModeInfo::decode(&[0, 1]).is_err());
     assert!("000".parse::<RFModeInfo>().unwrap().encode().is_err());
     assert!("1000".parse::<RFModeInfo>().is_err());
+}
+
+#[test]
+fn dhw_media_and_channel_statuses_preserve_defined_bits() {
+    check_typed_status16!(DPTStatusDHWC, "22.100", 0x00ff, 8);
+    check_typed_status16!(DPTMedia, "22.1000", 0x0036, 4);
+    check_typed_status16!(DPTChannelActivation16, "22.1010", 0xffff, 16);
 }
