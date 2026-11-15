@@ -138,6 +138,8 @@ pub struct Knx {
     receiving_stop: Arc<AtomicBool>,
     lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
     individual_request_lock: Arc<tokio::sync::Mutex<()>>,
+    active_p2p_sessions:
+        Arc<std::sync::Mutex<std::collections::HashSet<crate::protocol::IndividualAddress>>>,
 
     /// Handle to the telegram processing task
     processing_task: TaskSlot,
@@ -649,6 +651,61 @@ impl Default for KnxBuilder {
     }
 }
 
+const P2P_CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
+const P2P_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+const P2P_MAX_RETRANSMISSIONS: usize = 3;
+
+struct P2pTelegramCallback {
+    tx: mpsc::Sender<Telegram>,
+}
+
+#[async_trait::async_trait]
+impl TelegramCallbackFn for P2pTelegramCallback {
+    async fn call(&self, telegram: &Telegram) {
+        let _ = self.tx.send(telegram.clone()).await;
+    }
+}
+
+struct P2pCallbackRegistration {
+    knx: Knx,
+    handle: Option<CallbackHandle>,
+    active_sessions:
+        Arc<std::sync::Mutex<std::collections::HashSet<crate::protocol::IndividualAddress>>>,
+    destination: crate::protocol::IndividualAddress,
+}
+
+impl Drop for P2pCallbackRegistration {
+    fn drop(&mut self) {
+        self.active_sessions
+            .lock()
+            .unwrap()
+            .remove(&self.destination);
+        if let Some(handle) = self.handle.take()
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            let knx = self.knx.clone();
+            runtime.spawn(async move {
+                knx.unregister_callback(handle).await;
+            });
+        }
+    }
+}
+
+/// An established connection-oriented transport link to one individual address.
+///
+/// Methods require `&mut self`, so requests on one link are serialized and each
+/// connected-data sequence has a single owner.
+pub struct P2pConnection {
+    knx: Knx,
+    destination: crate::protocol::IndividualAddress,
+    receiver: mpsc::Receiver<Telegram>,
+    pending: std::collections::VecDeque<Telegram>,
+    callback: Option<P2pCallbackRegistration>,
+    send_sequence: u8,
+    receive_sequence: u8,
+    closed: bool,
+}
+
 impl Knx {
     /// Create a new builder for Knx configuration
     #[must_use]
@@ -743,6 +800,7 @@ impl Knx {
             receiving_stop: Arc::new(AtomicBool::new(false)),
             lifecycle_lock: Arc::new(tokio::sync::Mutex::new(())),
             individual_request_lock: Arc::new(tokio::sync::Mutex::new(())),
+            active_p2p_sessions: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             processing_task: Arc::new(RwLock::new(None)),
             receiving_task: Arc::new(RwLock::new(None)),
             sending_task: Arc::new(RwLock::new(None)),
@@ -1264,6 +1322,26 @@ impl Knx {
         Ok(())
     }
 
+    async fn send_telegram_acknowledged(&self, telegram: &Telegram) -> Result<()> {
+        let mut telegram = telegram.clone();
+        telegram.source = self.config.individual_address;
+        let (sent, completed) = self
+            .telegram_queue
+            .enqueue_outgoing_tracked(telegram)
+            .await?;
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            sent.await
+                .map_err(|_| crate::error::TransportError::QueueClosed)?;
+            completed
+                .await
+                .map_err(|_| crate::error::TransportError::QueueClosed)??;
+            Ok::<_, KnxError>(())
+        })
+        .await
+        .map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })??;
+        Ok(())
+    }
+
     /// Send a connectionless individual-address request and await its matching response.
     ///
     /// The two-byte APCI service prefix identifies the expected response. Requests are
@@ -1343,6 +1421,59 @@ impl Knx {
         self.unregister_callback(handle).await;
         callback_guard.handle = None;
         result
+    }
+
+    /// Open a connection-oriented transport link to an individual address.
+    ///
+    /// Only one connected session per peer may be active on a Knx instance.
+    /// Connectionless requests remain available through
+    /// [`Self::request_individual`].
+    pub async fn connect_p2p(
+        &self,
+        destination: crate::protocol::IndividualAddress,
+    ) -> Result<P2pConnection> {
+        let active_sessions = self.active_p2p_sessions.clone();
+        if !active_sessions.lock().unwrap().insert(destination) {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!("A P2P session to {destination} is already active"),
+            }
+            .into());
+        }
+        let mut callback = P2pCallbackRegistration {
+            knx: self.clone(),
+            handle: None,
+            active_sessions,
+            destination,
+        };
+        let local_address = self.config.individual_address;
+        let (tx, receiver) = mpsc::channel(16);
+        let filter = TelegramFilter::Custom(Arc::new(move |telegram| {
+            telegram.source == destination
+                && telegram.destination == Address::Individual(local_address)
+                && matches!(
+                    telegram.telegram_type,
+                    TelegramType::IndividualData | TelegramType::IndividualControl
+                )
+        }));
+        callback.handle = Some(
+            self.register_telegram_callback_filtered(P2pTelegramCallback { tx }, filter, false)
+                .await,
+        );
+        let mut connection = P2pConnection {
+            knx: self.clone(),
+            destination,
+            receiver,
+            pending: std::collections::VecDeque::new(),
+            callback: Some(callback),
+            send_sequence: 0,
+            receive_sequence: 0,
+            closed: false,
+        };
+        connection
+            .send_control(crate::protocol::TpciFrame::Connect)
+            .await?;
+        connection.wait_until_connected().await?;
+        Ok(connection)
     }
 
     /// Read a group value, starting the response deadline after transmission.
@@ -3032,6 +3163,247 @@ pub enum KnxState {
     Error,
 }
 
+impl P2pConnection {
+    fn timeout_error(&self, timeout: std::time::Duration) -> KnxError {
+        DeviceError::CommunicationTimeout {
+            device: format!("individual address {}", self.destination),
+            timeout_ms: timeout.as_millis() as u64,
+        }
+        .into()
+    }
+
+    async fn next_event_until(
+        &mut self,
+        deadline: tokio::time::Instant,
+        timeout: std::time::Duration,
+    ) -> Result<Telegram> {
+        if let Some(telegram) = self.pending.pop_front() {
+            return Ok(telegram);
+        }
+        match tokio::time::timeout_at(deadline, self.receiver.recv()).await {
+            Ok(Some(telegram)) => Ok(telegram),
+            Ok(None) => Err(crate::error::TransportError::QueueClosed.into()),
+            Err(_) => Err(self.timeout_error(timeout)),
+        }
+    }
+
+    async fn next_channel_event_until(
+        &mut self,
+        deadline: tokio::time::Instant,
+        timeout: std::time::Duration,
+    ) -> Result<Telegram> {
+        match tokio::time::timeout_at(deadline, self.receiver.recv()).await {
+            Ok(Some(telegram)) => Ok(telegram),
+            Ok(None) => Err(crate::error::TransportError::QueueClosed.into()),
+            Err(_) => Err(self.timeout_error(timeout)),
+        }
+    }
+
+    fn control_telegram(&self, tpci: crate::protocol::TpciFrame) -> Telegram {
+        let mut telegram = Telegram::individual_data(self.destination, Vec::new());
+        telegram.telegram_type = TelegramType::IndividualControl;
+        telegram.tpci = tpci.encode();
+        telegram
+    }
+
+    async fn send_control(&self, tpci: crate::protocol::TpciFrame) -> Result<()> {
+        self.knx
+            .send_telegram_acknowledged(&self.control_telegram(tpci))
+            .await
+    }
+
+    async fn wait_until_connected(&mut self) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + P2P_CONNECTION_TIMEOUT;
+        loop {
+            let telegram = self
+                .next_channel_event_until(deadline, P2P_CONNECTION_TIMEOUT)
+                .await?;
+            if telegram.telegram_type == TelegramType::IndividualControl {
+                match crate::protocol::TpciFrame::decode(telegram.tpci) {
+                    crate::protocol::TpciFrame::Connect => return Ok(()),
+                    crate::protocol::TpciFrame::Disconnect => {
+                        return Err(crate::error::ProtocolError::InvalidFrame {
+                            details: format!("{} rejected the P2P connection", self.destination),
+                        }
+                        .into());
+                    }
+                    _ => {}
+                }
+            }
+            self.pending.push_back(telegram);
+        }
+    }
+
+    /// Send one connected-data APDU, repeating it up to three times after the
+    /// initial transmission if its matching T_ACK is lost or rejected. Success
+    /// does not wait for a CEMI L_Data.con bus confirmation.
+    pub async fn send_data(&mut self, apdu: Vec<u8>, wait_for_ack: bool) -> Result<()> {
+        if self.closed {
+            return Err(crate::error::TransportError::QueueClosed.into());
+        }
+        if !(2..=u8::MAX as usize).contains(&apdu.len()) {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!("P2P APDU length must be in 2..=255, got {}", apdu.len()),
+            }
+            .into());
+        }
+        let sequence = self.send_sequence;
+        let mut telegram = Telegram::individual_data(self.destination, apdu);
+        telegram.tpci = crate::protocol::TpciFrame::DataConnected { sequence }.encode();
+        for attempt in 0..=P2P_MAX_RETRANSMISSIONS {
+            self.knx.send_telegram(&telegram).await?;
+            if !wait_for_ack {
+                self.send_sequence = (sequence + 1) & 0x0f;
+                return Ok(());
+            }
+            let deadline = tokio::time::Instant::now() + P2P_ACK_TIMEOUT;
+            loop {
+                let event = match self
+                    .next_channel_event_until(deadline, P2P_ACK_TIMEOUT)
+                    .await
+                {
+                    Ok(event) => event,
+                    Err(crate::error::KnxError::Device(DeviceError::CommunicationTimeout {
+                        ..
+                    })) => {
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                };
+                if event.telegram_type == TelegramType::IndividualControl {
+                    match crate::protocol::TpciFrame::decode(event.tpci) {
+                        crate::protocol::TpciFrame::Ack { sequence: ack } if ack == sequence => {
+                            self.send_sequence = (sequence + 1) & 0x0f;
+                            return Ok(());
+                        }
+                        crate::protocol::TpciFrame::Nak { sequence: nak } if nak == sequence => {
+                            break;
+                        }
+                        crate::protocol::TpciFrame::Disconnect => {
+                            return Err(crate::error::ProtocolError::InvalidFrame {
+                                details: format!(
+                                    "{} disconnected the P2P session",
+                                    self.destination
+                                ),
+                            }
+                            .into());
+                        }
+                        _ => {}
+                    }
+                }
+                self.pending.push_back(event);
+            }
+            if attempt == P2P_MAX_RETRANSMISSIONS {
+                return Err(
+                    self.timeout_error(P2P_ACK_TIMEOUT * (P2P_MAX_RETRANSMISSIONS as u32 + 1))
+                );
+            }
+        }
+        unreachable!("the retry loop either succeeds or returns")
+    }
+
+    /// Receive one APDU from the connected peer, optionally filtering by its
+    /// two-byte response service. Connected data is acknowledged before return.
+    pub async fn receive(
+        &mut self,
+        expected_service: Option<[u8; 2]>,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<u8>> {
+        if self.closed {
+            return Err(crate::error::TransportError::QueueClosed.into());
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let event = self.next_event_until(deadline, timeout).await?;
+            if event.telegram_type == TelegramType::IndividualControl {
+                if crate::protocol::TpciFrame::decode(event.tpci)
+                    == crate::protocol::TpciFrame::Disconnect
+                {
+                    self.closed = true;
+                    return Err(crate::error::ProtocolError::InvalidFrame {
+                        details: format!("{} disconnected the P2P session", self.destination),
+                    }
+                    .into());
+                }
+                continue;
+            }
+            if event.telegram_type != TelegramType::IndividualData {
+                continue;
+            }
+            if let crate::protocol::TpciFrame::DataConnected { sequence } =
+                crate::protocol::TpciFrame::decode(event.tpci)
+            {
+                let new_data = if sequence == self.receive_sequence {
+                    self.receive_sequence = (sequence + 1) & 0x0f;
+                    true
+                } else if sequence == (self.receive_sequence.wrapping_sub(1) & 0x0f) {
+                    false
+                } else {
+                    self.send_control(crate::protocol::TpciFrame::Nak {
+                        sequence: self.receive_sequence,
+                    })
+                    .await?;
+                    continue;
+                };
+                self.send_control(crate::protocol::TpciFrame::Ack { sequence })
+                    .await?;
+                if !new_data {
+                    continue;
+                }
+            }
+            if expected_service.is_none_or(|service| event.payload.starts_with(&service)) {
+                return Ok(event.payload);
+            }
+        }
+    }
+
+    /// Send a connected request and return the first response with the expected
+    /// APCI service within `timeout`.
+    pub async fn request(
+        &mut self,
+        apdu: Vec<u8>,
+        expected_response_service: [u8; 2],
+        timeout: std::time::Duration,
+    ) -> Result<Vec<u8>> {
+        self.send_data(apdu, true).await?;
+        self.receive(Some(expected_response_service), timeout).await
+    }
+
+    /// Tear down the transport link and unregister its receive callback.
+    pub async fn close(&mut self) -> Result<()> {
+        let result = if self.closed {
+            Ok(())
+        } else {
+            self.closed = true;
+            self.send_control(crate::protocol::TpciFrame::Disconnect)
+                .await
+        };
+        if let Some(mut callback) = self.callback.take()
+            && let Some(handle) = callback.handle.take()
+        {
+            callback.knx.unregister_callback(handle).await;
+        }
+        result
+    }
+}
+
+impl Drop for P2pConnection {
+    fn drop(&mut self) {
+        if !self.closed
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            let knx = self.knx.clone();
+            let destination = self.destination;
+            runtime.spawn(async move {
+                let mut telegram = Telegram::individual_data(destination, Vec::new());
+                telegram.telegram_type = TelegramType::IndividualControl;
+                telegram.tpci = crate::protocol::TpciFrame::Disconnect.encode();
+                let _ = knx.send_telegram_acknowledged(&telegram).await;
+            });
+        }
+    }
+}
+
 impl std::fmt::Display for KnxState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -3207,6 +3579,156 @@ mod integration_tests {
         server.send(response).await.unwrap();
 
         assert_eq!(request.await.unwrap().unwrap(), [0x02, 0xC9, 0x42, 0x55]);
+        knx.shutdown().await.unwrap();
+        server.shutdown();
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn p2p_session_connects_sends_acknowledged_data_and_closes() {
+        use crate::protocol::TpciFrame;
+        use crate::transport::TunnelServer;
+
+        let client_address = IndividualAddress::new(1, 1, 20);
+        let device_address = IndividualAddress::new(1, 1, 21);
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut peer_traffic = server.subscribe();
+
+        let knx_for_connect = knx.clone();
+        let connect =
+            tokio::spawn(async move { knx_for_connect.connect_p2p(device_address).await });
+        let connect_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            connect_request.telegram_type,
+            TelegramType::IndividualControl
+        );
+        assert_eq!(connect_request.tpci, TpciFrame::Connect.encode());
+        assert_eq!(
+            connect_request.destination,
+            Address::Individual(device_address)
+        );
+
+        let mut connect_response = Telegram::individual_data(client_address, Vec::new());
+        connect_response.source = device_address;
+        connect_response.telegram_type = TelegramType::IndividualControl;
+        connect_response.tpci = TpciFrame::Connect.encode();
+        server.send(connect_response).await.unwrap();
+        let mut p2p = connect.await.unwrap().unwrap();
+        assert!(knx.connect_p2p(device_address).await.is_err());
+
+        let request = tokio::spawn(async move {
+            let response = p2p
+                .request(vec![0x02, 0xC8, 0x10], [0x02, 0xC9], Duration::from_secs(2))
+                .await?;
+            Ok::<_, KnxError>((p2p, response))
+        });
+        let data = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(data.telegram_type, TelegramType::IndividualData);
+        assert_eq!(data.tpci, TpciFrame::DataConnected { sequence: 0 }.encode());
+        assert_eq!(data.payload, [0x02, 0xC8, 0x10]);
+
+        let mut stale_ack = Telegram::individual_data(client_address, Vec::new());
+        stale_ack.source = device_address;
+        stale_ack.telegram_type = TelegramType::IndividualControl;
+        stale_ack.tpci = TpciFrame::Ack { sequence: 1 }.encode();
+        server.send(stale_ack).await.unwrap();
+
+        let mut data_nak = Telegram::individual_data(client_address, Vec::new());
+        data_nak.source = device_address;
+        data_nak.telegram_type = TelegramType::IndividualControl;
+        data_nak.tpci = TpciFrame::Nak { sequence: 0 }.encode();
+        server.send(data_nak).await.unwrap();
+        let retry = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            retry.tpci,
+            TpciFrame::DataConnected { sequence: 0 }.encode()
+        );
+        assert_eq!(retry.payload, [0x02, 0xC8, 0x10]);
+        let timeout_retry = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            timeout_retry.tpci,
+            TpciFrame::DataConnected { sequence: 0 }.encode()
+        );
+        assert_eq!(timeout_retry.payload, [0x02, 0xC8, 0x10]);
+
+        let mut data_ack = Telegram::individual_data(client_address, Vec::new());
+        data_ack.source = device_address;
+        data_ack.telegram_type = TelegramType::IndividualControl;
+        data_ack.tpci = TpciFrame::Ack { sequence: 0 }.encode();
+        server.send(data_ack).await.unwrap();
+        let mut response = Telegram::individual_data(client_address, vec![0x02, 0xC9, 0x42]);
+        response.source = device_address;
+        response.tpci = TpciFrame::DataConnected { sequence: 0 }.encode();
+        server.send(response).await.unwrap();
+        let (mut p2p, response_apdu) = request.await.unwrap().unwrap();
+        assert_eq!(response_apdu, [0x02, 0xC9, 0x42]);
+        let response_ack = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(response_ack.telegram_type, TelegramType::IndividualControl);
+        assert_eq!(response_ack.tpci, TpciFrame::Ack { sequence: 0 }.encode());
+
+        let mut duplicate = Telegram::individual_data(client_address, vec![0x02, 0xC9, 0x42]);
+        duplicate.source = device_address;
+        duplicate.tpci = TpciFrame::DataConnected { sequence: 0 }.encode();
+        server.send(duplicate).await.unwrap();
+        assert!(p2p.receive(None, Duration::from_millis(50)).await.is_err());
+        let duplicate_ack = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(duplicate_ack.tpci, TpciFrame::Ack { sequence: 0 }.encode());
+
+        let send_next = tokio::spawn(async move {
+            p2p.send_data(vec![0x02, 0xC8, 0x20], true).await?;
+            Ok::<_, KnxError>(p2p)
+        });
+        let next_data = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            next_data.tpci,
+            TpciFrame::DataConnected { sequence: 1 }.encode()
+        );
+        let mut next_ack = Telegram::individual_data(client_address, Vec::new());
+        next_ack.source = device_address;
+        next_ack.telegram_type = TelegramType::IndividualControl;
+        next_ack.tpci = TpciFrame::Ack { sequence: 1 }.encode();
+        server.send(next_ack).await.unwrap();
+        let mut p2p = send_next.await.unwrap().unwrap();
+
+        p2p.close().await.unwrap();
+        let disconnect = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(disconnect.tpci, TpciFrame::Disconnect.encode());
         knx.shutdown().await.unwrap();
         server.shutdown();
     }
