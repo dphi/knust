@@ -532,6 +532,9 @@ pub enum MessageCode {
 
     /// `M_PropWrite.con` - Property write confirmation
     MPropWriteCon,
+
+    /// `M_PropInfo.ind` - Property information indication
+    MPropInfoInd,
 }
 
 impl MessageCode {
@@ -548,6 +551,7 @@ impl MessageCode {
             0xFB => Ok(MessageCode::MPropReadCon),
             0xF6 => Ok(MessageCode::MPropWriteReq),
             0xF5 => Ok(MessageCode::MPropWriteCon),
+            0xF7 => Ok(MessageCode::MPropInfoInd),
             _ => Err(ProtocolError::CemiError {
                 message: format!("Unknown message code: 0x{value:02X}"),
             }
@@ -568,6 +572,7 @@ impl MessageCode {
             MessageCode::MPropReadCon => 0xFB,
             MessageCode::MPropWriteReq => 0xF6,
             MessageCode::MPropWriteCon => 0xF5,
+            MessageCode::MPropInfoInd => 0xF7,
         }
     }
 }
@@ -1043,6 +1048,7 @@ mod tests {
             MessageCode::MPropReadCon,
             MessageCode::MPropWriteReq,
             MessageCode::MPropWriteCon,
+            MessageCode::MPropInfoInd,
         ];
 
         for code in &codes {
@@ -1053,6 +1059,19 @@ mod tests {
 
         // Test invalid message code
         assert!(MessageCode::from_u8(0xFF).is_err());
+    }
+
+    #[test]
+    fn property_info_indication_round_trips_its_cemi_payload() {
+        let frame = CemiFrame::new(
+            MessageCode::MPropInfoInd,
+            IndividualAddress::new(1, 1, 1),
+            Address::Individual(IndividualAddress::new(1, 1, 2)),
+            vec![0x01, 0x02, 0x03],
+        );
+        let wire = frame.serialize().unwrap();
+        assert_eq!(wire[0], 0xF7);
+        assert_eq!(CemiFrame::parse(&wire).unwrap(), frame);
     }
 
     #[test]
