@@ -655,7 +655,7 @@ impl Default for KnxBuilder {
 }
 
 const P2P_CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
-const P2P_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+const P2P_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 const P2P_MAX_RETRANSMISSIONS: usize = 3;
 
 struct P2pTelegramCallback {
@@ -4572,7 +4572,7 @@ mod integration_tests {
             TpciFrame::DataConnected { sequence: 0 }.encode()
         );
         assert_eq!(retry.payload, [0x02, 0xC8, 0x10]);
-        let timeout_retry = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+        let timeout_retry = tokio::time::timeout(Duration::from_secs(4), peer_traffic.recv())
             .await
             .unwrap()
             .unwrap();
