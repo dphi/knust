@@ -574,7 +574,7 @@ impl MessageCode {
         }
     }
 
-    fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             MessageCode::LDataReq => 0x11,
             MessageCode::LDataCon => 0x2E,
