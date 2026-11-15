@@ -98,7 +98,7 @@ struct ClientSession {
     recv_seq: AtomicU8,
     last_heartbeat: std::sync::Mutex<Instant>,
     send_lock: tokio::sync::Mutex<()>,
-    pending_ack: std::sync::Mutex<Option<oneshot::Sender<TunnellingAck>>>,
+    pending_ack: std::sync::Mutex<Option<(u8, oneshot::Sender<TunnellingAck>)>>,
 }
 
 impl ClientSession {
@@ -811,10 +811,14 @@ impl TunnelServer {
             .await
             .get(&ack.communication_channel_id)
             .cloned();
-        if let Some(session) = session
-            && let Some(tx) = session.pending_ack.lock().unwrap().take()
-        {
-            let _ = tx.send(ack);
+        if let Some(session) = session {
+            let mut pending_ack = session.pending_ack.lock().unwrap();
+            if let Some((sequence, _)) = pending_ack.as_ref()
+                && *sequence == ack.sequence_counter
+                && let Some((_, tx)) = pending_ack.take()
+            {
+                let _ = tx.send(ack);
+            }
         }
         Ok(())
     }
@@ -901,7 +905,7 @@ impl TunnelServer {
 
         for attempt in 0..2u8 {
             let (tx, rx) = oneshot::channel();
-            *session.pending_ack.lock().unwrap() = Some(tx);
+            *session.pending_ack.lock().unwrap() = Some((seq, tx));
             session.link.send_frame(&frame).await?;
 
             match tokio::time::timeout(ACK_TIMEOUT, rx).await {
@@ -1185,6 +1189,58 @@ mod tests {
         let (send_result, ()) =
             tokio::join!(server.send(test_telegram(9)), client_ack_next(&tunnel));
         send_result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn server_ignores_tunnelling_ack_with_wrong_sequence() {
+        let server = bind_server().await;
+        let tunnel = connected_client(server.local_addr()).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let client = async {
+            let first = timeout(Duration::from_secs(1), tunnel.recv_frame())
+                .await
+                .unwrap()
+                .unwrap();
+            let first_frame = KnxIpFrame::parse(&first).unwrap();
+            let first_request = TunnellingRequest::parse(&first_frame.body).unwrap();
+            let wrong_ack = TunnellingAck::new_ok(
+                first_request.communication_channel_id,
+                first_request.sequence_counter.wrapping_add(1),
+            );
+            tunnel
+                .send_frame(
+                    &KnxIpFrame::new(ServiceType::TunnellingAck, wrong_ack.serialize()).serialize(),
+                )
+                .await
+                .unwrap();
+
+            let retry = timeout(Duration::from_secs(2), tunnel.recv_frame())
+                .await
+                .unwrap()
+                .unwrap();
+            let retry_frame = KnxIpFrame::parse(&retry).unwrap();
+            let retry_request = TunnellingRequest::parse(&retry_frame.body).unwrap();
+            assert_eq!(
+                retry_request.sequence_counter,
+                first_request.sequence_counter
+            );
+            assert_eq!(retry_request.raw_cemi, first_request.raw_cemi);
+
+            let ack = TunnellingAck::new_ok(
+                retry_request.communication_channel_id,
+                retry_request.sequence_counter,
+            );
+            tunnel
+                .send_frame(
+                    &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+                )
+                .await
+                .unwrap();
+        };
+
+        let (sent, ()) = tokio::join!(server.send(test_telegram(10)), client);
+        sent.unwrap();
     }
 
     #[tokio::test]
