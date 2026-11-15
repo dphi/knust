@@ -305,6 +305,23 @@ mod tests {
     }
 
     #[test]
+    fn malformed_complete_tcp_frame_does_not_poison_next_frame() {
+        let mut malformed = frame(6);
+        malformed[0] = 5; // Invalid header length; total_length still bounds this frame.
+        let next = frame(8);
+        let mut buf = malformed.clone();
+        buf.extend_from_slice(&next);
+
+        let first = try_extract_frame(&mut buf)
+            .unwrap()
+            .expect("malformed frame is bounded");
+        assert_eq!(first, malformed);
+        assert!(crate::protocol::knxip::KnxIpFrame::parse(&first).is_err());
+        assert_eq!(try_extract_frame(&mut buf).unwrap(), Some(next));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
     fn extract_rejects_bad_length() {
         // total_length field = 3 (< 6 header) is malformed.
         let mut buf = vec![0x06, 0x10, 0x02, 0x06, 0x00, 0x03, 0xFF];
