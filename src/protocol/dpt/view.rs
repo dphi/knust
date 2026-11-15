@@ -385,6 +385,19 @@ impl<'a> XYYColorTransitionView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct RelativeColorView<'a>(pub(crate) &'a [u8], pub(crate) u16);
+impl<'a> RelativeColorView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::DptPayload {
+        super::dpt_relative_color::decode_payload(self.0, self.1).expect("validated length")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct ColorTemperatureTransitionView<'a>(pub(crate) &'a [u8]);
 impl<'a> ColorTemperatureTransitionView<'a> {
     #[must_use]
@@ -839,6 +852,7 @@ pub enum DptView<'a> {
     MeteringValue(MeteringValueView<'a>),
     AlarmInfo(AlarmInfoView<'a>),
     ColorTemperatureTransition(ColorTemperatureTransitionView<'a>),
+    RelativeColor(RelativeColorView<'a>),
     XYYColorTransition(XYYColorTransitionView<'a>),
     StatusRTSM(StatusRTSMView<'a>),
     StatusHVA(StatusHVAView<'a>),
@@ -897,6 +911,7 @@ impl<'a> DptView<'a> {
             | Self::MeteringValue(_)
             | Self::AlarmInfo(_)
             | Self::ColorTemperatureTransition(_)
+            | Self::RelativeColor(_)
             | Self::XYYColorTransition(_)
             | Self::StatusRTSM(_)
             | Self::StatusHVA(_)
@@ -959,6 +974,7 @@ impl<'a> DptView<'a> {
             Self::MeteringValue(v) => v.raw(),
             Self::AlarmInfo(v) => v.raw(),
             Self::ColorTemperatureTransition(v) => v.raw(),
+            Self::RelativeColor(v) => v.raw(),
             Self::XYYColorTransition(v) => v.raw(),
             Self::StatusRTSM(v) => v.raw(),
             Self::StatusHVA(v) => v.raw(),
@@ -1028,6 +1044,7 @@ impl DptView<'_> {
             Self::MeteringValue(v) => v.value().to_string(),
             Self::AlarmInfo(v) => v.value().to_string(),
             Self::ColorTemperatureTransition(v) => v.value().to_string(),
+            Self::RelativeColor(v) => v.value().formatted(None),
             Self::XYYColorTransition(v) => v.value().to_string(),
             Self::StatusRTSM(v) => v.value().to_string(),
             Self::StatusHVA(v) => v.value().to_string(),
@@ -1486,6 +1503,7 @@ impl DptType {
             229 => s.parse().map(DptPayload::MeteringValue),
             219 => s.parse().map(DptPayload::AlarmInfo),
             249 => s.parse().map(DptPayload::ColorTemperatureTransition),
+            250 | 252..=254 => super::dpt_relative_color::parse_payload(s,self.main()),
             243 => s.parse().map(DptPayload::XYYColorTransition),
             21 => s.parse().map(DptPayload::StatusRTSM),
             22 if self.sub() == 102 => s.parse().map(DptPayload::StatusHVA),

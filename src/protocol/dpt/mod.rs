@@ -60,6 +60,7 @@ pub mod dpt7; // Unsigned 16-bit
 pub mod dpt8; // Signed 16-bit
 pub mod dpt9;
 mod dpt_hvac_status;
+mod dpt_relative_color;
 mod dpt_setpoints; // 2-byte float // RGBW Color
 
 #[cfg(test)]
@@ -68,6 +69,7 @@ mod tests;
 // Re-export all DPT types for convenience
 pub use decode::{DecodedTelegram, decode_telegram};
 pub use dpt_hvac_status::*;
+pub use dpt_relative_color::*;
 pub use dpt_setpoints::*;
 pub use dpt_type::DptType;
 pub use dpt1::*;
@@ -126,10 +128,10 @@ pub use view::{
     Control2View, ControlView, DALIControlGearDiagnosticView, DALIDiagnosticsView, DateTimeView,
     DateView, DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForecastView,
     GeographicalLocationView, I8View, I16View, I32View, I64View, MBusAddressView,
-    MeteringValueView, ModeNextView, PrioritisedModeControlView, RgbView, RgbwView,
-    ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View, Setpoints4View,
-    StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView, U8View,
-    U16View, U32View, VersionView, XYYColorTransitionView, XyyView,
+    MeteringValueView, ModeNextView, PrioritisedModeControlView, RelativeColorView, RgbView,
+    RgbwView, ScalingTimeView, SceneConfigView, SceneInfoView, SceneView, Setpoints3View,
+    Setpoints4View, StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, TimeView,
+    U8View, U16View, U32View, VersionView, XYYColorTransitionView, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types
@@ -710,6 +712,10 @@ impl DptRegistry {
         registry.register::<DPTAlarmInfo>();
         registry.register::<DPTColorTemperatureTransition>();
         registry.register::<DPTColorXYYTransition>();
+        registry.register::<DPTColorTemperatureControl>();
+        registry.register::<DPTRelativeControlRGBW>();
+        registry.register::<DPTRelativeControlXYY>();
+        registry.register::<DPTRelativeControlRGB>();
         registry.register::<DPTCombinedStatusRTSM>();
         registry.register::<DPTCombinedStatusHVA>();
         registry.register::<DPTCombinedStatusRTC>();
