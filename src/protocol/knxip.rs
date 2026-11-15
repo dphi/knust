@@ -319,10 +319,6 @@ impl ConnectionRequestInfo {
 
     /// # Errors
     ///
-    /// Returns [`ProtocolError::ParseError`] if `data` is shorter than
-    /// [`Self::LENGTH`] or the declared structure length field is wrong.
-    /// # Errors
-    ///
     /// Returns a parse error when the CRI length does not match its connection
     /// type or the input is truncated.
     pub fn parse(data: &[u8]) -> Result<Self> {
