@@ -35,12 +35,30 @@ pub struct KeyringConfig {
 }
 
 impl KeyringConfig {
-    /// Build the Data Secure keyring used by the application.
-    #[must_use]
     pub fn into_data_secure_keyring(&self) -> KeyRing {
+        self.build_data_secure_keyring(None)
+    }
+
+    /// Build the Data Secure keyring for a particular receiver interface.
+    #[must_use]
+    pub fn into_data_secure_keyring_for(&self, receiver: IndividualAddress) -> KeyRing {
+        self.build_data_secure_keyring(Some(receiver))
+    }
+
+    fn build_data_secure_keyring(&self, receiver: Option<IndividualAddress>) -> KeyRing {
         let mut keyring = KeyRing::new();
         for group in &self.group_addresses {
-            keyring.add_group_key(group.address, group.key.clone());
+            if receiver.is_none_or(|receiver| {
+                self.interfaces.iter().any(|interface| {
+                    interface.individual_address == receiver
+                        && interface
+                            .group_assignments
+                            .iter()
+                            .any(|assignment| assignment.address == group.address)
+                })
+            }) {
+                keyring.add_group_key(group.address, group.key.clone());
+            }
         }
         for interface in &self.interfaces {
             for assignment in &interface.group_assignments {

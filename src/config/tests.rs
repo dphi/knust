@@ -103,11 +103,24 @@ mod unit_tests {
   <GroupAddresses><Group Address="1024" Key="B8nWiBBMs/wH3I3aYKmHlw==" /></GroupAddresses>
   <Devices><Device IndividualAddress="4.0.9" SequenceNumber="155806854915" /></Devices>
 </Keyring>"#;
-        let config = KeyringParser::parse_bytes_with_password(xml, "test").unwrap();
+        let mut config = KeyringParser::parse_bytes_with_password(xml, "test").unwrap();
+        config.group_addresses.push(KeyringGroupAddress {
+            address: "0/4/5".parse().unwrap(),
+            key: SecurityKey::new(vec![7; 16]),
+            description: None,
+        });
         let keyring = config.into_data_secure_keyring();
         let group = GroupAddress::try_from_raw(1024).unwrap();
+        let unassigned_group: GroupAddress = "0/4/5".parse().unwrap();
         let sender: IndividualAddress = "4.0.9".parse().unwrap();
+        let restricted = config.into_data_secure_keyring_for("4.0.1".parse().unwrap());
 
+        assert!(restricted.get_group_key(&group).is_some());
+        assert!(restricted.get_group_key(&unassigned_group).is_none());
+        assert_eq!(
+            restricted.get_sequence_number(&sender),
+            Some(155_806_854_915)
+        );
         assert_eq!(
             keyring.get_group_key(&group).unwrap().as_bytes(),
             &hex::decode("dfdf23a59fbb40404091d1c162087e8b").unwrap()
