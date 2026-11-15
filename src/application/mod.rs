@@ -16,4 +16,6 @@ mod thread_safety_test;
 pub use callbacks::{CallbackHandle, ConnectionState, EventHandler};
 #[cfg(feature = "dpt")]
 pub use knx::TypedGroupAddress as GroupAddress;
-pub use knx::{ConnectionControlEvent, Knx, KnxBuilder, KnxState, P2pConnection};
+pub use knx::{
+    ConnectionControlEvent, Knx, KnxBuilder, KnxState, P2pConnection, ScannedInterfaceObject,
+};

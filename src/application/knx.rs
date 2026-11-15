@@ -694,6 +694,14 @@ impl Drop for P2pCallbackRegistration {
     }
 }
 
+/// One interface object and its discovered property descriptions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannedInterfaceObject {
+    pub object_index: u8,
+    pub object_type: u16,
+    pub properties: Vec<crate::protocol::management::PropertyDescriptionResponse>,
+}
+
 /// An established connection-oriented transport link to one individual address.
 ///
 /// Methods require `&mut self`, so requests on one link are serialized and each
@@ -3994,7 +4002,7 @@ impl P2pConnection {
             .await?;
         let response = crate::protocol::management::PropertyDescriptionResponse::decode(&response)?;
         if response.object_index != request.object_index
-            || response.property_id != request.property_id
+            || (request.property_id != 0 && response.property_id != request.property_id)
             || response.property_index != request.property_index
         {
             return Err(crate::error::ProtocolError::InvalidFrame {
@@ -4003,6 +4011,93 @@ impl P2pConnection {
             .into());
         }
         Ok(response)
+    }
+
+    /// Discover interface objects and their property descriptions on this device.
+    pub async fn scan_interface_objects(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<ScannedInterfaceObject>> {
+        let mut objects = Vec::new();
+        for object_index in 0..=u8::MAX {
+            let first_property = self
+                .read_property_description(
+                    crate::protocol::management::PropertyDescriptionRead {
+                        object_index,
+                        property_id: 0,
+                        property_index: 0,
+                    },
+                    timeout,
+                )
+                .await?;
+            if first_property.property_id == 0 {
+                return Ok(objects);
+            }
+
+            let object_type = self
+                .read_property_values(
+                    crate::protocol::management::PropertyValueRead {
+                        object_index,
+                        property_id: 1,
+                        count: 1,
+                        start_index: 1,
+                    },
+                    15,
+                    timeout,
+                )
+                .await?;
+            if object_type.len() != 2 {
+                return Err(crate::error::ProtocolError::InvalidFrame {
+                    details: format!(
+                        "Object type for interface object {object_index} must be two bytes"
+                    ),
+                }
+                .into());
+            }
+
+            let mut properties = Vec::new();
+            let mut found_property_end = false;
+            for property_index in 0..=u8::MAX {
+                let property = self
+                    .read_property_description(
+                        crate::protocol::management::PropertyDescriptionRead {
+                            object_index,
+                            property_id: 0,
+                            property_index,
+                        },
+                        timeout,
+                    )
+                    .await?;
+                if property.property_id == 0 {
+                    found_property_end = true;
+                    break;
+                }
+                properties.push(property);
+            }
+            if !found_property_end {
+                return Err(crate::error::ProtocolError::InvalidFrame {
+                    details: format!(
+                        "Property list for interface object {object_index} has no terminator"
+                    ),
+                }
+                .into());
+            }
+            objects.push(ScannedInterfaceObject {
+                object_index,
+                object_type: u16::from_be_bytes([object_type[0], object_type[1]]),
+                properties,
+            });
+            if object_index == u8::MAX {
+                return Err(crate::error::ProtocolError::InvalidFrame {
+                    details: "Interface object list has no terminator".to_owned(),
+                }
+                .into());
+            }
+        }
+        Err(crate::error::ProtocolError::InvalidFrame {
+            details: "Interface object scan ended without a terminator".to_owned(),
+        }
+        .into())
     }
 
     /// Tear down the transport link and unregister its receive callback.
@@ -5694,6 +5789,164 @@ mod integration_tests {
             mismatched_property_response_ack.tpci,
             TpciFrame::Ack { sequence: 8 }.encode()
         );
+
+        let scanning = tokio::spawn(async move {
+            let objects = p2p.scan_interface_objects(Duration::from_secs(2)).await?;
+            Ok::<_, KnxError>((p2p, objects))
+        });
+        let object_probe = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::PropertyDescriptionRead::decode(&object_probe.payload)
+                .unwrap(),
+            crate::protocol::management::PropertyDescriptionRead {
+                object_index: 0,
+                property_id: 0,
+                property_index: 0,
+            }
+        );
+        let mut object_probe_ack = Telegram::individual_data(client_address, Vec::new());
+        object_probe_ack.source = device_address;
+        object_probe_ack.telegram_type = TelegramType::IndividualControl;
+        object_probe_ack.tpci = TpciFrame::Ack { sequence: 10 }.encode();
+        server.send(object_probe_ack).await.unwrap();
+        let mut object_probe_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::PropertyDescriptionResponse {
+                object_index: 0,
+                property_id: 1,
+                property_index: 0,
+                type_: 0x82,
+                max_count: 1,
+                access: 0,
+            }
+            .encode(),
+        );
+        object_probe_response.source = device_address;
+        object_probe_response.tpci = TpciFrame::DataConnected { sequence: 9 }.encode();
+        server.send(object_probe_response).await.unwrap();
+        let object_probe_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            object_probe_response_ack.tpci,
+            TpciFrame::Ack { sequence: 9 }.encode()
+        );
+
+        let object_type_read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::PropertyValueRead::decode(&object_type_read.payload)
+                .unwrap(),
+            crate::protocol::management::PropertyValueRead {
+                object_index: 0,
+                property_id: 1,
+                count: 1,
+                start_index: 1,
+            }
+        );
+        let mut object_type_ack = Telegram::individual_data(client_address, Vec::new());
+        object_type_ack.source = device_address;
+        object_type_ack.telegram_type = TelegramType::IndividualControl;
+        object_type_ack.tpci = TpciFrame::Ack { sequence: 11 }.encode();
+        server.send(object_type_ack).await.unwrap();
+        let mut object_type_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::PropertyValueResponse {
+                object_index: 0,
+                property_id: 1,
+                count: 1,
+                start_index: 1,
+                data: vec![0, 0x11],
+            }
+            .encode()
+            .unwrap(),
+        );
+        object_type_response.source = device_address;
+        object_type_response.tpci = TpciFrame::DataConnected { sequence: 10 }.encode();
+        server.send(object_type_response).await.unwrap();
+        let object_type_response_ack =
+            tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            object_type_response_ack.tpci,
+            TpciFrame::Ack { sequence: 10 }.encode()
+        );
+
+        for (request_sequence, response_sequence, property_index, property_id) in [
+            (12, 11, 0, 2),
+            (13, 12, 1, 3),
+            (14, 13, 2, 0),
+            (15, 14, 0, 0),
+        ] {
+            let property_probe = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let request = crate::protocol::management::PropertyDescriptionRead::decode(
+                &property_probe.payload,
+            )
+            .unwrap();
+            assert_eq!(
+                request.object_index,
+                if request_sequence == 15 { 1 } else { 0 }
+            );
+            assert_eq!(request.property_id, 0);
+            assert_eq!(request.property_index, property_index);
+            let mut property_probe_ack = Telegram::individual_data(client_address, Vec::new());
+            property_probe_ack.source = device_address;
+            property_probe_ack.telegram_type = TelegramType::IndividualControl;
+            property_probe_ack.tpci = TpciFrame::Ack {
+                sequence: request_sequence,
+            }
+            .encode();
+            server.send(property_probe_ack).await.unwrap();
+            let mut property_probe_response = Telegram::individual_data(
+                client_address,
+                crate::protocol::management::PropertyDescriptionResponse {
+                    object_index: request.object_index,
+                    property_id,
+                    property_index,
+                    type_: 0x82,
+                    max_count: 4,
+                    access: 0,
+                }
+                .encode(),
+            );
+            property_probe_response.source = device_address;
+            property_probe_response.tpci = TpciFrame::DataConnected {
+                sequence: response_sequence,
+            }
+            .encode();
+            server.send(property_probe_response).await.unwrap();
+            let property_probe_response_ack =
+                tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                property_probe_response_ack.tpci,
+                TpciFrame::Ack {
+                    sequence: response_sequence,
+                }
+                .encode()
+            );
+        }
+        let (mut p2p, objects) = scanning.await.unwrap().unwrap();
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0].object_index, 0);
+        assert_eq!(objects[0].object_type, 0x0011);
+        assert_eq!(objects[0].properties.len(), 2);
+        assert_eq!(objects[0].properties[0].property_id, 2);
+        assert_eq!(objects[0].properties[1].property_id, 3);
 
         p2p.close().await.unwrap();
         let disconnect = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
