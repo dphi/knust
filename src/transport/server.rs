@@ -858,7 +858,7 @@ impl TunnelServer {
             session.channel_id,
             seq,
             MessageCode::LDataInd,
-        );
+        )?;
         let frame = self.maybe_encrypt(frame, session.link.peer_addr()).await?;
 
         for attempt in 0..2u8 {
@@ -944,19 +944,19 @@ fn build_tunnelling_frame_with_code(
     channel_id: u8,
     sequence: u8,
     message_code: MessageCode,
-) -> Vec<u8> {
+) -> Result<Vec<u8>> {
     let cemi = CemiFrame::new(
         message_code,
         telegram.source,
         telegram.destination,
         telegram.encode_group_service(),
     );
-    let request = TunnellingRequest::new(channel_id, sequence, cemi.serialize());
-    KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize()
+    let request = TunnellingRequest::new(channel_id, sequence, cemi.serialize()?);
+    Ok(KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize())
 }
 
 #[cfg(test)]
-fn build_tunnelling_frame(telegram: &Telegram, channel_id: u8, sequence: u8) -> Vec<u8> {
+fn build_tunnelling_frame(telegram: &Telegram, channel_id: u8, sequence: u8) -> Result<Vec<u8>> {
     build_tunnelling_frame_with_code(telegram, channel_id, sequence, MessageCode::LDataReq)
 }
 
@@ -1050,7 +1050,8 @@ mod tests {
                 Telegram::group_write_value(address, value.clone()).unwrap(),
                 Telegram::group_response_value(address, value).unwrap(),
             ] {
-                let wire = build_tunnelling_frame_with_code(&telegram, 1, 0, MessageCode::LDataInd);
+                let wire = build_tunnelling_frame_with_code(&telegram, 1, 0, MessageCode::LDataInd)
+                    .unwrap();
                 let frame = KnxIpFrame::parse(&wire).unwrap();
                 let request = TunnellingRequest::parse(&frame.body).unwrap();
                 let received = parse_cemi_to_telegram(&request.raw_cemi).unwrap();
@@ -1096,7 +1097,8 @@ mod tests {
             &test_telegram(1),
             tunnel.channel_id(),
             tunnel.next_sequence(),
-        );
+        )
+        .unwrap();
         tunnel.send_frame(&frame).await.unwrap();
 
         let received = timeout(Duration::from_secs(1), rx.recv())
@@ -1195,7 +1197,8 @@ mod tests {
             &test_telegram(2),
             tunnel.channel_id(),
             tunnel.next_sequence(),
-        );
+        )
+        .unwrap();
         tunnel.send_frame(&frame).await.unwrap();
 
         let received = timeout(Duration::from_secs(1), rx.recv())
@@ -1335,7 +1338,8 @@ mod tests {
             &test_telegram(5),
             tunnel.channel_id(),
             tunnel.next_sequence(),
-        );
+        )
+        .unwrap();
         tunnel.send_frame(&frame).await.unwrap();
         let received = timeout(Duration::from_secs(1), rx.recv())
             .await

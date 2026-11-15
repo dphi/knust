@@ -146,7 +146,7 @@ async fn receiver_uses_replacement_and_keeps_queue_open_after_socket_failure() {
     );
     let frame = crate::protocol::knxip::KnxIpFrame::new(
         crate::protocol::knxip::ServiceType::RoutingIndication,
-        cemi.serialize(),
+        cemi.serialize().unwrap(),
     );
     new_tx.send(frame.serialize()).await.unwrap();
     let received = timeout(
@@ -326,7 +326,7 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
         );
         let incoming = KnxIpFrame::new(
             ServiceType::TunnellingRequest,
-            TunnellingRequest::new(7, 0, cemi.serialize()).serialize(),
+            TunnellingRequest::new(7, 0, cemi.serialize().unwrap()).serialize(),
         );
         socket.send_to(&incoming.serialize(), peer).await.unwrap();
         assert_eq!(

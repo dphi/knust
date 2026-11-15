@@ -279,8 +279,13 @@ impl CemiFrame {
 
         // Validate data length. The CEMI NPDU length counts APCI/data bytes;
         // the leading TPCI octet is present when data_length is non-zero.
+        let zero_length_control_tpci = data_length == 0
+            && matches!(message_code, MessageCode::LDataReq | MessageCode::LDataInd)
+            && data
+                .get(offset)
+                .is_some_and(|tpci| matches!(*tpci, 0x80 | 0x81));
         let tpdu_length = if data_length == 0 {
-            0
+            usize::from(zero_length_control_tpci)
         } else {
             data_length as usize + 1
         };
@@ -318,6 +323,8 @@ impl CemiFrame {
             tpci = data[offset];
             offset += 1;
             apci_data = data[offset..offset + data_length as usize].to_vec();
+        } else if zero_length_control_tpci {
+            tpci = data[offset];
         }
 
         let frame = CemiFrame {
@@ -349,9 +356,23 @@ impl CemiFrame {
         Ok(frame)
     }
 
-    /// Serialize the CEMI frame to bytes
-    #[must_use]
-    pub fn serialize(&self) -> Vec<u8> {
+    /// Serialize the CEMI frame to bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [ProtocolError::InvalidFrame] when the hop count cannot be
+    /// represented by the three-bit Ctrl2 field.
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        if self.control_field.hop_count > 7 {
+            return Err(ProtocolError::InvalidFrame {
+                details: format!(
+                    "CEMI hop count must be in 0..=7, got {}",
+                    self.control_field.hop_count
+                ),
+            }
+            .into());
+        }
+
         let timer = Timer::start(Component::Protocol, "cemi_serialize");
         log_protocol!(
             LogLevel::Debug,
@@ -364,11 +385,8 @@ impl CemiFrame {
         );
 
         let mut result = Vec::new();
-
-        // Message code
         result.push(self.message_code.to_u8());
 
-        // Additional info length and data
         let additional_info_data: Vec<u8> = self
             .additional_info
             .iter()
@@ -396,23 +414,19 @@ impl CemiFrame {
             flags |= 0x8000;
         }
         result.extend_from_slice(&flags.to_be_bytes());
-
-        // Source address
         result.extend_from_slice(&self.source_addr.raw().to_be_bytes());
 
-        // Destination address
         match self.dest_addr {
             Address::Group(addr) => result.extend_from_slice(&addr.raw().to_be_bytes()),
             Address::Individual(addr) => result.extend_from_slice(&addr.raw().to_be_bytes()),
         }
 
-        // Data length
         result.push(self.data_length);
-
-        // TPCI and APCI/Data
         if self.data_length > 0 {
             result.push(self.tpci);
             result.extend_from_slice(&self.apci_data);
+        } else if matches!(self.tpci, 0x80 | 0x81) {
+            result.push(self.tpci);
         }
 
         log_protocol!(
@@ -422,7 +436,7 @@ impl CemiFrame {
         );
         timer.finish_with_message(&format!("CEMI frame serialized ({} bytes)", result.len()));
 
-        result
+        Ok(result)
     }
 
     /// Create a new CEMI frame with minimal required fields
@@ -966,7 +980,7 @@ mod tests {
     #[test]
     fn property_cemi_frame_round_trip() {
         proptest!(|(frame in arb_cemi_frame())| {
-            let serialized = frame.serialize();
+            let serialized = frame.serialize()?;
             let parsed = CemiFrame::parse(&serialized)?;
             prop_assert_eq!(frame, parsed);
         });
@@ -994,7 +1008,7 @@ mod tests {
                 prop_assert!(serialize_result.is_ok(), "CEMI serialization should never panic");
 
                 // Verify that the serialized data can be parsed again
-                if let Ok(serialized) = serialize_result {
+                if let Ok(Ok(serialized)) = serialize_result {
                     let reparse_result = std::panic::catch_unwind(|| {
                         CemiFrame::parse(&serialized)
                     });
@@ -1129,6 +1143,24 @@ mod tests {
     }
 
     #[test]
+    fn rejects_hop_count_outside_ctrl2_field_range() {
+        let mut frame =
+            CemiFrame::parse(&[0x11, 0x00, 0xBC, 0xE0, 0x12, 0x34, 0x56, 0x78, 0x00]).unwrap();
+        frame.control_field.hop_count = 8;
+        assert!(frame.serialize().is_err());
+    }
+
+    #[test]
+    fn preserves_connect_and_disconnect_tpci_with_zero_npdu_length() {
+        for tpci in [0x80, 0x81] {
+            let wire = [0x11, 0x00, 0xBC, 0xE0, 0x12, 0x34, 0x56, 0x78, 0x00, tpci];
+            let frame = CemiFrame::parse(&wire).unwrap();
+            assert_eq!(frame.tpci, tpci);
+            assert_eq!(frame.serialize().unwrap(), wire);
+        }
+    }
+
+    #[test]
     fn extended_frame_uses_two_control_octets() {
         for length in [14, 15, 254] {
             let mut wire = vec![
@@ -1151,10 +1183,10 @@ mod tests {
                 Address::Group(GroupAddress::try_from_raw(0x5678).unwrap())
             );
             assert_eq!(frame.apci_data.len(), usize::from(length));
-            assert_eq!(frame.serialize(), wire);
+            assert_eq!(frame.serialize().unwrap(), wire);
             let mut frame = frame;
             frame.control_field.frame_type = FrameType::Standard;
-            assert_eq!(frame.serialize(), wire);
+            assert_eq!(frame.serialize().unwrap(), wire);
         }
     }
 

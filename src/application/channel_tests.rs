@@ -79,7 +79,8 @@ async fn foreign_requests_do_not_ack_advance_sequence_or_deliver() {
         Address::Group(GroupAddress::try_from_raw(1).unwrap()),
         GroupValueService::Write(vec![1]).encode(),
     )
-    .serialize();
+    .serialize()
+    .unwrap();
     for (channel, sequence) in [(8, 0), (8, 255), (8, 5), (0, 0)] {
         let frame = KnxIpFrame::new(
             ServiceType::TunnellingRequest,
@@ -361,7 +362,7 @@ async fn read_response_can_arrive_before_tunnelling_ack() {
     );
     let response = KnxIpFrame::new(
         ServiceType::TunnellingRequest,
-        TunnellingRequest::new(7, 0, cemi.serialize()).serialize(),
+        TunnellingRequest::new(7, 0, cemi.serialize().unwrap()).serialize(),
     );
     peer.send_to(&response.serialize(), destination)
         .await

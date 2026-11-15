@@ -1703,11 +1703,14 @@ impl Knx {
                     if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
                         continue;
                     }
-                    let frame_data =
-                        Self::build_outgoing_frame_for_connection(&telegram, &connection);
-
                     let mut result =
-                        Self::send_telegram_frame(&connection, &frame_data, 2, &mut receipt).await;
+                        match Self::build_outgoing_frame_for_connection(&telegram, &connection) {
+                            Ok(frame_data) => {
+                                Self::send_telegram_frame(&connection, &frame_data, 2, &mut receipt)
+                                    .await
+                            }
+                            Err(error) => Err(error),
+                        };
                     if let Err(error) = &result {
                         if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
                             continue;
@@ -1737,11 +1740,16 @@ impl Knx {
                                     _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                                 }
                             };
-                            let frame =
-                                Self::build_outgoing_frame_for_connection(&telegram, &replacement);
-                            result =
-                                Self::send_telegram_frame(&replacement, &frame, 1, &mut receipt)
-                                    .await;
+                            result = match Self::build_outgoing_frame_for_connection(
+                                &telegram,
+                                &replacement,
+                            ) {
+                                Ok(frame) => {
+                                    Self::send_telegram_frame(&replacement, &frame, 1, &mut receipt)
+                                        .await
+                                }
+                                Err(error) => Err(error),
+                            };
                             if let Err(error) = &result {
                                 Self::report_connection_failure(
                                     &control_tx,
@@ -2686,7 +2694,7 @@ impl Knx {
     fn build_outgoing_frame_for_connection(
         telegram: &Telegram,
         connection: &Arc<dyn Connection>,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>> {
         use crate::protocol::cemi::{CemiFrame, MessageCode};
         use crate::protocol::knxip::{KnxIpFrame, ServiceType, TunnellingRequest};
         use crate::transport::Tunnel;
@@ -2703,7 +2711,7 @@ impl Knx {
             telegram.destination,
             apci_data,
         );
-        let raw_cemi = cemi.serialize();
+        let raw_cemi = cemi.serialize()?;
 
         if let Some(tunneling_conn) = connection.as_any().downcast_ref::<Tunnel>() {
             let tunnelling_request = TunnellingRequest::new(
@@ -2711,14 +2719,14 @@ impl Knx {
                 tunneling_conn.next_sequence(),
                 raw_cemi,
             );
-            return KnxIpFrame::new(
+            return Ok(KnxIpFrame::new(
                 ServiceType::TunnellingRequest,
                 tunnelling_request.serialize(),
             )
-            .serialize();
+            .serialize());
         }
 
-        KnxIpFrame::new(ServiceType::RoutingIndication, raw_cemi).serialize()
+        Ok(KnxIpFrame::new(ServiceType::RoutingIndication, raw_cemi).serialize())
     }
 }
 
@@ -2818,7 +2826,7 @@ mod integration_tests {
         let frame = CemiFrame::new(MessageCode::LDataInd, source, destination, service.encode());
         let before_parse = std::time::SystemTime::now();
 
-        let telegram = Knx::parse_cemi_to_telegram(&frame.serialize()).unwrap();
+        let telegram = Knx::parse_cemi_to_telegram(&frame.serialize().unwrap()).unwrap();
 
         let after_parse = std::time::SystemTime::now();
         assert_eq!(telegram.source, source);
@@ -2881,7 +2889,8 @@ mod integration_tests {
                     0x40,
                 ),
             ] {
-                let wire = Knx::build_outgoing_frame_for_connection(&telegram, &connection);
+                let wire =
+                    Knx::build_outgoing_frame_for_connection(&telegram, &connection).unwrap();
                 let frame = KnxIpFrame::parse(&wire).unwrap();
                 let request = TunnellingRequest::parse(&frame.body).unwrap();
                 let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();

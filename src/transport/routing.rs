@@ -454,7 +454,8 @@ mod health_tests {
             Address::Group(GroupAddress::try_from_raw(1).unwrap()),
             GroupValueService::Write(vec![1]).encode(),
         )
-        .serialize();
+        .serialize()
+        .unwrap();
         let expected = KnxIpFrame::new(ServiceType::RoutingIndication, cemi.clone()).serialize();
         let mut bytes = [0; 1024];
 
