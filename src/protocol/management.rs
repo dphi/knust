@@ -160,6 +160,26 @@ impl IndividualAddressSerialResponse {
     }
 }
 
+const APCI_INDIVIDUAL_ADDRESS_SERIAL_WRITE: [u8; 2] = [0x03, 0xDE];
+
+/// `A_IndividualAddressSerial_Write` request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndividualAddressSerialWrite {
+    pub serial: [u8; 6],
+    pub address: crate::protocol::IndividualAddress,
+}
+
+impl IndividualAddressSerialWrite {
+    #[must_use]
+    pub fn encode(self) -> Vec<u8> {
+        let mut apdu = APCI_INDIVIDUAL_ADDRESS_SERIAL_WRITE.to_vec();
+        apdu.extend_from_slice(&self.serial);
+        apdu.extend_from_slice(&self.address.raw().to_be_bytes());
+        apdu.extend_from_slice(&[0, 0, 0, 0]);
+        apdu
+    }
+}
+
 /// Function-specific state response; None is the KNX negative response without a return code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionPropertyCommand {
@@ -1158,8 +1178,8 @@ mod tests {
         FunctionPropertyCommand, FunctionPropertyExtCommand, FunctionPropertyExtStateRead,
         FunctionPropertyExtStateResponse, FunctionPropertyService, FunctionPropertyStateRead,
         FunctionPropertyStateResponse, IndividualAddressSerialRead,
-        IndividualAddressSerialResponse, MemoryRead, MemoryResponse, MemoryWrite,
-        PropertyDescriptionRead, PropertyDescriptionResponse, PropertyValueRead,
+        IndividualAddressSerialResponse, IndividualAddressSerialWrite, MemoryRead, MemoryResponse,
+        MemoryWrite, PropertyDescriptionRead, PropertyDescriptionResponse, PropertyValueRead,
         PropertyValueResponse, PropertyValueWrite, RestartMasterReset, RestartMasterResetResponse,
         UserMemoryRead, UserMemoryResponse, UserMemoryWrite,
     };
@@ -1644,5 +1664,17 @@ mod tests {
             response
         );
         assert!(IndividualAddressSerialResponse::decode(&encoded[..11]).is_err());
+    }
+
+    #[test]
+    fn individual_address_serial_write_matches_wire_layout() {
+        let request = IndividualAddressSerialWrite {
+            serial: [1, 2, 3, 4, 5, 6],
+            address: crate::protocol::IndividualAddress::new(1, 2, 3),
+        };
+        assert_eq!(
+            request.encode(),
+            [0x03, 0xDE, 1, 2, 3, 4, 5, 6, 0x12, 0x03, 0, 0, 0, 0]
+        );
     }
 }

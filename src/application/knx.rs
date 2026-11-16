@@ -1493,6 +1493,41 @@ impl Knx {
         Ok(Some(response.source))
     }
 
+    /// Assign an individual address to the device with the given serial number
+    /// and verify the address by reading it back.
+    pub async fn write_individual_address_by_serial_number(
+        &self,
+        serial: [u8; 6],
+        address: crate::protocol::IndividualAddress,
+        timeout_duration: std::time::Duration,
+    ) -> Result<()> {
+        let broadcast = GroupAddress::try_new(0, 0, 0).expect("0/0/0 is a valid group address");
+        let mut telegram = Telegram::group_write(
+            broadcast,
+            crate::protocol::IndividualAddressSerialWrite { serial, address }.encode(),
+        );
+        telegram.telegram_type = TelegramType::IndividualData;
+        telegram.compact_payload = false;
+        self.send_telegram(&telegram).await?;
+
+        let actual = self
+            .read_individual_address_by_serial_number(serial, timeout_duration)
+            .await?
+            .ok_or_else(|| crate::error::DeviceError::CommunicationTimeout {
+                device: format!("serial number {serial:02X?}"),
+                timeout_ms: timeout_duration.as_millis() as u64,
+            })?;
+        if actual != address {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!(
+                    "Individual address assignment verification failed: expected {address}, got {actual}"
+                ),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
     async fn collect_broadcast_responses(
         &self,
         request_apdu: Vec<u8>,
@@ -4701,6 +4736,48 @@ mod integration_tests {
                 .unwrap();
         }
         assert_eq!(serial_read.await.unwrap().unwrap(), Some(first));
+
+        let assigned = IndividualAddress::new(2, 3, 4);
+        let knx_for_serial_write = knx.clone();
+        let serial_write = tokio::spawn(async move {
+            knx_for_serial_write
+                .write_individual_address_by_serial_number(serial, assigned, Duration::from_secs(2))
+                .await
+        });
+        let write = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            write.payload,
+            crate::protocol::IndividualAddressSerialWrite {
+                serial,
+                address: assigned
+            }
+            .encode()
+        );
+        let read_back = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            read_back.payload,
+            crate::protocol::IndividualAddressSerialRead { serial }.encode()
+        );
+        server
+            .send(Telegram::received(
+                assigned,
+                broadcast,
+                TelegramType::IndividualData,
+                crate::protocol::IndividualAddressSerialResponse {
+                    serial,
+                    address: assigned,
+                }
+                .encode(),
+            ))
+            .await
+            .unwrap();
+        serial_write.await.unwrap().unwrap();
 
         let knx_for_scan = knx.clone();
         let strict_scan = tokio::spawn(async move {
