@@ -3906,6 +3906,53 @@ impl P2pConnection {
         Ok(response)
     }
 
+    /// Switch programming mode through memory address 0x60 (Realisation Type 2).
+    ///
+    /// `verify` reads the byte back after the acknowledged write. This procedure
+    /// applies only to devices using the memory-based realization.
+    pub async fn switch_programming_mode(
+        &mut self,
+        enabled: bool,
+        verify: bool,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        let value = u8::from(enabled);
+        let response = self
+            .write_memory(
+                crate::protocol::management::MemoryWrite {
+                    address: 0x0060,
+                    count: 1,
+                    data: vec![value],
+                },
+                timeout,
+            )
+            .await?;
+        if response.count != 1 {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!("Programming-mode write returned count {}", response.count),
+            }
+            .into());
+        }
+        if verify {
+            let response = self
+                .read_memory(
+                    crate::protocol::management::MemoryRead {
+                        address: 0x0060,
+                        count: 1,
+                    },
+                    timeout,
+                )
+                .await?;
+            if response.count != 1 || response.data != [value] {
+                return Err(crate::error::ProtocolError::InvalidFrame {
+                    details: format!("Programming-mode read-back returned {:?}", response.data),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     /// Read one range from the 1 MiB user-memory address space.
     pub async fn read_user_memory(
         &mut self,
@@ -4802,6 +4849,122 @@ mod integration_tests {
         }
         let error = strict_scan.await.unwrap().unwrap_err();
         assert!(error.to_string().contains("More than one KNX device"));
+        knx.shutdown().await.unwrap();
+        server.shutdown();
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn programming_mode_memory_switch_verifies_over_knust_loopback() {
+        use crate::protocol::TpciFrame;
+        use crate::transport::TunnelServer;
+
+        let client_address = IndividualAddress::new(1, 1, 30);
+        let device_address = IndividualAddress::new(1, 1, 31);
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut peer_traffic = server.subscribe();
+
+        let knx_for_connect = knx.clone();
+        let connect =
+            tokio::spawn(async move { knx_for_connect.connect_p2p(device_address).await });
+        let connect_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(connect_request.tpci, TpciFrame::Connect.encode());
+        let mut connect_response = Telegram::individual_data(client_address, Vec::new());
+        connect_response.source = device_address;
+        connect_response.telegram_type = TelegramType::IndividualControl;
+        connect_response.tpci = TpciFrame::Connect.encode();
+        server.send(connect_response).await.unwrap();
+        let mut p2p = connect.await.unwrap().unwrap();
+
+        let switching = tokio::spawn(async move {
+            p2p.switch_programming_mode(true, true, Duration::from_secs(2))
+                .await
+        });
+        let write = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::MemoryWrite::decode(&write.payload).unwrap(),
+            crate::protocol::management::MemoryWrite {
+                address: 0x0060,
+                count: 1,
+                data: vec![1],
+            }
+        );
+        let mut write_ack = Telegram::individual_data(client_address, Vec::new());
+        write_ack.source = device_address;
+        write_ack.telegram_type = TelegramType::IndividualControl;
+        write_ack.tpci = TpciFrame::Ack { sequence: 0 }.encode();
+        server.send(write_ack).await.unwrap();
+        let mut write_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::MemoryResponse {
+                address: 0x0060,
+                count: 1,
+                data: vec![1],
+            }
+            .encode()
+            .unwrap(),
+        );
+        write_response.source = device_address;
+        write_response.tpci = TpciFrame::DataConnected { sequence: 0 }.encode();
+        server.send(write_response).await.unwrap();
+        let write_response_ack = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            write_response_ack.tpci,
+            TpciFrame::Ack { sequence: 0 }.encode()
+        );
+
+        let read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::MemoryRead::decode(&read.payload).unwrap(),
+            crate::protocol::management::MemoryRead {
+                address: 0x0060,
+                count: 1,
+            }
+        );
+        let mut read_ack = Telegram::individual_data(client_address, Vec::new());
+        read_ack.source = device_address;
+        read_ack.telegram_type = TelegramType::IndividualControl;
+        read_ack.tpci = TpciFrame::Ack { sequence: 1 }.encode();
+        server.send(read_ack).await.unwrap();
+        let mut read_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::MemoryResponse {
+                address: 0x0060,
+                count: 1,
+                data: vec![1],
+            }
+            .encode()
+            .unwrap(),
+        );
+        read_response.source = device_address;
+        read_response.tpci = TpciFrame::DataConnected { sequence: 1 }.encode();
+        server.send(read_response).await.unwrap();
+        switching.await.unwrap().unwrap();
+
         knx.shutdown().await.unwrap();
         server.shutdown();
     }
