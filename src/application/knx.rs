@@ -3770,6 +3770,62 @@ impl P2pConnection {
         Ok(response)
     }
 
+    /// Switch programming mode through Device Object property PID_PROGMODE (54).
+    ///
+    /// Use this property-based procedure for Realisation Type 1 devices.
+    pub async fn switch_programming_mode_property(
+        &mut self,
+        enabled: bool,
+        verify: bool,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        let value = u8::from(enabled);
+        let response = self
+            .write_property_value(
+                crate::protocol::management::PropertyValueWrite {
+                    object_index: 0,
+                    property_id: 54,
+                    count: 1,
+                    start_index: 1,
+                    data: vec![value],
+                },
+                timeout,
+            )
+            .await?;
+        if response.count != 1 {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!(
+                    "Programming-mode property write returned count {}",
+                    response.count
+                ),
+            }
+            .into());
+        }
+        if verify {
+            let response = self
+                .read_property_value(
+                    crate::protocol::management::PropertyValueRead {
+                        object_index: 0,
+                        property_id: 54,
+                        count: 1,
+                        start_index: 1,
+                    },
+                    timeout,
+                )
+                .await?;
+            if response.count != 1 || response.data != [value] {
+                return Err(crate::error::ProtocolError::InvalidFrame {
+                    details: format!(
+                        "Programming-mode property read-back returned {:?}",
+                        response.data
+                    ),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     /// Verify a property value range by reading it back and comparing its bytes.
     pub async fn verify_property_values(
         &mut self,
@@ -3910,7 +3966,7 @@ impl P2pConnection {
     ///
     /// `verify` reads the byte back after the acknowledged write. This procedure
     /// applies only to devices using the memory-based realization.
-    pub async fn switch_programming_mode(
+    pub async fn switch_programming_mode_memory(
         &mut self,
         enabled: bool,
         verify: bool,
@@ -4855,6 +4911,128 @@ mod integration_tests {
 
     #[cfg(feature = "server")]
     #[tokio::test]
+    async fn programming_mode_property_switch_verifies_over_knust_loopback() {
+        use crate::protocol::TpciFrame;
+        use crate::transport::TunnelServer;
+
+        let client_address = IndividualAddress::new(1, 1, 32);
+        let device_address = IndividualAddress::new(1, 1, 33);
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut peer_traffic = server.subscribe();
+        let knx_for_connect = knx.clone();
+        let connect =
+            tokio::spawn(async move { knx_for_connect.connect_p2p(device_address).await });
+        tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut connect_response = Telegram::individual_data(client_address, Vec::new());
+        connect_response.source = device_address;
+        connect_response.telegram_type = TelegramType::IndividualControl;
+        connect_response.tpci = TpciFrame::Connect.encode();
+        server.send(connect_response).await.unwrap();
+        let mut p2p = connect.await.unwrap().unwrap();
+
+        let switching = tokio::spawn(async move {
+            p2p.switch_programming_mode_property(true, true, Duration::from_secs(2))
+                .await
+        });
+        let write = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::PropertyValueWrite::decode(&write.payload).unwrap(),
+            crate::protocol::management::PropertyValueWrite {
+                object_index: 0,
+                property_id: 54,
+                count: 1,
+                start_index: 1,
+                data: vec![1],
+            }
+        );
+        let mut write_ack = Telegram::individual_data(client_address, Vec::new());
+        write_ack.source = device_address;
+        write_ack.telegram_type = TelegramType::IndividualControl;
+        write_ack.tpci = TpciFrame::Ack { sequence: 0 }.encode();
+        server.send(write_ack).await.unwrap();
+        let mut write_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::PropertyValueResponse {
+                object_index: 0,
+                property_id: 54,
+                count: 1,
+                start_index: 1,
+                data: vec![1],
+            }
+            .encode()
+            .unwrap(),
+        );
+        write_response.source = device_address;
+        write_response.tpci = TpciFrame::DataConnected { sequence: 0 }.encode();
+        server.send(write_response).await.unwrap();
+        let write_response_ack = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            write_response_ack.tpci,
+            TpciFrame::Ack { sequence: 0 }.encode()
+        );
+
+        let read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::protocol::management::PropertyValueRead::decode(&read.payload).unwrap(),
+            crate::protocol::management::PropertyValueRead {
+                object_index: 0,
+                property_id: 54,
+                count: 1,
+                start_index: 1,
+            }
+        );
+        let mut read_ack = Telegram::individual_data(client_address, Vec::new());
+        read_ack.source = device_address;
+        read_ack.telegram_type = TelegramType::IndividualControl;
+        read_ack.tpci = TpciFrame::Ack { sequence: 1 }.encode();
+        server.send(read_ack).await.unwrap();
+        let mut read_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::PropertyValueResponse {
+                object_index: 0,
+                property_id: 54,
+                count: 1,
+                start_index: 1,
+                data: vec![1],
+            }
+            .encode()
+            .unwrap(),
+        );
+        read_response.source = device_address;
+        read_response.tpci = TpciFrame::DataConnected { sequence: 1 }.encode();
+        server.send(read_response).await.unwrap();
+        switching.await.unwrap().unwrap();
+
+        knx.shutdown().await.unwrap();
+        server.shutdown();
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
     async fn programming_mode_memory_switch_verifies_over_knust_loopback() {
         use crate::protocol::TpciFrame;
         use crate::transport::TunnelServer;
@@ -4892,7 +5070,7 @@ mod integration_tests {
         let mut p2p = connect.await.unwrap().unwrap();
 
         let switching = tokio::spawn(async move {
-            p2p.switch_programming_mode(true, true, Duration::from_secs(2))
+            p2p.switch_programming_mode_memory(true, true, Duration::from_secs(2))
                 .await
         });
         let write = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
