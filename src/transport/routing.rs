@@ -11,6 +11,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 
+fn configure_multicast(socket: &UdpSocket, interface: Option<Ipv4Addr>) -> std::io::Result<()> {
+    let socket_ref = socket2::SockRef::from(socket);
+    socket_ref.set_multicast_ttl_v4(16)?;
+    if let Some(interface) = interface {
+        socket_ref.set_multicast_if_v4(&interface)?;
+    }
+    Ok(())
+}
+
 #[path = "routing_flow.rs"]
 mod flow;
 use flow::FlowControl;
@@ -39,8 +48,8 @@ impl RoutingConnection {
     ///
     /// # Errors
     ///
-    /// Returns [`TransportError::SocketError`] if binding the UDP socket,
-    /// querying its local address, or joining the KNX multicast group fails.
+    /// Returns [`TransportError::SocketError`] if binding or configuring the UDP
+    /// socket, querying its local address, or joining the KNX multicast group fails.
     pub async fn new(local_addr: Option<IpAddr>) -> Result<Self> {
         let bind_addr = match local_addr {
             Some(addr) => SocketAddr::new(addr, Self::MULTICAST_PORT),
@@ -63,6 +72,18 @@ impl RoutingConnection {
 
         let multicast_addr =
             SocketAddr::new(IpAddr::V4(Self::MULTICAST_ADDR), Self::MULTICAST_PORT);
+
+        configure_multicast(
+            &socket,
+            local_addr.and_then(|addr| match addr {
+                IpAddr::V4(ip) => Some(ip),
+                IpAddr::V6(_) => None,
+            }),
+        )
+        .map_err(|source| TransportError::SocketError {
+            operation: "configure_multicast".to_string(),
+            source,
+        })?;
 
         // Join multicast group
         socket
@@ -91,8 +112,8 @@ impl RoutingConnection {
     ///
     /// # Errors
     ///
-    /// Returns [`TransportError::SocketError`] if binding the UDP socket,
-    /// querying its local address, or joining the KNX multicast group on
+    /// Returns [`TransportError::SocketError`] if binding or configuring the UDP
+    /// socket, querying its local address, or joining the KNX multicast group on
     /// `interface_addr` fails.
     pub async fn new_with_interface(interface_addr: Ipv4Addr) -> Result<Self> {
         let bind_addr = SocketAddr::new(IpAddr::V4(interface_addr), Self::MULTICAST_PORT);
@@ -113,6 +134,13 @@ impl RoutingConnection {
 
         let multicast_addr =
             SocketAddr::new(IpAddr::V4(Self::MULTICAST_ADDR), Self::MULTICAST_PORT);
+
+        configure_multicast(&socket, Some(interface_addr)).map_err(|source| {
+            TransportError::SocketError {
+                operation: "configure_multicast".to_string(),
+                source,
+            }
+        })?;
 
         // Join multicast group on specific interface
         socket
@@ -437,6 +465,15 @@ mod health_tests {
             send_lock: tokio::sync::Mutex::new(()),
             flow_changed: tokio::sync::Notify::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn multicast_socket_uses_knx_ttl_and_selected_interface() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        configure_multicast(&socket, Some(Ipv4Addr::LOCALHOST)).unwrap();
+        let socket_ref = socket2::SockRef::from(&socket);
+        assert_eq!(socket_ref.multicast_ttl_v4().unwrap(), 16);
+        assert_eq!(socket_ref.multicast_if_v4().unwrap(), Ipv4Addr::LOCALHOST);
     }
 
     #[tokio::test]

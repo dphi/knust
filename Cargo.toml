@@ -39,6 +39,7 @@ secure = ["dep:aes", "dep:base64", "dep:ctr", "dep:sha2", "dep:pbkdf2", "dep:x25
 # Only the tokio pieces the library actually touches. rt-multi-thread and
 # process are test/example-only and live in dev-dependencies (feature-unified).
 tokio = { version = "1.52", default-features = false, features = ["rt", "macros", "sync", "time", "net", "io-util"] }
+socket2 = "0.6"
 thiserror = "2.0"
 log = "0.4"
 async-trait = "0.1"
