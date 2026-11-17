@@ -702,6 +702,7 @@ impl DptRegistry {
         registry.register::<SceneControl>();
         registry.register::<DateTime>();
         registry.register::<DPTHVACMode>();
+        registry.register::<DPTErrorClassSystem>();
         registry.register::<DPTHVACContrMode>();
         registry.register::<DPTChangeoverMode>();
         registry.register::<DPTEnableHCStage>();

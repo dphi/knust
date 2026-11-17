@@ -1548,6 +1548,9 @@ fn weekday_name(day: u8) -> Option<&'static str> {
 
 fn format_enum(value: u8, dpt: DptType) -> String {
     match dpt {
+        DptType::ErrorClassSystem => crate::protocol::dpt::ErrorClassSystem::try_from(value)
+            .map(|class| class.label().to_owned())
+            .unwrap_or_else(|_| format!("System Error Class {value}")),
         DptType::ChangeoverMode => ["Auto", "Cooling Only", "Heating Only"]
             .get(value as usize)
             .unwrap_or(&"Unknown")
@@ -1944,6 +1947,15 @@ fn parse_enum(s: &str, dpt: DptType) -> Option<u8> {
     }
     let lower = s.trim().to_ascii_lowercase();
     match dpt {
+        DptType::ErrorClassSystem => {
+            let normalized = lower.replace([' ', '-'], "_");
+            crate::protocol::dpt::ErrorClassSystem::ALL
+                .into_iter()
+                .find(|class| {
+                    class.label().to_ascii_lowercase().replace([' ', '-'], "_") == normalized
+                })
+                .map(|class| class as u8)
+        }
         DptType::ChangeoverMode => match lower.as_str() {
             "auto" => Some(0),
             "cooling only" | "cooling_only" => Some(1),

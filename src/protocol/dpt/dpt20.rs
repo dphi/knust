@@ -3,6 +3,145 @@
 use super::{DptValue, Result};
 use crate::error::ProtocolError;
 
+/// KNX system error classes used by DPT 20.011.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum ErrorClassSystem {
+    NoFault = 0,
+    GeneralDeviceFault = 1,
+    CommunicationFault = 2,
+    ConfigurationFault = 3,
+    HardwareFault = 4,
+    SoftwareFault = 5,
+    InsufficientNonVolatileMemory = 6,
+    InsufficientVolatileMemory = 7,
+    MemoryAllocationSizeZero = 8,
+    CrcError = 9,
+    WatchdogReset = 10,
+    InvalidOpcode = 11,
+    GeneralProtectionFault = 12,
+    MaximalTableLengthExceeded = 13,
+    UndefinedLoadCommand = 14,
+    GroupAddressTableNotSorted = 15,
+    InvalidConnectionNumber = 16,
+    InvalidGroupObjectNumber = 17,
+    GroupObjectTypeTooLong = 18,
+}
+
+impl ErrorClassSystem {
+    pub const ALL: [Self; 19] = [
+        Self::NoFault,
+        Self::GeneralDeviceFault,
+        Self::CommunicationFault,
+        Self::ConfigurationFault,
+        Self::HardwareFault,
+        Self::SoftwareFault,
+        Self::InsufficientNonVolatileMemory,
+        Self::InsufficientVolatileMemory,
+        Self::MemoryAllocationSizeZero,
+        Self::CrcError,
+        Self::WatchdogReset,
+        Self::InvalidOpcode,
+        Self::GeneralProtectionFault,
+        Self::MaximalTableLengthExceeded,
+        Self::UndefinedLoadCommand,
+        Self::GroupAddressTableNotSorted,
+        Self::InvalidConnectionNumber,
+        Self::InvalidGroupObjectNumber,
+        Self::GroupObjectTypeTooLong,
+    ];
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NoFault => "No Fault",
+            Self::GeneralDeviceFault => "General Device Fault",
+            Self::CommunicationFault => "Communication Fault",
+            Self::ConfigurationFault => "Configuration Fault",
+            Self::HardwareFault => "Hardware Fault",
+            Self::SoftwareFault => "Software Fault",
+            Self::InsufficientNonVolatileMemory => "Insufficient Non-Volatile Memory",
+            Self::InsufficientVolatileMemory => "Insufficient Volatile Memory",
+            Self::MemoryAllocationSizeZero => "Memory Allocation Size Zero",
+            Self::CrcError => "CRC Error",
+            Self::WatchdogReset => "Watchdog Reset",
+            Self::InvalidOpcode => "Invalid Opcode",
+            Self::GeneralProtectionFault => "General Protection Fault",
+            Self::MaximalTableLengthExceeded => "Maximal Table Length Exceeded",
+            Self::UndefinedLoadCommand => "Undefined Load Command",
+            Self::GroupAddressTableNotSorted => "Group Address Table Not Sorted",
+            Self::InvalidConnectionNumber => "Invalid Connection Number",
+            Self::InvalidGroupObjectNumber => "Invalid Group Object Number",
+            Self::GroupObjectTypeTooLong => "Group Object Type Too Long",
+        }
+    }
+}
+
+impl TryFrom<u8> for ErrorClassSystem {
+    type Error = crate::error::KnxError;
+
+    fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
+        Self::ALL.get(usize::from(value)).copied().ok_or_else(|| {
+            crate::error::ProtocolError::DptError {
+                dpt_type: "20.011".into(),
+                details: format!("Reserved system error class {value}"),
+            }
+            .into()
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DPTErrorClassSystem([u8; 1]);
+
+impl DPTErrorClassSystem {
+    #[must_use]
+    pub const fn new(value: ErrorClassSystem) -> Self {
+        Self([value as u8])
+    }
+
+    #[must_use]
+    pub fn value(self) -> ErrorClassSystem {
+        ErrorClassSystem::try_from(self.0[0]).expect("validated DPT 20.011 value")
+    }
+}
+
+impl DptValue for DPTErrorClassSystem {
+    const DPT_NUMBER: &'static str = "20.011";
+    const VALUE_TYPE: &'static str = "error_class_system";
+    const BYTE_LENGTH: usize = 1;
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let [value] = bytes else {
+            return Err(crate::error::ProtocolError::DptError {
+                dpt_type: Self::DPT_NUMBER.into(),
+                details: format!("Expected one byte, got {}", bytes.len()),
+            }
+            .into());
+        };
+        ErrorClassSystem::try_from(*value)?;
+        Ok(Self([*value]))
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    fn validate(&self) -> Result<()> {
+        ErrorClassSystem::try_from(self.0[0]).map(|_| ())
+    }
+
+    fn value_range() -> (f64, f64) {
+        (0.0, 18.0)
+    }
+}
+
+impl super::WriteValue<DPTErrorClassSystem> for ErrorClassSystem {
+    fn resolve(self, _: super::DptType) -> Result<DPTErrorClassSystem> {
+        Ok(DPTErrorClassSystem::new(self))
+    }
+}
+
 /// DPT 20.102 - HVAC Mode
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HVACMode {
@@ -310,6 +449,39 @@ mod tests {
                 [raw]
             );
         }
+    }
+
+    #[test]
+    fn error_class_system_is_typed_registered_and_validated() {
+        let dpt = DptType::from_number(20, 11).unwrap();
+        assert_eq!(dpt, DptType::ErrorClassSystem);
+        let registry = DptRegistry::new();
+        assert_eq!(
+            registry.metadata("20.011").unwrap().value_type,
+            "error_class_system"
+        );
+
+        for (raw, expected) in ErrorClassSystem::ALL.into_iter().enumerate() {
+            let decoded = DPTErrorClassSystem::from_bytes(&[raw as u8]).unwrap();
+            assert_eq!(decoded.value(), expected);
+            assert_eq!(decoded.as_bytes(), &[raw as u8]);
+            let bytes = [raw as u8];
+            let view = dpt.decode_ref(&bytes).unwrap();
+            assert_eq!(view.formatted(dpt), expected.label());
+        }
+
+        assert_eq!(dpt.parse("General Device Fault").unwrap(), [1]);
+        assert_eq!(dpt.parse("group_address_table_not_sorted").unwrap(), [15]);
+        assert!(DPTErrorClassSystem::from_bytes(&[]).is_err());
+        assert!(DPTErrorClassSystem::from_bytes(&[19]).is_err());
+        assert!(dpt.parse("19").is_err());
+        assert!(dpt.parse("Not an error class").is_err());
+
+        let decoded = registry.decode("20.011", &[18]).unwrap();
+        assert_eq!(
+            decoded.downcast::<DPTErrorClassSystem>().unwrap().value(),
+            ErrorClassSystem::GroupObjectTypeTooLong
+        );
     }
 
     #[test]

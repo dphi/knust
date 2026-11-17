@@ -346,6 +346,7 @@ pub enum DptType {
     DateTime = 1_900_001,
 
     // DPT 20.xxx - HVAC
+    ErrorClassSystem = 2_000_011,
     HVACMode = 2_000_102,
     HVACContrMode = 2_000_105,
     HVACStatus = 2_060_102,
@@ -568,6 +569,7 @@ impl DptType {
 
     fn validate_mode(&self, value: u8) -> Result<()> {
         let max = match self {
+            Self::ErrorClassSystem => 18,
             Self::ChangeoverMode => 2,
             Self::EnableHCStage => 3,
             _ => return Ok(()),
@@ -575,7 +577,7 @@ impl DptType {
         if value > max {
             return Err(ProtocolError::DptError {
                 dpt_type: self.number_str(),
-                details: format!("Reserved mode value {value}"),
+                details: format!("Reserved enum value {value}"),
             }
             .into());
         }
