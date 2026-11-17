@@ -1435,6 +1435,38 @@ impl Knx {
         result
     }
 
+    /// Check whether an individual address is occupied by a device.
+    ///
+    /// A device that establishes a P2P link or refuses it occupies the address;
+    /// no response to the link or descriptor request means the address is free.
+    /// `timeout` applies to the descriptor request; P2P connection setup uses its
+    /// standard timeout.
+    pub async fn check_individual_address(
+        &self,
+        destination: crate::protocol::IndividualAddress,
+        timeout: std::time::Duration,
+    ) -> Result<bool> {
+        let mut connection = match self.connect_p2p(destination).await {
+            Ok(connection) => connection,
+            Err(crate::error::KnxError::Device(
+                crate::error::DeviceError::CommunicationTimeout { .. },
+            )) => return Ok(false),
+            Err(crate::error::KnxError::Device(
+                crate::error::DeviceError::CommunicationRefused { .. },
+            )) => return Ok(true),
+            Err(error) => return Err(error),
+        };
+        let response = connection.read_device_descriptor(0, timeout).await;
+        let _ = connection.close().await;
+        match response {
+            Ok(_) => Ok(true),
+            Err(crate::error::KnxError::Device(
+                crate::error::DeviceError::CommunicationTimeout { .. },
+            )) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Read addresses of devices currently in programming mode.
     ///
     /// Returns all responders before the timeout elapses. Set `raise_if_multiple`
@@ -3486,8 +3518,8 @@ impl P2pConnection {
                 match crate::protocol::TpciFrame::decode(telegram.tpci) {
                     crate::protocol::TpciFrame::Connect => return Ok(()),
                     crate::protocol::TpciFrame::Disconnect => {
-                        return Err(crate::error::ProtocolError::InvalidFrame {
-                            details: format!("{} rejected the P2P connection", self.destination),
+                        return Err(crate::error::DeviceError::CommunicationRefused {
+                            device: format!("individual address {}", self.destination),
                         }
                         .into());
                     }
@@ -4905,6 +4937,140 @@ mod integration_tests {
         }
         let error = strict_scan.await.unwrap().unwrap_err();
         assert!(error.to_string().contains("More than one KNX device"));
+        knx.shutdown().await.unwrap();
+        server.shutdown();
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn individual_address_check_detects_connected_and_refusing_devices() {
+        use crate::protocol::TpciFrame;
+        use crate::transport::TunnelServer;
+
+        let client_address = IndividualAddress::new(1, 1, 40);
+        let connected_device = IndividualAddress::new(1, 1, 41);
+        let refusing_device = IndividualAddress::new(1, 1, 42);
+        let silent_device = IndividualAddress::new(1, 1, 43);
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut peer_traffic = server.subscribe();
+
+        let knx_for_check = knx.clone();
+        let checking = tokio::spawn(async move {
+            knx_for_check
+                .check_individual_address(connected_device, Duration::from_secs(2))
+                .await
+        });
+        let connect_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            connect_request.destination,
+            Address::Individual(connected_device)
+        );
+        let mut connect_response = Telegram::individual_data(client_address, Vec::new());
+        connect_response.source = connected_device;
+        connect_response.telegram_type = TelegramType::IndividualControl;
+        connect_response.tpci = TpciFrame::Connect.encode();
+        server.send(connect_response).await.unwrap();
+        let descriptor_read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(descriptor_read.payload, [0x03, 0x00]);
+        let mut descriptor_ack = Telegram::individual_data(client_address, Vec::new());
+        descriptor_ack.source = connected_device;
+        descriptor_ack.telegram_type = TelegramType::IndividualControl;
+        descriptor_ack.tpci = TpciFrame::Ack { sequence: 0 }.encode();
+        server.send(descriptor_ack).await.unwrap();
+        let mut descriptor_response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::DeviceDescriptorResponse {
+                descriptor: 0,
+                data: vec![0x06, 0x10],
+            }
+            .encode(),
+        );
+        descriptor_response.source = connected_device;
+        descriptor_response.tpci = TpciFrame::DataConnected { sequence: 0 }.encode();
+        server.send(descriptor_response).await.unwrap();
+        assert!(checking.await.unwrap().unwrap());
+        let response_ack = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(response_ack.tpci, TpciFrame::Ack { sequence: 0 }.encode());
+        let disconnect = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(disconnect.tpci, TpciFrame::Disconnect.encode());
+
+        let knx_for_check = knx.clone();
+        let checking = tokio::spawn(async move {
+            knx_for_check
+                .check_individual_address(refusing_device, Duration::from_secs(2))
+                .await
+        });
+        let _connect_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut refusal = Telegram::individual_data(client_address, Vec::new());
+        refusal.source = refusing_device;
+        refusal.telegram_type = TelegramType::IndividualControl;
+        refusal.tpci = TpciFrame::Disconnect.encode();
+        server.send(refusal).await.unwrap();
+        assert!(checking.await.unwrap().unwrap());
+        let _refusal_ack = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let knx_for_check = knx.clone();
+        let checking = tokio::spawn(async move {
+            knx_for_check
+                .check_individual_address(silent_device, Duration::from_secs(1))
+                .await
+        });
+        let _connect_request = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut connect_response = Telegram::individual_data(client_address, Vec::new());
+        connect_response.source = silent_device;
+        connect_response.telegram_type = TelegramType::IndividualControl;
+        connect_response.tpci = TpciFrame::Connect.encode();
+        server.send(connect_response).await.unwrap();
+        let descriptor_read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(descriptor_read.payload, [0x03, 0x00]);
+        let mut descriptor_ack = Telegram::individual_data(client_address, Vec::new());
+        descriptor_ack.source = silent_device;
+        descriptor_ack.telegram_type = TelegramType::IndividualControl;
+        descriptor_ack.tpci = TpciFrame::Ack { sequence: 0 }.encode();
+        server.send(descriptor_ack).await.unwrap();
+        assert!(!checking.await.unwrap().unwrap());
+        let disconnect = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(disconnect.tpci, TpciFrame::Disconnect.encode());
+
         knx.shutdown().await.unwrap();
         server.shutdown();
     }

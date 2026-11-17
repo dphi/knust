@@ -127,6 +127,9 @@ pub enum DeviceError {
     /// Communication timeout
     #[error("Communication timeout for {device} after {timeout_ms}ms")]
     CommunicationTimeout { device: String, timeout_ms: u64 },
+    /// Peer refused a connection-oriented transport link
+    #[error("Communication refused by {device}")]
+    CommunicationRefused { device: String },
 }
 
 /// Security layer error types
