@@ -3944,6 +3944,7 @@ impl P2pConnection {
     /// Switch programming mode through Device Object property PID_PROGMODE (54).
     ///
     /// Use this property-based procedure for Realisation Type 1 devices.
+    /// With `verify`, the write response must echo the requested value.
     pub async fn switch_programming_mode_property(
         &mut self,
         enabled: bool,
@@ -3972,27 +3973,14 @@ impl P2pConnection {
             }
             .into());
         }
-        if verify {
-            let response = self
-                .read_property_value(
-                    crate::protocol::management::PropertyValueRead {
-                        object_index: 0,
-                        property_id: 54,
-                        count: 1,
-                        start_index: 1,
-                    },
-                    timeout,
-                )
-                .await?;
-            if response.count != 1 || response.data != [value] {
-                return Err(crate::error::ProtocolError::InvalidFrame {
-                    details: format!(
-                        "Programming-mode property read-back returned {:?}",
-                        response.data
-                    ),
-                }
-                .into());
+        if verify && response.data != [value] {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!(
+                    "Programming-mode write response did not echo {value}: {:?}",
+                    response.data
+                ),
             }
+            .into());
         }
         Ok(())
     }
@@ -5572,87 +5560,72 @@ mod integration_tests {
             .unwrap();
         let mut p2p = connect.await.unwrap().unwrap();
 
+        use crate::protocol::management::{PropertyValueResponse, PropertyValueWrite};
         let switching = tokio::spawn(async move {
-            p2p.switch_programming_mode_property(true, true, Duration::from_secs(2))
-                .await
+            for (verify, expected_success) in
+                [(true, true), (true, false), (false, true), (false, false)]
+            {
+                let result = p2p
+                    .switch_programming_mode_property(true, verify, Duration::from_secs(2))
+                    .await;
+                assert_eq!(result.is_ok(), expected_success);
+            }
+            p2p.close().await.unwrap();
         });
-        let write = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            crate::protocol::management::PropertyValueWrite::decode(&write.payload).unwrap(),
-            crate::protocol::management::PropertyValueWrite {
-                object_index: 0,
-                property_id: 54,
-                count: 1,
-                start_index: 1,
-                data: vec![1],
-            }
-        );
-        let mut write_ack = Telegram::individual_data(client_address, Vec::new());
-        write_ack.source = device_address;
-        write_ack.telegram_type = TelegramType::IndividualControl;
-        write_ack.tpci = TpciFrame::Ack { sequence: 0 }.encode();
-        server.send(write_ack).await.unwrap();
-        let mut write_response = Telegram::individual_data(
-            client_address,
-            crate::protocol::management::PropertyValueResponse {
-                object_index: 0,
-                property_id: 54,
-                count: 1,
-                start_index: 1,
-                data: vec![1],
-            }
-            .encode()
-            .unwrap(),
-        );
-        write_response.source = device_address;
-        write_response.tpci = TpciFrame::DataConnected { sequence: 0 }.encode();
-        server.send(write_response).await.unwrap();
-        let write_response_ack = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            write_response_ack.tpci,
-            TpciFrame::Ack { sequence: 0 }.encode()
-        );
+        for (sequence, count, data) in [
+            (0, 1, vec![1]),
+            (1, 1, vec![0]),
+            (2, 1, vec![0]),
+            (3, 0, vec![]),
+        ] {
+            let write = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(write.tpci, TpciFrame::DataConnected { sequence }.encode());
+            assert_eq!(
+                PropertyValueWrite::decode(&write.payload).unwrap(),
+                PropertyValueWrite {
+                    object_index: 0,
+                    property_id: 54,
+                    count: 1,
+                    start_index: 1,
+                    data: vec![1],
+                }
+            );
+            let mut ack = Telegram::individual_data(client_address, Vec::new());
+            ack.source = device_address;
+            ack.telegram_type = TelegramType::IndividualControl;
+            ack.tpci = TpciFrame::Ack { sequence }.encode();
+            server.send(ack).await.unwrap();
 
-        let read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            let mut response = Telegram::individual_data(
+                client_address,
+                PropertyValueResponse {
+                    object_index: 0,
+                    property_id: 54,
+                    count,
+                    start_index: 1,
+                    data,
+                }
+                .encode()
+                .unwrap(),
+            );
+            response.source = device_address;
+            response.tpci = TpciFrame::DataConnected { sequence }.encode();
+            server.send(response).await.unwrap();
+            let ack = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(ack.tpci, TpciFrame::Ack { sequence }.encode());
+        }
+        let disconnect = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(
-            crate::protocol::management::PropertyValueRead::decode(&read.payload).unwrap(),
-            crate::protocol::management::PropertyValueRead {
-                object_index: 0,
-                property_id: 54,
-                count: 1,
-                start_index: 1,
-            }
-        );
-        let mut read_ack = Telegram::individual_data(client_address, Vec::new());
-        read_ack.source = device_address;
-        read_ack.telegram_type = TelegramType::IndividualControl;
-        read_ack.tpci = TpciFrame::Ack { sequence: 1 }.encode();
-        server.send(read_ack).await.unwrap();
-        let mut read_response = Telegram::individual_data(
-            client_address,
-            crate::protocol::management::PropertyValueResponse {
-                object_index: 0,
-                property_id: 54,
-                count: 1,
-                start_index: 1,
-                data: vec![1],
-            }
-            .encode()
-            .unwrap(),
-        );
-        read_response.source = device_address;
-        read_response.tpci = TpciFrame::DataConnected { sequence: 1 }.encode();
-        server.send(read_response).await.unwrap();
-        switching.await.unwrap().unwrap();
+        assert_eq!(disconnect.tpci, TpciFrame::Disconnect.encode());
+        switching.await.unwrap();
 
         knx.shutdown().await.unwrap();
         server.shutdown();
