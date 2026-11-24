@@ -727,6 +727,73 @@ mod tests {
         assert!(scanner.parse_discovery_response(&response, source).is_ok());
     }
 
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn scanner_searches_and_describes_knust_tunnel_server() {
+        use crate::transport::TunnelServer;
+
+        let address = IndividualAddress::new(1, 1, 7);
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), address)
+            .await
+            .unwrap();
+        let scanner = GatewayScanner::new().await.unwrap();
+        let gateways = scanner
+            .discover_to(
+                Duration::from_millis(200),
+                server.local_addr(),
+                "[::1]:3671".parse().unwrap(),
+            )
+            .await
+            .unwrap();
+        let [gateway] = &gateways[..] else {
+            panic!("expected one gateway")
+        };
+        assert_eq!(gateway.addr, server.local_addr());
+        assert_eq!(gateway.individual_address, Some(address));
+        assert_eq!(gateway.name, "Knust TunnelServer");
+        assert!(gateway.capabilities.supports_tcp_tunneling);
+        assert!(!gateway.capabilities.supports_device_management);
+        assert!(!gateway.capabilities.supports_routing);
+
+        let info = scanner
+            .describe(server.local_addr(), Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(info.addr, gateway.addr);
+        assert_eq!(info.individual_address, gateway.individual_address);
+        assert_eq!(info.core_version, 2);
+        assert!(!info.capabilities.supports_secure);
+        assert_eq!(server.client_count().await, 0);
+        server.shutdown();
+    }
+
+    #[cfg(all(feature = "server", feature = "secure"))]
+    #[tokio::test]
+    async fn scanner_describes_secure_knust_tunnel_server() {
+        use crate::security::SessionConfig;
+        use crate::transport::TunnelServer;
+
+        let server = TunnelServer::bind_secure(
+            "127.0.0.1:0".parse().unwrap(),
+            IndividualAddress::new(1, 1, 7),
+            SessionConfig {
+                user_password: "loopback".to_owned(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let scanner = GatewayScanner::new().await.unwrap();
+        let info = scanner
+            .describe(server.local_addr(), Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert!(info.capabilities.supports_secure);
+        assert_eq!(info.capabilities.tunneling_requires_secure, Some(true));
+        assert_eq!(server.client_count().await, 0);
+        server.shutdown();
+    }
+
     #[tokio::test]
     async fn unicast_description_selects_query_by_core_version() {
         let scanner = GatewayScanner::new_with_interface(Ipv4Addr::LOCALHOST)

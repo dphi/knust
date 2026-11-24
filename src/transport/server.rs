@@ -449,6 +449,12 @@ impl TunnelServer {
     async fn handle_frame(self: &Arc<Self>, data: &[u8], link: ClientLink) -> Result<Option<u8>> {
         let frame = KnxIpFrame::parse(data)?;
         match frame.header.service_type {
+            ServiceType::SearchRequest
+            | ServiceType::SearchRequestExtended
+            | ServiceType::DescriptionRequest => {
+                self.handle_discovery_request(frame, &link).await?;
+                Ok(None)
+            }
             #[cfg(feature = "secure")]
             ServiceType::SessionRequest => {
                 self.handle_session_request(&frame.body, link).await?;
@@ -492,6 +498,88 @@ impl TunnelServer {
             }
             _ => self.dispatch_plain_frame(frame, link, false).await,
         }
+    }
+
+    async fn handle_discovery_request(&self, frame: KnxIpFrame, link: &ClientLink) -> Result<()> {
+        let ClientLink::Udp { peer_addr, .. } = link else {
+            return Ok(());
+        };
+        let endpoint = Hpai::parse(&frame.body)?;
+        // Reply only to the UDP sender so a discovery request cannot redirect traffic.
+        if endpoint.host_protocol_code != Hpai::PROTOCOL_UDP
+            || (!endpoint.ip_addr.is_unspecified() && endpoint.ip_addr != peer_addr.ip())
+            || (endpoint.port != 0 && endpoint.port != peer_addr.port())
+        {
+            return Ok(());
+        }
+
+        let mut parameters = &frame.body[Hpai::LENGTH..];
+        let extended = frame.header.service_type == ServiceType::SearchRequestExtended;
+        if extended {
+            while let Some(&length) = parameters.first() {
+                let length = usize::from(length);
+                if length < 2 || length % 2 != 0 || length > parameters.len() {
+                    return Err(ProtocolError::InvalidFrame {
+                        details: "Invalid search request parameter length".to_owned(),
+                    }
+                    .into());
+                }
+                if parameters[1] & 0x80 != 0 && parameters[1] & 0x7f != 4 {
+                    return Ok(());
+                }
+                parameters = &parameters[length..];
+            }
+        } else if !parameters.is_empty() {
+            return Err(ProtocolError::InvalidFrame {
+                details: "Unexpected data after discovery request endpoint".to_owned(),
+            }
+            .into());
+        }
+
+        let description = frame.header.service_type == ServiceType::DescriptionRequest;
+        let (response, mut body) = if description {
+            (ServiceType::DescriptionResponse, Vec::new())
+        } else {
+            (
+                if extended {
+                    ServiceType::SearchResponseExtended
+                } else {
+                    ServiceType::SearchResponse
+                },
+                Hpai::new(self.local_addr).serialize(),
+            )
+        };
+        let mut device = [0; 54];
+        device[..4].copy_from_slice(&[54, 1, 0x20, 0]);
+        device[4..6].copy_from_slice(&u16::from(self.individual_address).to_be_bytes());
+        let name = b"Knust TunnelServer";
+        device[24..24 + name.len()].copy_from_slice(name);
+        body.extend_from_slice(&device);
+
+        #[cfg(feature = "secure")]
+        let secure = self.secure_config.is_some();
+        #[cfg(not(feature = "secure"))]
+        let secure = false;
+        let management = self.device_management_handler.read().await.is_some();
+        let mut families = vec![0, 2, 2, 2, 4, 2];
+        if management {
+            families.extend_from_slice(&[3, 1]);
+        }
+        if extended && secure {
+            families.extend_from_slice(&[9, 1]);
+        }
+        families[0] = families.len() as u8;
+        body.extend_from_slice(&families);
+        if extended && secure {
+            if management {
+                body.extend_from_slice(&[6, 6, 4, 2, 3, 1]);
+            } else {
+                body.extend_from_slice(&[4, 6, 4, 2]);
+            }
+        }
+
+        link.send_frame(&KnxIpFrame::new(response, body).serialize())
+            .await
     }
 
     /// Dispatches plaintext frames and frames unwrapped from a SecureWrapper.
