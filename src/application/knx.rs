@@ -1488,6 +1488,51 @@ impl Knx {
         Ok(addresses)
     }
 
+    /// Assign an address to the single device in programming mode, then restart it.
+    ///
+    /// Rejects an occupied address unless it belongs to the programming-mode device.
+    /// A device that does not answer an address check is considered absent.
+    pub async fn write_individual_address_in_programming_mode(
+        &self,
+        address: crate::protocol::IndividualAddress,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        let occupied = self.check_individual_address(address, timeout).await?;
+        let devices = self
+            .read_individual_addresses_in_programming_mode(timeout, true)
+            .await?;
+        let current =
+            devices
+                .first()
+                .copied()
+                .ok_or_else(|| crate::error::ProtocolError::InvalidFrame {
+                    details: "No KNX device is in programming mode".to_owned(),
+                })?;
+        if occupied && current != address {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!("Individual address {address} is already occupied"),
+            }
+            .into());
+        }
+        if !occupied {
+            let mut apdu = vec![0x00, 0xc0];
+            apdu.extend_from_slice(&u16::from(address).to_be_bytes());
+            let broadcast = GroupAddress::try_new(0, 0, 0).expect("0/0/0 is a valid group address");
+            let mut telegram = Telegram::group_write(broadcast, apdu);
+            telegram.telegram_type = TelegramType::IndividualData;
+            telegram.compact_payload = false;
+            self.send_telegram_acknowledged(&telegram).await?;
+        }
+        let mut connection = self.connect_p2p(address).await?;
+        let result = async {
+            connection.read_device_descriptor(0, timeout).await?;
+            connection.restart().await
+        }
+        .await;
+        let close_result = connection.close().await;
+        result.and(close_result)
+    }
+
     /// Read the address assigned to a device with the given serial number.
     pub async fn read_individual_address_by_serial_number(
         &self,
@@ -4825,6 +4870,208 @@ mod integration_tests {
         server.send(response).await.unwrap();
 
         assert_eq!(request.await.unwrap().unwrap(), [0x02, 0xC9, 0x42, 0x55]);
+        knx.shutdown().await.unwrap();
+        server.shutdown();
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn programming_mode_assignment_rejects_conflicts_and_ambiguous_scans() {
+        use crate::protocol::TpciFrame;
+        use crate::transport::TunnelServer;
+        let client_address = IndividualAddress::new(1, 1, 53);
+        let assigned = IndividualAddress::new(1, 1, 54);
+        let other = IndividualAddress::new(1, 1, 55);
+        let second = IndividualAddress::new(1, 1, 56);
+        let broadcast = GroupAddress::try_new(0, 0, 0).unwrap();
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut traffic = server.subscribe();
+        for addresses in [vec![other], vec![], vec![other, second]] {
+            let client = knx.clone();
+            let assigning = tokio::spawn(async move {
+                client
+                    .write_individual_address_in_programming_mode(
+                        assigned,
+                        Duration::from_millis(500),
+                    )
+                    .await
+            });
+            let connect = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(connect.tpci, TpciFrame::Connect.encode());
+            let probe = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(probe.payload, [0x03, 0x00]);
+            let mut refusal = Telegram::individual_data(client_address, Vec::new());
+            refusal.source = assigned;
+            refusal.telegram_type = TelegramType::IndividualControl;
+            refusal.tpci = TpciFrame::Disconnect.encode();
+            server.send(refusal).await.unwrap();
+            let scan = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(scan.destination, Address::Group(broadcast));
+            assert_eq!(scan.payload, [0x01, 0x00]);
+            for device in addresses {
+                server
+                    .send(Telegram::received(
+                        device,
+                        broadcast,
+                        TelegramType::IndividualData,
+                        vec![0x01, 0x40],
+                    ))
+                    .await
+                    .unwrap();
+            }
+            assert!(assigning.await.unwrap().is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), traffic.recv())
+                    .await
+                    .is_err()
+            );
+        }
+        knx.shutdown().await.unwrap();
+        server.shutdown();
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn programming_mode_assignment_verifies_and_restarts_device() {
+        use crate::protocol::TpciFrame;
+        use crate::transport::TunnelServer;
+        let client_address = IndividualAddress::new(1, 1, 50);
+        let old_address = IndividualAddress::new(1, 1, 51);
+        let assigned = IndividualAddress::new(1, 1, 52);
+        let broadcast = GroupAddress::try_new(0, 0, 0).unwrap();
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut traffic = server.subscribe();
+        let client = knx.clone();
+        let assigning = tokio::spawn(async move {
+            client
+                .write_individual_address_in_programming_mode(assigned, Duration::from_millis(500))
+                .await
+        });
+
+        let connect = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(connect.tpci, TpciFrame::Connect.encode());
+        assert_eq!(connect.destination, Address::Individual(assigned));
+        for _ in 0..4 {
+            let probe = tokio::time::timeout(Duration::from_secs(4), traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(probe.payload, [0x03, 0x00]);
+            assert_eq!(
+                probe.tpci,
+                TpciFrame::DataConnected { sequence: 0 }.encode()
+            );
+        }
+        let disconnect = tokio::time::timeout(Duration::from_secs(4), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(disconnect.tpci, TpciFrame::Disconnect.encode());
+        let scan = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(scan.destination, Address::Group(broadcast));
+        assert_eq!(scan.payload, [0x01, 0x00]);
+        server
+            .send(Telegram::received(
+                old_address,
+                broadcast,
+                TelegramType::IndividualData,
+                vec![0x01, 0x40],
+            ))
+            .await
+            .unwrap();
+        let write = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut expected = vec![0x00, 0xc0];
+        expected.extend_from_slice(&u16::from(assigned).to_be_bytes());
+        assert_eq!(write.destination, Address::Group(broadcast));
+        assert_eq!(write.payload, expected);
+        let connect = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(connect.tpci, TpciFrame::Connect.encode());
+        let probe = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(probe.payload, [0x03, 0x00]);
+        let mut ack = Telegram::individual_data(client_address, Vec::new());
+        ack.source = assigned;
+        ack.telegram_type = TelegramType::IndividualControl;
+        ack.tpci = TpciFrame::Ack { sequence: 0 }.encode();
+        server.send(ack).await.unwrap();
+        let mut response = Telegram::individual_data(
+            client_address,
+            crate::protocol::management::DeviceDescriptorResponse {
+                descriptor: 0,
+                data: vec![0x06, 0x10],
+            }
+            .encode(),
+        );
+        response.source = assigned;
+        response.tpci = TpciFrame::DataConnected { sequence: 0 }.encode();
+        server.send(response).await.unwrap();
+        let ack = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ack.tpci, TpciFrame::Ack { sequence: 0 }.encode());
+        let restart = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(restart.payload, [0x03, 0x80]);
+        assert_eq!(
+            restart.tpci,
+            TpciFrame::DataConnected { sequence: 1 }.encode()
+        );
+        let disconnect = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(disconnect.tpci, TpciFrame::Disconnect.encode());
+        assigning.await.unwrap().unwrap();
         knx.shutdown().await.unwrap();
         server.shutdown();
     }
