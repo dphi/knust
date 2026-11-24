@@ -1686,6 +1686,24 @@ impl Knx {
         Ok(connection)
     }
 
+    /// Open a P2P connection and switch the device's programming mode.
+    ///
+    /// The mask version determines whether the device uses memory or a property.
+    pub async fn switch_programming_mode(
+        &self,
+        destination: crate::protocol::IndividualAddress,
+        enabled: bool,
+        verify: bool,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        let mut connection = self.connect_p2p(destination).await?;
+        let result = connection
+            .switch_programming_mode(enabled, verify, timeout)
+            .await;
+        let close_result = connection.close().await;
+        result.and(close_result)
+    }
+
     /// Read a group value, starting the response deadline after transmission.
     ///
     /// # Errors
@@ -4367,6 +4385,46 @@ impl P2pConnection {
         Ok(u16::from_be_bytes([response.data[0], response.data[1]]))
     }
 
+    /// Switch programming mode using the mechanism associated with the mask version.
+    ///
+    /// Unknown mask versions return an error without writing to the device.
+    pub async fn switch_programming_mode(
+        &mut self,
+        enabled: bool,
+        verify: bool,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        let mask = self.read_mask_version(timeout).await?;
+        match mask {
+            0x0010..=0x0013
+            | 0x0020
+            | 0x0021
+            | 0x0025
+            | 0x0700
+            | 0x0701
+            | 0x0705
+            | 0x0900
+            | 0x0910..=0x0912
+            | 0x091a
+            | 0x1011..=0x1013
+            | 0x1900
+            | 0x5705 => {
+                self.switch_programming_mode_memory(enabled, verify, timeout)
+                    .await
+            }
+            0x0300 | 0x07b0 | 0x17b0 | 0x2705 | 0x27b0 | 0x2920 | 0x57b0 => {
+                self.switch_programming_mode_property(enabled, verify, timeout)
+                    .await
+            }
+            _ => Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!(
+                    "Programming-mode location is unknown for mask version {mask:04X}"
+                ),
+            }
+            .into()),
+        }
+    }
+
     /// Perform a confirmed Master Reset on the connected device.
     ///
     /// Wait at least the returned process_time before sending another request.
@@ -5175,6 +5233,145 @@ mod integration_tests {
         server.send(read_response).await.unwrap();
         switching.await.unwrap().unwrap();
 
+        knx.shutdown().await.unwrap();
+        server.shutdown();
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn programming_mode_selects_mask_and_rejects_unknown_over_loopback() {
+        use crate::protocol::{
+            TpciFrame,
+            management::{
+                DeviceDescriptorResponse, MemoryRead, MemoryResponse, PropertyValueResponse,
+                PropertyValueWrite,
+            },
+        };
+        use crate::transport::TunnelServer;
+        let client_address = IndividualAddress::new(1, 1, 34);
+        let device_address = IndividualAddress::new(1, 1, 35);
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut traffic = server.subscribe();
+
+        for mask in [0x0012_u16, 0x0300, 0xffff] {
+            let client = knx.clone();
+            let task = tokio::spawn(async move {
+                client
+                    .switch_programming_mode(device_address, true, false, Duration::from_secs(2))
+                    .await
+            });
+            let connect = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(connect.tpci, TpciFrame::Connect.encode());
+            let mut response = Telegram::individual_data(client_address, Vec::new());
+            response.source = device_address;
+            response.telegram_type = TelegramType::IndividualControl;
+            response.tpci = TpciFrame::Connect.encode();
+            server.send(response).await.unwrap();
+            let descriptor = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(descriptor.payload, [0x03, 0x00]);
+            let mut ack = Telegram::individual_data(client_address, Vec::new());
+            ack.source = device_address;
+            ack.telegram_type = TelegramType::IndividualControl;
+            ack.tpci = TpciFrame::Ack { sequence: 0 }.encode();
+            server.send(ack).await.unwrap();
+            let mut response = Telegram::individual_data(
+                client_address,
+                DeviceDescriptorResponse {
+                    descriptor: 0,
+                    data: mask.to_be_bytes().to_vec(),
+                }
+                .encode(),
+            );
+            response.source = device_address;
+            response.tpci = TpciFrame::DataConnected { sequence: 0 }.encode();
+            server.send(response).await.unwrap();
+            let ack = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(ack.tpci, TpciFrame::Ack { sequence: 0 }.encode());
+
+            if mask != 0xffff {
+                let operation = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let payload = if mask == 0x0012 {
+                    assert_eq!(
+                        MemoryRead::decode(&operation.payload).unwrap(),
+                        MemoryRead {
+                            address: 0x60,
+                            count: 1
+                        }
+                    );
+                    MemoryResponse {
+                        address: 0x60,
+                        count: 1,
+                        data: vec![1],
+                    }
+                    .encode()
+                    .unwrap()
+                } else {
+                    assert_eq!(
+                        PropertyValueWrite::decode(&operation.payload).unwrap(),
+                        PropertyValueWrite {
+                            object_index: 0,
+                            property_id: 54,
+                            count: 1,
+                            start_index: 1,
+                            data: vec![1]
+                        }
+                    );
+                    PropertyValueResponse {
+                        object_index: 0,
+                        property_id: 54,
+                        count: 1,
+                        start_index: 1,
+                        data: vec![1],
+                    }
+                    .encode()
+                    .unwrap()
+                };
+                let mut ack = Telegram::individual_data(client_address, Vec::new());
+                ack.source = device_address;
+                ack.telegram_type = TelegramType::IndividualControl;
+                ack.tpci = TpciFrame::Ack { sequence: 1 }.encode();
+                server.send(ack).await.unwrap();
+                let mut response = Telegram::individual_data(client_address, payload);
+                response.source = device_address;
+                response.tpci = TpciFrame::DataConnected { sequence: 1 }.encode();
+                server.send(response).await.unwrap();
+                let ack = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(ack.tpci, TpciFrame::Ack { sequence: 1 }.encode());
+            }
+            let disconnect = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(disconnect.tpci, TpciFrame::Disconnect.encode());
+            assert_eq!(task.await.unwrap().is_ok(), mask != 0xffff);
+        }
         knx.shutdown().await.unwrap();
         server.shutdown();
     }
