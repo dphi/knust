@@ -81,7 +81,9 @@ pub mod test_config;
 // Re-export commonly used types
 #[cfg(feature = "dpt")]
 pub use application::GroupAddress;
-pub use application::{Knx, KnxBuilder, KnxState, P2pConnection, ScannedInterfaceObject};
+pub use application::{
+    Knx, KnxBuilder, KnxState, P2pConnection, P2pConnectionless, ScannedInterfaceObject,
+};
 #[cfg(feature = "secure")]
 pub use config::KeyringConfig;
 pub use config::{ConfigFormat, Configuration};

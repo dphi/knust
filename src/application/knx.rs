@@ -140,8 +140,7 @@ pub struct Knx {
     receiving_stop: Arc<AtomicBool>,
     lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
     individual_request_lock: Arc<tokio::sync::Mutex<()>>,
-    active_p2p_sessions:
-        Arc<std::sync::Mutex<std::collections::HashSet<crate::protocol::IndividualAddress>>>,
+    active_p2p_sessions: ActiveP2pSessions,
     pending_cemi_confirmation: Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 
     /// Handle to the telegram processing task
@@ -219,11 +218,8 @@ struct GroupValueReadCallback {
     tx: mpsc::Sender<Vec<u8>>,
 }
 
-struct IndividualResponseCallback {
-    source: crate::protocol::IndividualAddress,
-    destination: crate::protocol::IndividualAddress,
-    expected_service: [u8; 2],
-    tx: mpsc::Sender<Vec<u8>>,
+struct ConnectionlessResponseCallback {
+    tx: tokio::sync::broadcast::Sender<Telegram>,
 }
 
 /// A group address bound to DPT `T`, constructible only via
@@ -361,15 +357,9 @@ impl TelegramCallbackFn for GroupValueReadCallback {
     }
 }
 #[async_trait::async_trait]
-impl TelegramCallbackFn for IndividualResponseCallback {
+impl TelegramCallbackFn for ConnectionlessResponseCallback {
     async fn call(&self, telegram: &Telegram) {
-        if telegram.telegram_type == TelegramType::IndividualData
-            && telegram.source == self.source
-            && telegram.destination == Address::Individual(self.destination)
-            && telegram.payload.starts_with(&self.expected_service)
-        {
-            let _ = self.tx.try_send(telegram.payload.clone());
-        }
+        let _ = self.tx.send(telegram.clone());
     }
 }
 
@@ -668,20 +658,25 @@ impl TelegramCallbackFn for P2pTelegramCallback {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum P2pMode {
+    Connected,
+    Connectionless,
+}
+
+type ActiveP2pSessions =
+    Arc<std::sync::Mutex<std::collections::HashSet<(crate::protocol::IndividualAddress, P2pMode)>>>;
+
 struct P2pCallbackRegistration {
     knx: Knx,
     handle: Option<CallbackHandle>,
-    active_sessions:
-        Arc<std::sync::Mutex<std::collections::HashSet<crate::protocol::IndividualAddress>>>,
-    destination: crate::protocol::IndividualAddress,
+    active_sessions: ActiveP2pSessions,
+    key: (crate::protocol::IndividualAddress, P2pMode),
 }
 
 impl Drop for P2pCallbackRegistration {
     fn drop(&mut self) {
-        self.active_sessions
-            .lock()
-            .unwrap()
-            .remove(&self.destination);
+        self.active_sessions.lock().unwrap().remove(&self.key);
         if let Some(handle) = self.handle.take()
             && let Ok(runtime) = tokio::runtime::Handle::try_current()
         {
@@ -714,6 +709,113 @@ pub struct P2pConnection {
     send_sequence: u8,
     receive_sequence: u8,
     closed: bool,
+}
+
+/// An address-scoped receive context for unnumbered individual telegrams.
+///
+/// Dropping the context releases its address reservation. Use [Self::close] to
+/// also wait for callback removal.
+pub struct P2pConnectionless {
+    registration: P2pCallbackRegistration,
+    receiver: tokio::sync::broadcast::Receiver<Telegram>,
+}
+
+impl P2pConnectionless {
+    /// Send an unnumbered APDU after discarding previously buffered replies.
+    pub async fn send(&mut self, apdu: Vec<u8>) -> Result<()> {
+        if !(2..=u8::MAX as usize).contains(&apdu.len()) {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!("P2P APDU length must be in 2..=255, got {}", apdu.len()),
+            }
+            .into());
+        }
+        let telegram = Telegram::individual_data(self.registration.key.0, apdu);
+        self.receiver = self.receiver.resubscribe();
+        let knx = &self.registration.knx;
+        tokio::select! {
+            biased;
+            _ = Self::wait_for_shutdown(knx) => Err(crate::error::TransportError::QueueClosed.into()),
+            result = knx.send_telegram_acknowledged(&telegram) => result,
+        }
+    }
+
+    /// Receive the next matching telegram, or `None` when the deadline passes.
+    ///
+    /// Reuse the same deadline to receive several replies within one window.
+    /// Returns a queue error if more than 16 telegrams accumulate unread.
+    pub async fn receive(
+        &mut self,
+        expected_service: Option<[u8; 2]>,
+        deadline: tokio::time::Instant,
+    ) -> Result<Option<Telegram>> {
+        use tokio::sync::broadcast::error::RecvError;
+
+        let knx = &self.registration.knx;
+        let received = async {
+            loop {
+                if tokio::time::Instant::now() >= deadline {
+                    return Ok(None);
+                }
+                match tokio::time::timeout_at(deadline, self.receiver.recv()).await {
+                    Ok(Ok(telegram))
+                        if expected_service
+                            .is_none_or(|service| telegram.payload.starts_with(&service)) =>
+                    {
+                        return Ok(Some(telegram));
+                    }
+                    Ok(Ok(_)) => {}
+                    Ok(Err(RecvError::Lagged(_))) => {
+                        return Err(crate::error::TransportError::QueueFull.into());
+                    }
+                    Ok(Err(RecvError::Closed)) => {
+                        return Err(crate::error::TransportError::QueueClosed.into());
+                    }
+                    Err(_) => return Ok(None),
+                }
+            }
+        };
+        tokio::select! {
+            biased;
+            _ = Self::wait_for_shutdown(knx) => Err(crate::error::TransportError::QueueClosed.into()),
+            result = received => result,
+        }
+    }
+
+    /// Send an APDU and return the first matching reply.
+    pub async fn request(
+        &mut self,
+        apdu: Vec<u8>,
+        expected_service: Option<[u8; 2]>,
+        timeout: std::time::Duration,
+    ) -> Result<Telegram> {
+        self.send(apdu).await?;
+        self.receive(expected_service, tokio::time::Instant::now() + timeout)
+            .await?
+            .ok_or_else(|| {
+                DeviceError::CommunicationTimeout {
+                    device: format!("individual address {}", self.registration.key.0),
+                    timeout_ms: timeout.as_millis() as u64,
+                }
+                .into()
+            })
+    }
+
+    /// Close the context and unregister its receive callback.
+    pub async fn close(mut self) {
+        if let Some(handle) = self.registration.handle {
+            self.registration.knx.unregister_callback(handle).await;
+            self.registration.handle = None;
+        }
+    }
+
+    async fn wait_for_shutdown(knx: &Knx) {
+        let stopping = knx.shutdown_started.notified();
+        tokio::pin!(stopping);
+        stopping.as_mut().enable();
+        if !knx.shutdown_flag.load(Ordering::SeqCst) {
+            stopping.await;
+        }
+    }
 }
 
 impl Knx {
@@ -1364,74 +1466,13 @@ impl Knx {
         expected_service: [u8; 2],
         timeout_duration: std::time::Duration,
     ) -> Result<Vec<u8>> {
-        if request_apdu.len() < 2 {
-            return Err(crate::error::ProtocolError::InvalidFrame {
-                details: "Individual-address APDU must include an APCI service".to_owned(),
-            }
-            .into());
-        }
         let _request_guard = self.individual_request_lock.lock().await;
-        let stopping = self.shutdown_started.notified();
-        tokio::pin!(stopping);
-        stopping.as_mut().enable();
-        if self.shutdown_flag.load(Ordering::SeqCst) {
-            return Err(crate::error::TransportError::QueueClosed.into());
-        }
-
-        let local_address = self.config.individual_address;
-        let (tx, mut rx) = mpsc::channel(1);
-        let callback = IndividualResponseCallback {
-            source: destination,
-            destination: local_address,
-            expected_service,
-            tx,
-        };
-        let filter = TelegramFilter::Custom(Arc::new(move |telegram| {
-            telegram.telegram_type == TelegramType::IndividualData
-                && telegram.source == destination
-                && telegram.destination == Address::Individual(local_address)
-                && telegram.payload.starts_with(&expected_service)
-        }));
-        let handle = self
-            .register_telegram_callback_filtered(callback, filter, false)
+        let mut session = self.connectionless_p2p(destination).await?;
+        let result = session
+            .request(request_apdu, Some(expected_service), timeout_duration)
             .await;
-        let mut callback_guard = ReadCallbackGuard {
-            handler: self.event_handler.clone(),
-            handle: Some(handle),
-        };
-
-        let operation = async {
-            let telegram = Telegram::individual_data(destination, request_apdu);
-            let (sent, completed) = self
-                .telegram_queue
-                .enqueue_outgoing_tracked(telegram)
-                .await?;
-            tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                tokio::select! {
-                    sent = sent => sent.map_err(|_| crate::error::TransportError::QueueClosed.into()),
-                    result = completed => result.map_err(|_| crate::error::TransportError::QueueClosed)?,
-
-                }
-            })
-            .await
-            .map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })??;
-
-            match tokio::time::timeout(timeout_duration, rx.recv()).await {
-                Ok(Some(response)) => Ok(response),
-                _ => Err(DeviceError::CommunicationTimeout {
-                    device: format!("individual address {destination}"),
-                    timeout_ms: timeout_duration.as_millis() as u64,
-                }
-                .into()),
-            }
-        };
-        let result = tokio::select! {
-            result = operation => result,
-            _ = &mut stopping => Err(crate::error::TransportError::QueueClosed.into()),
-        };
-        self.unregister_callback(handle).await;
-        callback_guard.handle = None;
-        result
+        session.close().await;
+        result.map(|telegram| telegram.payload)
     }
 
     /// Check whether an individual address is occupied by a device.
@@ -1678,33 +1719,10 @@ impl Knx {
         &self,
         destination: crate::protocol::IndividualAddress,
     ) -> Result<P2pConnection> {
-        let active_sessions = self.active_p2p_sessions.clone();
-        if !active_sessions.lock().unwrap().insert(destination) {
-            return Err(crate::error::ProtocolError::InvalidFrame {
-                details: format!("A P2P session to {destination} is already active"),
-            }
-            .into());
-        }
-        let mut callback = P2pCallbackRegistration {
-            knx: self.clone(),
-            handle: None,
-            active_sessions,
-            destination,
-        };
-        let local_address = self.config.individual_address;
         let (tx, receiver) = mpsc::channel(16);
-        let filter = TelegramFilter::Custom(Arc::new(move |telegram| {
-            telegram.source == destination
-                && telegram.destination == Address::Individual(local_address)
-                && matches!(
-                    telegram.telegram_type,
-                    TelegramType::IndividualData | TelegramType::IndividualControl
-                )
-        }));
-        callback.handle = Some(
-            self.register_telegram_callback_filtered(P2pTelegramCallback { tx }, filter, false)
-                .await,
-        );
+        let callback = self
+            .register_p2p_peer(destination, P2pMode::Connected, P2pTelegramCallback { tx })
+            .await?;
         let connection = P2pConnection {
             knx: self.clone(),
             destination,
@@ -1719,6 +1737,74 @@ impl Knx {
             .send_control(crate::protocol::TpciFrame::Connect)
             .await?;
         Ok(connection)
+    }
+
+    /// Open a receive context for connectionless data from one individual address.
+    ///
+    /// Only one context per peer can be open. A connected P2P link to the same
+    /// device can be active at the same time.
+    pub async fn connectionless_p2p(
+        &self,
+        destination: crate::protocol::IndividualAddress,
+    ) -> Result<P2pConnectionless> {
+        let (tx, receiver) = tokio::sync::broadcast::channel(16);
+        let registration = self
+            .register_p2p_peer(
+                destination,
+                P2pMode::Connectionless,
+                ConnectionlessResponseCallback { tx },
+            )
+            .await?;
+        Ok(P2pConnectionless {
+            registration,
+            receiver,
+        })
+    }
+
+    async fn register_p2p_peer(
+        &self,
+        destination: crate::protocol::IndividualAddress,
+        mode: P2pMode,
+        callback: impl TelegramCallbackFn + Send + Sync + 'static,
+    ) -> Result<P2pCallbackRegistration> {
+        let key = (destination, mode);
+        let active_sessions = self.active_p2p_sessions.clone();
+        if !active_sessions.lock().unwrap().insert(key) {
+            return Err(crate::error::ProtocolError::InvalidFrame {
+                details: format!("A P2P session of this type to {destination} is already active"),
+            }
+            .into());
+        }
+        let mut registration = P2pCallbackRegistration {
+            knx: self.clone(),
+            handle: None,
+            active_sessions,
+            key,
+        };
+        let local_address = self.config.individual_address;
+        let filter = TelegramFilter::Custom(Arc::new(move |telegram| {
+            if telegram.source != destination
+                || telegram.destination != Address::Individual(local_address)
+            {
+                return false;
+            }
+            match mode {
+                P2pMode::Connected => {
+                    telegram.telegram_type == TelegramType::IndividualControl
+                        || (telegram.telegram_type == TelegramType::IndividualData
+                            && telegram.tpci & 0xc0 == 0x40)
+                }
+                P2pMode::Connectionless => {
+                    telegram.telegram_type == TelegramType::IndividualData
+                        && telegram.tpci & 0xfc == 0
+                }
+            }
+        }));
+        registration.handle = Some(
+            self.register_telegram_callback_filtered(callback, filter, false)
+                .await,
+        );
+        Ok(registration)
     }
 
     /// Open a P2P connection and switch the device's programming mode.
@@ -4870,6 +4956,105 @@ mod integration_tests {
         server.send(response).await.unwrap();
 
         assert_eq!(request.await.unwrap().unwrap(), [0x02, 0xC9, 0x42, 0x55]);
+        knx.shutdown().await.unwrap();
+        server.shutdown();
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn connectionless_p2p_collects_replies_alongside_a_connected_session() {
+        use crate::protocol::TpciFrame;
+        use crate::transport::TunnelServer;
+        use tokio::time::{Instant, timeout};
+
+        let client_address = IndividualAddress::new(1, 1, 10);
+        let device_address = IndividualAddress::new(1, 1, 11);
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut traffic = server.subscribe();
+
+        let mut connected = knx.connect_p2p(device_address).await.unwrap();
+        let connect = timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(connect.tpci, TpciFrame::Connect.encode());
+
+        let mut session = knx.connectionless_p2p(device_address).await.unwrap();
+        assert!(knx.connectionless_p2p(device_address).await.is_err());
+
+        let reply = |payload: Vec<u8>| {
+            let mut telegram = Telegram::individual_data(client_address, payload);
+            telegram.source = device_address;
+            telegram
+        };
+        knx.test_notify_telegram_received(&reply(vec![0x03, 0x40, 0, 0]))
+            .await;
+        session.send(vec![0x03, 0x00]).await.unwrap();
+        let request = timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.destination, Address::Individual(device_address));
+        assert_eq!(request.tpci, TpciFrame::DataUnconnected.encode());
+        assert_eq!(request.payload, [0x03, 0x00]);
+
+        let replies = [[0x03, 0x40, 0x00, 0x12], [0x03, 0x40, 0x00, 0x20]];
+        server.send(reply(vec![0x03, 0x00])).await.unwrap();
+        server.send(reply(replies[0].to_vec())).await.unwrap();
+        let mut numbered = reply(vec![0x03, 0x40, 0x03, 0x00]);
+        numbered.tpci = TpciFrame::DataConnected { sequence: 0 }.encode();
+        server.send(numbered).await.unwrap();
+        server.send(reply(replies[1].to_vec())).await.unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        for expected in replies {
+            let received = session
+                .receive(Some([0x03, 0x40]), deadline)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(received.payload, expected);
+        }
+        assert_eq!(
+            connected
+                .receive(Some([0x03, 0x40]), Duration::from_secs(2))
+                .await
+                .unwrap(),
+            [0x03, 0x40, 0x03, 0x00],
+        );
+        let ack = timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ack.tpci, TpciFrame::Ack { sequence: 0 }.encode());
+        assert!(
+            session
+                .receive(None, Instant::now() + Duration::from_millis(50))
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        session.close().await;
+        knx.connectionless_p2p(device_address)
+            .await
+            .unwrap()
+            .close()
+            .await;
+        connected.close().await.unwrap();
+        assert_eq!(knx.total_callback_count().await, 0);
         knx.shutdown().await.unwrap();
         server.shutdown();
     }
