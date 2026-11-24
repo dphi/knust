@@ -94,7 +94,7 @@ impl GatewayScanner {
                     Ok((len, addr)) => {
                         match self.parse_discovery_response(&buf[..len], addr) {
                             Ok(gateway_info) => {
-                                gateways.insert(addr, gateway_info);
+                                gateways.insert(gateway_info.addr, gateway_info);
                             }
                             Err(e) => {
                                 // Log parsing errors but continue discovery
@@ -171,173 +171,110 @@ impl GatewayScanner {
         frame
     }
 
-    /// Parse a discovery response frame
+    /// Parse a discovery response frame.
     ///
     /// # Errors
-    ///
-    /// Returns [`DiscoveryError::InvalidResponse`] if `data` is too short or
-    /// doesn't match the expected KNX/IP search-response structure.
-    pub fn parse_discovery_response(&self, data: &[u8], addr: SocketAddr) -> Result<GatewayInfo> {
-        if data.len() < 6 {
-            return Err(DiscoveryError::InvalidResponse {
-                addr: addr.to_string(),
-                reason: "Response too short".to_string(),
-            }
-            .into());
-        }
+    /// Returns [`DiscoveryError::InvalidResponse`] for an invalid header, endpoint, or DIB.
+    pub fn parse_discovery_response(&self, data: &[u8], source: SocketAddr) -> Result<GatewayInfo> {
+        use crate::protocol::knxip::{Hpai, KnxIpFrame, ServiceType as FrameType};
 
-        // Verify KNX/IP header
-        if data[0] != 0x06 || data[1] != 0x10 {
-            return Err(DiscoveryError::InvalidResponse {
-                addr: addr.to_string(),
-                reason: "Invalid KNX/IP header".to_string(),
-            }
-            .into());
-        }
-
-        // Check service type (should be search response 0x0202)
-        if data.len() >= 4 && (data[2] != 0x02 || data[3] != 0x02) {
-            return Err(DiscoveryError::InvalidResponse {
-                addr: addr.to_string(),
-                reason: "Not a search response".to_string(),
-            }
-            .into());
-        }
-
-        // Extract total length
-        let total_length = if data.len() >= 6 {
-            (u16::from(data[4]) << 8) | u16::from(data[5])
-        } else {
-            data.len() as u16
+        let invalid = |reason: String| DiscoveryError::InvalidResponse {
+            addr: source.to_string(),
+            reason,
         };
-
-        if (total_length as usize) > data.len() {
-            return Err(DiscoveryError::InvalidResponse {
-                addr: addr.to_string(),
-                reason: format!(
-                    "Frame length mismatch: expected {}, got {}",
-                    total_length,
-                    data.len()
-                ),
-            }
-            .into());
+        let frame = KnxIpFrame::parse(data).map_err(|error| invalid(error.to_string()))?;
+        if frame.header.service_type != FrameType::SearchResponse {
+            return Err(invalid("Not a search response".to_owned()).into());
         }
-
-        // Parse device information from the frame
+        let endpoint = Hpai::parse(&frame.body).map_err(|error| invalid(error.to_string()))?;
+        if endpoint.host_protocol_code != Hpai::PROTOCOL_UDP {
+            return Err(invalid("Search response requires a UDP endpoint".to_owned()).into());
+        }
+        let addr = SocketAddr::new(
+            if endpoint.ip_addr.is_unspecified() {
+                source.ip()
+            } else {
+                endpoint.ip_addr
+            },
+            if endpoint.port == 0 {
+                source.port()
+            } else {
+                endpoint.port
+            },
+        );
         let mut name = format!("KNX Gateway {}", addr.ip());
-        let mut capabilities = GatewayCapabilities {
-            supports_tunneling: false,
-            supports_routing: false,
-            supports_device_management: false,
-            max_tunneling_connections: 1,
-        };
         let mut supported_services = vec![ServiceType::Core];
-        let mut device_serial = format!("SN{:08X}", addr.ip().to_string().len());
+        let mut device_serial = String::new();
+        let mut mac_address = None;
+        let mut multicast_ip = None;
+        let mut dibs = &frame.body[Hpai::LENGTH..];
 
-        // Try to parse DIBs (Device Information Blocks)
-        let mut offset = 14; // Skip header and control endpoint HPAI
-
-        while offset < data.len() {
-            if offset + 2 > data.len() {
-                break;
+        while let Some(&length) = dibs.first() {
+            let length = usize::from(length);
+            if length < 2 || length % 2 != 0 || length > dibs.len() {
+                return Err(invalid(format!("Invalid DIB length {length}")).into());
             }
-
-            let dib_length = data[offset] as usize;
-            let dib_type = data[offset + 1];
-
-            if dib_length < 2 || offset + dib_length > data.len() {
-                break;
-            }
-
-            match dib_type {
+            let (dib, remaining) = dibs.split_at(length);
+            dibs = remaining;
+            match dib[1] {
                 0x01 => {
-                    // Device hardware DIB
-                    if dib_length >= 54 && offset + 54 <= data.len() {
-                        // Extract serial number (6 bytes starting at offset + 12)
-                        if offset + 18 <= data.len() {
-                            let serial_bytes = &data[offset + 12..offset + 18];
-                            device_serial = format!(
-                                "SN{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-                                serial_bytes[0],
-                                serial_bytes[1],
-                                serial_bytes[2],
-                                serial_bytes[3],
-                                serial_bytes[4],
-                                serial_bytes[5]
-                            );
-                        }
-
-                        // Extract friendly name (30 bytes starting at offset + 24)
-                        if offset + 54 <= data.len() {
-                            let name_bytes = &data[offset + 24..offset + 54];
-                            if let Some(null_pos) = name_bytes.iter().position(|&b| b == 0)
-                                && let Ok(parsed_name) =
-                                    std::str::from_utf8(&name_bytes[..null_pos])
-                                && !parsed_name.is_empty()
-                            {
-                                name = parsed_name.to_string();
-                            }
-                        }
+                    if dib.len() != 54 {
+                        return Err(invalid(
+                            "Device information DIB must contain 54 bytes".to_owned(),
+                        )
+                        .into());
+                    }
+                    device_serial = format!("SN{}", hex::encode_upper(&dib[8..14]));
+                    let ip = Ipv4Addr::new(dib[14], dib[15], dib[16], dib[17]);
+                    multicast_ip = ip.is_multicast().then_some(ip);
+                    mac_address = Some(
+                        dib[18..24]
+                            .iter()
+                            .map(|byte| format!("{byte:02X}"))
+                            .collect::<Vec<_>>()
+                            .join(":"),
+                    );
+                    let device_name: String = dib[24..54]
+                        .iter()
+                        .copied()
+                        .take_while(|&byte| byte != 0)
+                        .map(char::from)
+                        .collect();
+                    if !device_name.is_empty() {
+                        name = device_name;
                     }
                 }
                 0x02 => {
-                    // Supported service families DIB
-                    let mut services_offset = offset + 2;
-                    supported_services.clear();
-                    supported_services.push(ServiceType::Core); // Always include core
-
-                    while services_offset + 2 <= offset + dib_length {
-                        let service_family = data[services_offset];
-                        // data[services_offset + 1] is the service version, unused here.
-
-                        match service_family {
-                            0x03 => {
-                                capabilities.supports_device_management = true;
-                                supported_services.push(ServiceType::DeviceManagement);
-                            }
-                            0x04 => {
-                                capabilities.supports_tunneling = true;
-                                capabilities.max_tunneling_connections = 4; // Default assumption
-                                supported_services.push(ServiceType::Tunneling);
-                            }
-                            0x05 => {
-                                capabilities.supports_routing = true;
-                                supported_services.push(ServiceType::Routing);
-                            }
-                            // 0x02 (Core) is pre-added above; unknown families ignored.
-                            _ => {}
+                    for family in dib[2..].chunks_exact(2) {
+                        let service = match family[0] {
+                            0x03 => ServiceType::DeviceManagement,
+                            0x04 => ServiceType::Tunneling,
+                            0x05 => ServiceType::Routing,
+                            0x06 => ServiceType::RemoteLogging,
+                            0x07 => ServiceType::RemoteConfiguration,
+                            0x08 => ServiceType::ObjectServer,
+                            _ => continue,
+                        };
+                        if !supported_services.contains(&service) {
+                            supported_services.push(service);
                         }
-
-                        services_offset += 2;
                     }
                 }
-                _ => {
-                    // Unknown DIB type, skip
-                }
+                _ => {}
             }
-
-            offset += dib_length;
         }
 
-        // If no services were parsed from DIB, use defaults based on common gateway capabilities
-        if supported_services.len() == 1 {
-            // Only Core service
-            capabilities.supports_tunneling = true;
-            capabilities.supports_device_management = true;
-            capabilities.max_tunneling_connections = 4;
-            supported_services
-                .extend_from_slice(&[ServiceType::DeviceManagement, ServiceType::Tunneling]);
-        }
-
-        // Determine multicast address before moving capabilities
-        let multicast_addr = if capabilities.supports_routing {
-            Some(SocketAddr::new(
-                std::net::IpAddr::V4(std::net::Ipv4Addr::new(224, 0, 23, 12)),
-                3671,
-            ))
-        } else {
-            None
+        let supports_tunneling = supported_services.contains(&ServiceType::Tunneling);
+        let supports_routing = supported_services.contains(&ServiceType::Routing);
+        let capabilities = GatewayCapabilities {
+            supports_tunneling,
+            supports_routing,
+            supports_device_management: supported_services.contains(&ServiceType::DeviceManagement),
+            max_tunneling_connections: if supports_tunneling { 4 } else { 1 },
         };
+        let multicast_addr = multicast_ip
+            .filter(|_| supports_routing)
+            .map(|ip| SocketAddr::new(IpAddr::V4(ip), 3671));
 
         Ok(GatewayInfo {
             addr,
@@ -345,7 +282,7 @@ impl GatewayScanner {
             capabilities,
             supported_services,
             device_serial,
-            mac_address: None,
+            mac_address,
             multicast_addr,
         })
     }
@@ -488,6 +425,34 @@ mod tests {
             .unwrap();
         responder.await.unwrap();
         assert_eq!(gateways.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn discovery_rejects_malformed_dibs_and_datagram_lengths() {
+        let scanner = GatewayScanner::new_with_interface(Ipv4Addr::LOCALHOST)
+            .await
+            .unwrap();
+        let source = "127.0.0.1:13671".parse().unwrap();
+        let header_and_endpoint = [6, 0x10, 2, 2, 0, 14, 8, 1, 0, 0, 0, 0, 0, 0];
+        assert_eq!(
+            scanner
+                .parse_discovery_response(&header_and_endpoint, source)
+                .unwrap()
+                .addr,
+            source,
+        );
+
+        for malformed in [&[0, 1][..], &[3, 2, 3], &[4, 2], &[2, 1], &[2]] {
+            let mut response = header_and_endpoint.to_vec();
+            response.extend_from_slice(malformed);
+            response[5] = response.len() as u8;
+            assert!(scanner.parse_discovery_response(&response, source).is_err());
+        }
+        let mut response = header_and_endpoint.to_vec();
+        response.extend_from_slice(&[2, 0xf0]);
+        assert!(scanner.parse_discovery_response(&response, source).is_err());
+        response[5] = response.len() as u8;
+        assert!(scanner.parse_discovery_response(&response, source).is_ok());
     }
 
     #[test]

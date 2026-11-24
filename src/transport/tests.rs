@@ -61,88 +61,38 @@ fn arb_connection_config() -> impl Strategy<Value = ConnectionConfig> {
         )
 }
 
-/// Create a mock KNX/IP discovery response frame for testing
+/// Build a search response fixture with a nonzero advertised endpoint.
 fn create_mock_discovery_response(
     device_name: &str,
     supports_tunneling: bool,
     supports_routing: bool,
     supports_device_mgmt: bool,
-    _max_connections: u8,
-    serial_suffix: u32,
+    serial_suffix: u16,
 ) -> Vec<u8> {
-    let mut frame = Vec::new();
+    let mut frame = vec![0x06, 0x10, 0x02, 0x02, 0, 0];
+    frame.extend_from_slice(&[8, 1, 192, 168, 1, 100, 0x0e, 0x57]);
+    let mut device = [0; 54];
+    device[..8].copy_from_slice(&[54, 1, 2, 0, 0x10, 1, 0, 0]);
+    device[12..14].copy_from_slice(&serial_suffix.to_be_bytes());
+    device[14..18].copy_from_slice(&[224, 0, 23, 14]);
+    device[18..24].copy_from_slice(&[2, 0x10, 0x20, 0x30, 0x40, 0x50]);
+    device[24..24 + device_name.len()].copy_from_slice(device_name.as_bytes());
+    frame.extend_from_slice(&device);
 
-    // KNX/IP Header
-    frame.extend_from_slice(&[
-        0x06, 0x10, // Header length (6) and version (1.0)
-        0x02, 0x02, // Search response service type
-        0x00, 0x50, // Total length (80 bytes - will be adjusted)
-    ]);
-
-    // Control endpoint HPAI
-    frame.extend_from_slice(&[
-        0x08, 0x01, // Structure length and host protocol code
-        0xC0, 0xA8, 0x01, 0x64, // IP address (192.168.1.100)
-        0x0E, 0x57, // Port (3671)
-    ]);
-
-    // Device hardware DIB
-    frame.extend_from_slice(&[
-        0x36, 0x01, // Structure length (54) and description type (device info)
-        0x02, 0x00, // KNX medium (TP1)
-        0x11, 0x00, // Device status
-        0x00, 0x01, // Individual address (1.0.1)
-        0x00, 0x00, // Project installation identifier
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Serial number (6 bytes)
-    ]);
-
-    // Add serial number with the provided suffix
-    let serial_bytes = serial_suffix.to_be_bytes();
-    frame.extend_from_slice(&serial_bytes[2..4]); // Use last 2 bytes
-    frame.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Pad to 6 bytes
-
-    // Multicast address
-    frame.extend_from_slice(&[
-        0xE0, 0x00, 0x17, 0x0C, // 224.0.23.12 (KNX/IP multicast)
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // MAC address
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Padding
-    ]);
-
-    // Friendly name (30 bytes)
-    let mut name_bytes = device_name.as_bytes().to_vec();
-    name_bytes.resize(30, 0); // Pad or truncate to 30 bytes
-    frame.extend_from_slice(&name_bytes);
-
-    // Supported service families DIB
-    let mut services_dib = vec![0x00, 0x02]; // Will set length later, description type (supported services)
-
-    // Core service (always present)
-    services_dib.extend_from_slice(&[0x02, 0x01]); // Core service family, version 1
-
-    // Device management
-    if supports_device_mgmt {
-        services_dib.extend_from_slice(&[0x03, 0x01]); // Device management, version 1
+    let mut families = vec![0, 2, 2, 1];
+    for (enabled, family) in [
+        (supports_device_mgmt, 3),
+        (supports_tunneling, 4),
+        (supports_routing, 5),
+    ] {
+        if enabled {
+            families.extend_from_slice(&[family, 1]);
+        }
     }
-
-    // Tunneling
-    if supports_tunneling {
-        services_dib.extend_from_slice(&[0x04, 0x01]); // Tunneling, version 1
-    }
-
-    // Routing
-    if supports_routing {
-        services_dib.extend_from_slice(&[0x05, 0x01]); // Routing, version 1
-    }
-
-    // Set the correct length for services DIB
-    services_dib[0] = services_dib.len() as u8;
-    frame.extend_from_slice(&services_dib);
-
-    // Update total frame length in header
-    let total_length = frame.len() as u16;
-    frame[4] = (total_length >> 8) as u8;
-    frame[5] = (total_length & 0xFF) as u8;
-
+    families[0] = families.len() as u8;
+    frame.extend_from_slice(&families);
+    let length = (frame.len() as u16).to_be_bytes();
+    frame[4..6].copy_from_slice(&length);
     frame
 }
 
@@ -301,8 +251,7 @@ proptest! {
         supports_tunneling in any::<bool>(),
         supports_routing in any::<bool>(),
         supports_device_mgmt in any::<bool>(),
-        max_connections in 1u8..=16u8,
-        serial_suffix in 0x1000u32..=0xFFFFu32,
+        serial_suffix in 0x1000u16..=0xFFFFu16,
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
 
@@ -313,7 +262,6 @@ proptest! {
                 supports_tunneling,
                 supports_routing,
                 supports_device_mgmt,
-                max_connections,
                 serial_suffix,
             );
 
@@ -323,75 +271,16 @@ proptest! {
                 return Ok(());
             };
 
-            // Test parsing the response
-            match scanner.parse_discovery_response(&response_frame, addr) {
-                Ok(gateway_info) => {
-                    // Verify that parsing extracted the correct information
-                    prop_assert!(
-                        !gateway_info.name.is_empty(),
-                        "Gateway name should not be empty, got: '{}'",
-                        gateway_info.name
-                    );
-
-                    prop_assert_eq!(
-                        gateway_info.addr,
-                        addr,
-                        "Gateway address should match the source address"
-                    );
-
-                    // Verify capabilities are reasonable
-                    prop_assert!(
-                        gateway_info.capabilities.max_tunneling_connections > 0,
-                        "Max tunneling connections should be positive, got: {}",
-                        gateway_info.capabilities.max_tunneling_connections
-                    );
-
-                    // Verify device serial is present and reasonable
-                    prop_assert!(
-                        !gateway_info.device_serial.is_empty(),
-                        "Device serial should not be empty"
-                    );
-
-                    // Verify supported services list is not empty
-                    prop_assert!(
-                        !gateway_info.supported_services.is_empty(),
-                        "Supported services list should not be empty"
-                    );
-
-                    // Verify that if tunneling is supported, it's in the services list
-                    if gateway_info.capabilities.supports_tunneling {
-                        prop_assert!(
-                            gateway_info.supported_services.contains(&ServiceType::Tunneling),
-                            "If tunneling is supported, it should be in services list"
-                        );
-                    }
-
-                    // Verify that if routing is supported, it's in the services list
-                    if gateway_info.capabilities.supports_routing {
-                        prop_assert!(
-                            gateway_info.supported_services.contains(&ServiceType::Routing),
-                            "If routing is supported, it should be in services list"
-                        );
-                    }
-
-                    // Verify that Core service is always present
-                    prop_assert!(
-                        gateway_info.supported_services.contains(&ServiceType::Core),
-                        "Core service should always be present in supported services"
-                    );
-                },
-                Err(e) => {
-                    // If parsing fails, it should be due to invalid response format,
-                    // not due to API inconsistency
-                    prop_assert!(
-                        e.to_string().contains("Response too short") ||
-                        e.to_string().contains("Invalid response"),
-                        "Parsing failure should be due to invalid response format, got: {}",
-                        e
-                    );
-                }
-            }
-
+            let gateway = scanner.parse_discovery_response(&response_frame, addr).unwrap();
+            prop_assert_eq!(gateway.name, device_name);
+            prop_assert_eq!(gateway.addr, "192.168.1.100:3671".parse::<SocketAddr>().unwrap());
+            prop_assert_eq!(gateway.device_serial, format!("SN00000000{serial_suffix:04X}"));
+            prop_assert_eq!(gateway.mac_address.as_deref(), Some("02:10:20:30:40:50"));
+            prop_assert_eq!(gateway.capabilities.supports_tunneling, supports_tunneling);
+            prop_assert_eq!(gateway.capabilities.supports_device_management, supports_device_mgmt);
+            prop_assert_eq!(gateway.capabilities.supports_routing, supports_routing);
+            prop_assert_eq!(gateway.multicast_addr, supports_routing.then(|| "224.0.23.14:3671".parse().unwrap()));
+            prop_assert!(gateway.supported_services.contains(&ServiceType::Core));
             Ok(())
         })?;
     }
