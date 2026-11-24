@@ -273,6 +273,9 @@ proptest! {
 
             let gateway = scanner.parse_discovery_response(&response_frame, addr).unwrap();
             prop_assert_eq!(gateway.name, device_name);
+            prop_assert_eq!(gateway.individual_address, Some(IndividualAddress::new(1, 0, 1)));
+            prop_assert_eq!(gateway.core_version, 1);
+            prop_assert!(gateway.tunneling_info.is_none());
             prop_assert_eq!(gateway.addr, "192.168.1.100:3671".parse::<SocketAddr>().unwrap());
             prop_assert_eq!(gateway.device_serial, format!("SN00000000{serial_suffix:04X}"));
             prop_assert_eq!(gateway.mac_address.as_deref(), Some("02:10:20:30:40:50"));

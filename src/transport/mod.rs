@@ -39,7 +39,10 @@ pub use address_registry::AddressRegistry;
 pub use backoff::JitteredBackoff;
 pub use connection::{Connection, ConnectionState, ConnectionStats};
 pub use device_management::DeviceManagementConnection;
-pub use discovery::{GatewayCapabilities, GatewayInfo, GatewayScanner, ServiceType};
+pub use discovery::{
+    GatewayCapabilities, GatewayInfo, GatewayScanner, GatewayTunnelingInfo, ServiceType,
+    TunnelingSlotStatus,
+};
 pub use frame_transport::{FrameTransport, TcpFrameTransport, TransportKind, UdpFrameTransport};
 pub use health::ConnectionHealth;
 pub use queue::{QueueConfig, QueueStats, TelegramQueue};

@@ -1,8 +1,9 @@
 //! KNX/IP gateway discovery implementation.
 
 use crate::error::{DiscoveryError, Result};
+use crate::protocol::IndividualAddress;
 use crate::protocol::knxip::{Hpai, KnxIpFrame, ServiceType as FrameType};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -223,6 +224,8 @@ impl GatewayScanner {
             },
         );
         let mut name = format!("KNX Gateway {}", addr.ip());
+        let mut individual_address = None;
+        let mut core_version = 0;
         let mut supported_services = vec![ServiceType::Core];
         let mut device_serial = String::new();
         let mut mac_address = None;
@@ -230,7 +233,7 @@ impl GatewayScanner {
         let mut tunneling_version = 0;
         let mut supports_secure = false;
         let mut secured_services = None;
-        let mut tunneling_slots = None;
+        let mut tunneling_info = None;
         let mut dibs = &frame.body[Hpai::LENGTH..];
 
         while let Some(&length) = dibs.first() {
@@ -248,6 +251,9 @@ impl GatewayScanner {
                         )
                         .into());
                     }
+                    individual_address = Some(IndividualAddress::from_raw(u16::from_be_bytes([
+                        dib[4], dib[5],
+                    ])));
                     device_serial = format!("SN{}", hex::encode_upper(&dib[8..14]));
                     let ip = Ipv4Addr::new(dib[14], dib[15], dib[16], dib[17]);
                     multicast_ip = ip.is_multicast().then_some(ip);
@@ -271,6 +277,10 @@ impl GatewayScanner {
                 0x02 => {
                     for family in dib[2..].chunks_exact(2) {
                         let service = match family[0] {
+                            0x02 => {
+                                core_version = core_version.max(family[1]);
+                                continue;
+                            }
                             0x03 => ServiceType::DeviceManagement,
                             0x04 => {
                                 tunneling_version = tunneling_version.max(family[1]);
@@ -298,7 +308,26 @@ impl GatewayScanner {
                             invalid("Invalid tunneling information DIB length".to_owned()).into(),
                         );
                     }
-                    tunneling_slots = Some((dib[4..].len() / 4) as u8);
+                    let slots = dib[4..]
+                        .chunks_exact(4)
+                        .map(|slot| {
+                            let address =
+                                IndividualAddress::from_raw(u16::from_be_bytes([slot[0], slot[1]]));
+                            let status = slot[3];
+                            (
+                                address,
+                                TunnelingSlotStatus {
+                                    usable: status & 4 != 0,
+                                    authorized: status & 2 != 0,
+                                    free: status & 1 != 0,
+                                },
+                            )
+                        })
+                        .collect();
+                    tunneling_info = Some(GatewayTunnelingInfo {
+                        max_apdu_length: u16::from_be_bytes([dib[2], dib[3]]),
+                        slots,
+                    });
                 }
                 _ => {}
             }
@@ -314,11 +343,11 @@ impl GatewayScanner {
             supports_tunneling,
             supports_routing,
             supports_device_management: supported_services.contains(&ServiceType::DeviceManagement),
-            max_tunneling_connections: tunneling_slots.unwrap_or(if supports_tunneling {
-                4
-            } else {
-                1
-            }),
+            max_tunneling_connections: tunneling_info
+                .as_ref()
+                .map_or(if supports_tunneling { 4 } else { 1 }, |info| {
+                    info.slots.len() as u8
+                }),
             supports_tcp_tunneling: tunneling_version >= 2,
             supports_secure,
             tunneling_requires_secure: requires_secure(0x04),
@@ -331,6 +360,9 @@ impl GatewayScanner {
         Ok(GatewayInfo {
             addr,
             name,
+            individual_address,
+            core_version,
+            tunneling_info,
             capabilities,
             supported_services,
             device_serial,
@@ -349,6 +381,15 @@ pub struct GatewayInfo {
     /// Gateway device name
     pub name: String,
 
+    /// KNX individual address reported by the device information block.
+    pub individual_address: Option<IndividualAddress>,
+
+    /// Advertised Core service version, or zero when absent.
+    pub core_version: u8,
+
+    /// Per-address tunnel slot information when advertised.
+    pub tunneling_info: Option<GatewayTunnelingInfo>,
+
     /// Gateway capabilities
     pub capabilities: GatewayCapabilities,
 
@@ -363,6 +404,23 @@ pub struct GatewayInfo {
 
     /// Multicast address for routing (if supported)
     pub multicast_addr: Option<SocketAddr>,
+}
+
+/// Tunnel limits and availability reported by the gateway.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayTunnelingInfo {
+    /// Maximum APDU length supported by the gateway.
+    pub max_apdu_length: u16,
+    /// Status of each advertised tunneling address.
+    pub slots: BTreeMap<IndividualAddress, TunnelingSlotStatus>,
+}
+
+/// Status flags for an individual tunneling slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TunnelingSlotStatus {
+    pub usable: bool,
+    pub authorized: bool,
+    pub free: bool,
 }
 
 /// Gateway capability information
@@ -471,7 +529,7 @@ mod tests {
             peer.send_to(
                 &[
                     6, 0x10, 2, 0x0c, 0, 40, 8, 1, 127, 0, 0, 1, 0, 0, 10, 2, 2, 2, 4, 2, 5, 1, 9,
-                    1, 4, 6, 4, 2, 12, 7, 0, 248, 0x11, 1, 0, 7, 0x11, 2, 0, 7,
+                    1, 4, 6, 4, 2, 12, 7, 0, 248, 0x11, 1, 0, 5, 0x11, 2, 0, 2,
                 ],
                 source,
             )
@@ -494,6 +552,25 @@ mod tests {
         assert_eq!(caps.tunneling_requires_secure, Some(true));
         assert_eq!(caps.routing_requires_secure, Some(false));
         assert_eq!(caps.max_tunneling_connections, 2);
+        assert_eq!(gateway.core_version, 2);
+        let info = gateway.tunneling_info.as_ref().unwrap();
+        assert_eq!(info.max_apdu_length, 248);
+        assert_eq!(
+            info.slots[&IndividualAddress::new(1, 1, 1)],
+            TunnelingSlotStatus {
+                usable: true,
+                authorized: false,
+                free: true,
+            }
+        );
+        assert_eq!(
+            info.slots[&IndividualAddress::new(1, 1, 2)],
+            TunnelingSlotStatus {
+                usable: false,
+                authorized: true,
+                free: false,
+            }
+        );
     }
 
     #[tokio::test]
