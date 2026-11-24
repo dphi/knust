@@ -13,21 +13,32 @@ pub struct GatewayScanner {
 }
 
 impl GatewayScanner {
-    /// Create a new gateway scanner
+    /// Create a gateway scanner using the default network interface.
     ///
     /// # Errors
-    ///
-    /// Returns [`DiscoveryError::NetworkError`] if the UDP socket can't be
-    /// bound or configured for broadcast.
+    /// Returns [`DiscoveryError::NetworkError`] if the socket cannot be configured.
     pub async fn new() -> Result<Self> {
-        let socket = UdpSocket::bind("0.0.0.0:0")
+        Self::new_with_interface(Ipv4Addr::UNSPECIFIED).await
+    }
+
+    /// Create a gateway scanner using the specified local IPv4 interface.
+    ///
+    /// # Errors
+    /// Returns [`DiscoveryError::NetworkError`] if the socket cannot be configured.
+    pub async fn new_with_interface(interface: Ipv4Addr) -> Result<Self> {
+        let socket = UdpSocket::bind(SocketAddr::new(IpAddr::V4(interface), 0))
             .await
             .map_err(DiscoveryError::NetworkError)?;
-
         socket
             .set_broadcast(true)
             .map_err(DiscoveryError::NetworkError)?;
-
+        let socket_ref = socket2::SockRef::from(&socket);
+        socket_ref
+            .set_multicast_ttl_v4(16)
+            .map_err(DiscoveryError::NetworkError)?;
+        socket_ref
+            .set_multicast_if_v4(&interface)
+            .map_err(DiscoveryError::NetworkError)?;
         Ok(Self { socket })
     }
 
@@ -35,24 +46,42 @@ impl GatewayScanner {
     ///
     /// # Errors
     ///
-    /// Returns [`DiscoveryError::NetworkError`] if sending the discovery
-    /// broadcast fails or receiving fails with anything other than a
+    /// Returns [`DiscoveryError::NetworkError`] if both multicast and broadcast
+    /// sends fail, or receiving fails with anything other than a
     /// timeout. Malformed responses from individual gateways are logged and
     /// skipped rather than returned as an error.
     pub async fn discover(&self, discovery_timeout: Duration) -> Result<Vec<GatewayInfo>> {
+        let multicast = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(224, 0, 23, 12)), 3671);
+        let broadcast = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 3671);
+        self.discover_to(discovery_timeout, multicast, broadcast)
+            .await
+    }
+
+    async fn discover_to(
+        &self,
+        discovery_timeout: Duration,
+        multicast_addr: SocketAddr,
+        broadcast_addr: SocketAddr,
+    ) -> Result<Vec<GatewayInfo>> {
         let mut gateways = HashMap::new();
 
         // Build and send discovery request
-        let discovery_request = Self::build_discovery_request();
-        let broadcast_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 3671);
-
-        // Send discovery request
-        if let Err(e) = self
+        let local_addr = self
+            .socket
+            .local_addr()
+            .map_err(DiscoveryError::NetworkError)?;
+        let discovery_request = Self::build_discovery_request(local_addr);
+        let multicast = self
+            .socket
+            .send_to(&discovery_request, multicast_addr)
+            .await;
+        let broadcast = self
             .socket
             .send_to(&discovery_request, broadcast_addr)
-            .await
-        {
-            return Err(DiscoveryError::NetworkError(e).into());
+            .await;
+        if let (Err(multicast_error), Err(broadcast_error)) = (multicast, broadcast) {
+            log::debug!("Multicast discovery failed: {multicast_error}");
+            return Err(DiscoveryError::NetworkError(broadcast_error).into());
         }
 
         // Collect responses with timeout
@@ -128,25 +157,17 @@ impl GatewayScanner {
         }
     }
 
-    /// Build a KNX/IP discovery request frame
-    fn build_discovery_request() -> Vec<u8> {
-        // Build a proper KNX/IP search request frame according to specification
-        let mut frame = Vec::new();
-
-        // KNX/IP Header
-        frame.extend_from_slice(&[
-            0x06, 0x10, // Header length (6) and version (1.0)
-            0x02, 0x01, // Search request service type
-            0x00, 0x0E, // Total length (14 bytes)
-        ]);
-
-        // Discovery endpoint HPAI (Host Protocol Address Information)
-        frame.extend_from_slice(&[
-            0x08, 0x01, // Structure length (8) and host protocol code (UDP)
-            0x00, 0x00, 0x00, 0x00, // IP address (0.0.0.0 = any)
-            0x00, 0x00, // Port (0 = any)
-        ]);
-
+    /// Build a KNX/IP discovery request frame.
+    fn build_discovery_request(local_addr: SocketAddr) -> Vec<u8> {
+        let mut frame = vec![0x06, 0x10, 0x02, 0x01, 0x00, 0x0e, 0x08, 0x01];
+        if let SocketAddr::V4(addr) = local_addr {
+            if !addr.ip().is_unspecified() {
+                frame.extend_from_slice(&addr.ip().octets());
+                frame.extend_from_slice(&addr.port().to_be_bytes());
+                return frame;
+            }
+        }
+        frame.extend_from_slice(&[0; 6]);
         frame
     }
 
@@ -394,4 +415,84 @@ pub enum ServiceType {
 
     /// Object server
     ObjectServer,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn discovery_sends_to_configured_interface_and_receives_reply() {
+        let scanner = GatewayScanner::new_with_interface(Ipv4Addr::LOCALHOST)
+            .await
+            .unwrap();
+        let options = socket2::SockRef::from(&scanner.socket);
+        assert_eq!(options.multicast_if_v4().unwrap(), Ipv4Addr::LOCALHOST);
+        assert_eq!(options.multicast_ttl_v4().unwrap(), 16);
+
+        let peer = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let group = Ipv4Addr::new(224, 0, 23, 12);
+        peer.join_multicast_v4(group, Ipv4Addr::LOCALHOST).unwrap();
+        let multicast = SocketAddr::new(IpAddr::V4(group), peer.local_addr().unwrap().port());
+        let unicast = SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            peer.local_addr().unwrap().port(),
+        );
+        let expected_port = scanner.socket.local_addr().unwrap().port();
+        let responder = tokio::spawn(async move {
+            let mut buf = [0; 128];
+            for _ in 0..2 {
+                let (len, source) =
+                    tokio::time::timeout(Duration::from_secs(2), peer.recv_from(&mut buf))
+                        .await
+                        .unwrap()
+                        .unwrap();
+                assert_eq!(&buf[..8], &[6, 0x10, 2, 1, 0, 14, 8, 1]);
+                assert_eq!(&buf[8..12], &[127, 0, 0, 1]);
+                assert_eq!(u16::from_be_bytes([buf[12], buf[13]]), expected_port);
+                assert_eq!(len, 14);
+                peer.send_to(&[6, 0x10, 2, 2, 0, 14, 8, 1, 127, 0, 0, 1, 0, 0], source)
+                    .await
+                    .unwrap();
+            }
+        });
+        let gateways = scanner
+            .discover_to(Duration::from_millis(250), multicast, unicast)
+            .await
+            .unwrap();
+        responder.await.unwrap();
+        assert_eq!(gateways.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn discovery_continues_when_one_send_fails() {
+        let scanner = GatewayScanner::new_with_interface(Ipv4Addr::LOCALHOST)
+            .await
+            .unwrap();
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = peer.local_addr().unwrap();
+        let responder = tokio::spawn(async move {
+            let mut bytes = [0; 64];
+            let (_, source) = peer.recv_from(&mut bytes).await.unwrap();
+            peer.send_to(&[6, 0x10, 2, 2, 0, 14, 8, 1, 127, 0, 0, 1, 0, 0], source)
+                .await
+                .unwrap();
+        });
+        let gateways = scanner
+            .discover_to(
+                Duration::from_millis(250),
+                "[::1]:1234".parse().unwrap(),
+                peer_addr,
+            )
+            .await
+            .unwrap();
+        responder.await.unwrap();
+        assert_eq!(gateways.len(), 1);
+    }
+
+    #[test]
+    fn wildcard_discovery_uses_route_back_endpoint() {
+        let request = GatewayScanner::build_discovery_request("0.0.0.0:1234".parse().unwrap());
+        assert_eq!(&request[8..], &[0; 6]);
+    }
 }
