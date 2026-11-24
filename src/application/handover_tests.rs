@@ -407,6 +407,92 @@ async fn read_deadline_starts_after_transmission_not_enqueue() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn p2p_ack_deadline_starts_after_transmission() {
+    let knx = knx().await;
+    let (events, receiver) = mpsc::channel(4);
+    let mut p2p = P2pConnection {
+        knx: knx.clone(),
+        destination: IndividualAddress::new(1, 1, 5),
+        receiver,
+        pending: Default::default(),
+        callback: None,
+        send_sequence: 0,
+        receive_sequence: 0,
+        closed: false,
+    };
+    let sending = tokio::spawn(async move {
+        let result = p2p.send_data(vec![3, 0], true).await;
+        p2p.closed = true;
+        assert!(p2p.closed);
+        result
+    });
+    tokio::task::yield_now().await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert!(
+        !sending.is_finished(),
+        "ACK timeout ran while telegram was queued"
+    );
+
+    let (connection, _incoming, mut sent) = peer();
+    knx.connection.send_replace(Some(connection));
+    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    timeout(Duration::from_secs(1), sent.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut ack = Telegram::individual_data(knx.config.individual_address, Vec::new());
+    ack.telegram_type = TelegramType::IndividualControl;
+    ack.tpci = crate::protocol::TpciFrame::Ack { sequence: 0 }.encode();
+    events.send(ack).await.unwrap();
+    sending.await.unwrap().unwrap();
+    assert!(
+        timeout(Duration::from_millis(100), sent.recv())
+            .await
+            .is_err()
+    );
+    knx.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn timed_out_p2p_send_is_not_transmitted_later() {
+    let knx = knx().await;
+    let (_events, receiver) = mpsc::channel(4);
+    let mut p2p = P2pConnection {
+        knx: knx.clone(),
+        destination: IndividualAddress::new(1, 1, 5),
+        receiver,
+        pending: Default::default(),
+        callback: None,
+        send_sequence: 0,
+        receive_sequence: 0,
+        closed: false,
+    };
+    let sending = tokio::spawn(async move {
+        let result = p2p.send_data(vec![3, 0], true).await;
+        p2p.closed = true;
+        assert!(p2p.closed);
+        result
+    });
+    tokio::task::yield_now().await;
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    assert!(matches!(
+        sending.await.unwrap(),
+        Err(KnxError::Transport(
+            crate::error::TransportError::QueueTimeout { .. }
+        ))
+    ));
+    let (connection, _incoming, mut sent) = peer();
+    knx.connection.send_replace(Some(connection));
+    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    assert!(
+        timeout(Duration::from_millis(100), sent.recv())
+            .await
+            .is_err()
+    );
+    knx.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn unsent_or_cancelled_reads_do_not_transmit_later_or_leak_callbacks() {
     let knx = knx().await;
     let address = GroupAddress::try_from_raw(1).unwrap();

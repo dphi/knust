@@ -3531,9 +3531,20 @@ impl P2pConnection {
         }
         let sequence = self.send_sequence;
         let mut telegram = Telegram::individual_data(self.destination, apdu);
+        telegram.source = self.knx.config.individual_address;
         telegram.tpci = crate::protocol::TpciFrame::DataConnected { sequence }.encode();
         for attempt in 0..=P2P_MAX_RETRANSMISSIONS {
-            self.knx.send_telegram(&telegram).await?;
+            let (sent, completed) = self
+                .knx
+                .telegram_queue
+                .enqueue_outgoing_tracked(telegram.clone())
+                .await?;
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                tokio::select! {
+                    sent = sent => sent.map_err(|_| crate::error::TransportError::QueueClosed.into()),
+                    result = completed => result.map_err(|_| crate::error::TransportError::QueueClosed)?,
+                }
+            }).await.map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })??;
             if !wait_for_ack {
                 self.send_sequence = (sequence + 1) & 0x0f;
                 return Ok(());
