@@ -13,7 +13,7 @@
 //! stream, while `send()` fans a telegram out to every connected client.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 #[cfg(feature = "secure")]
 use std::sync::atomic::AtomicU16;
@@ -45,6 +45,7 @@ use crate::protocol::telegram::TelegramType;
 use crate::security::{SecureSession, SessionConfig};
 
 use super::frame_transport::{FrameTransport, TcpFrameTransport};
+use super::routing::RoutingConnection;
 use super::tunnel::SequenceValidationResult;
 
 /// How long a connected client may go without a heartbeat before eviction.
@@ -192,6 +193,7 @@ pub struct TunnelServer {
     shutdown: AtomicBool,
     shutdown_notify: Arc<tokio::sync::Notify>,
     dispatch_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    discovery_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     tcp_accept_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     sweep_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -281,6 +283,7 @@ impl TunnelServer {
             shutdown: AtomicBool::new(false),
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
             dispatch_handle: std::sync::Mutex::new(None),
+            discovery_handle: std::sync::Mutex::new(None),
             tcp_accept_handle: std::sync::Mutex::new(None),
             sweep_handle: std::sync::Mutex::new(None),
         });
@@ -302,6 +305,100 @@ impl TunnelServer {
 
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
+    }
+
+    /// Answer KNXnet/IP multicast searches on the given IPv4 interface.
+    ///
+    /// Replies come from the server's existing UDP endpoint. Bind the server to
+    /// the interface's unicast address or to a separate port if a wildcard bind
+    /// on port 3671 prevents sharing the discovery port on the host.
+    ///
+    /// # Errors
+    /// Returns [`TransportError::SocketError`] if the server is shut down,
+    /// discovery is already enabled, the control endpoint is IPv6, or the
+    /// multicast socket cannot be opened.
+    ///
+    /// # Panics
+    /// Panics when called outside a Tokio runtime with I/O enabled.
+    pub fn enable_multicast_discovery(self: &Arc<Self>, interface: Ipv4Addr) -> Result<()> {
+        let mut discovery = self.discovery_handle.lock().unwrap();
+        let socket = (|| {
+            use std::io::{Error, ErrorKind};
+
+            if self.is_shutdown() {
+                return Err(Error::new(ErrorKind::NotConnected, "server is shut down"));
+            }
+            if discovery
+                .as_ref()
+                .is_some_and(|handle| !handle.is_finished())
+            {
+                return Err(Error::new(
+                    ErrorKind::AlreadyExists,
+                    "discovery is already enabled",
+                ));
+            }
+            if !self.local_addr.is_ipv4() {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "discovery requires an IPv4 server",
+                ));
+            }
+
+            let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None)?;
+            let group = RoutingConnection::MULTICAST_ADDR;
+            #[cfg(windows)]
+            let bind_ip = Ipv4Addr::UNSPECIFIED;
+            #[cfg(not(windows))]
+            let bind_ip = group;
+            socket.set_reuse_address(true)?;
+            socket.set_nonblocking(true)?;
+            socket.bind(&SocketAddr::from((bind_ip, RoutingConnection::MULTICAST_PORT)).into())?;
+            socket.join_multicast_v4(&group, &interface)?;
+            UdpSocket::from_std(socket.into())
+        })()
+        .map_err(|source| TransportError::SocketError {
+            operation: "enable_multicast_discovery".to_owned(),
+            source,
+        })?;
+
+        let server = self.clone();
+        *discovery = Some(tokio::spawn(async move {
+            let mut buf = [0; 1024];
+            loop {
+                let (len, peer_addr) = match socket.recv_from(&mut buf).await {
+                    Ok(packet) => packet,
+                    Err(error) => {
+                        log_transport!(
+                            LogLevel::Warn,
+                            "TunnelServer: discovery receive failed: {}",
+                            error
+                        );
+                        break;
+                    }
+                };
+                let Ok(frame) = KnxIpFrame::parse(&buf[..len]) else {
+                    continue;
+                };
+                if !matches!(
+                    frame.header.service_type,
+                    ServiceType::SearchRequest | ServiceType::SearchRequestExtended
+                ) {
+                    continue;
+                }
+                let link = ClientLink::Udp {
+                    socket: server.socket.clone(),
+                    peer_addr,
+                };
+                if let Err(error) = server.handle_discovery_request(frame, &link).await {
+                    log_transport!(
+                        LogLevel::Debug,
+                        "TunnelServer: discovery request failed: {}",
+                        error
+                    );
+                }
+            }
+        }));
+        Ok(())
     }
 
     /// Number of currently-connected clients.
@@ -1292,6 +1389,9 @@ impl TunnelServer {
     /// Signal the server and all of its connection loops to shut down.
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
+        if let Some(discovery) = self.discovery_handle.lock().unwrap().take() {
+            discovery.abort();
+        }
         self.shutdown_notify.notify_waiters();
         log_transport!(LogLevel::Info, "TunnelServer shutdown requested");
     }
@@ -1434,6 +1534,74 @@ mod tests {
         server.shutdown();
 
         assert!(server.is_shutdown());
+    }
+
+    #[tokio::test]
+    async fn scanner_finds_multiple_knust_servers_by_multicast() {
+        use crate::transport::GatewayScanner;
+        use std::io::ErrorKind;
+
+        let first = bind_server().await;
+        let second = bind_server().await;
+        for server in [&first, &second] {
+            server
+                .enable_multicast_discovery(Ipv4Addr::LOCALHOST)
+                .unwrap();
+        }
+        let duplicate = first.enable_multicast_discovery(Ipv4Addr::LOCALHOST);
+        assert!(matches!(
+            duplicate,
+            Err(crate::error::KnxError::Transport(TransportError::SocketError { source, .. }))
+                if source.kind() == ErrorKind::AlreadyExists
+        ));
+
+        let scanner = GatewayScanner::new_with_interface(Ipv4Addr::LOCALHOST)
+            .await
+            .unwrap();
+        let gateways = scanner.discover(Duration::from_millis(250)).await.unwrap();
+        for server in [&first, &second] {
+            let gateway = gateways
+                .iter()
+                .find(|gateway| gateway.addr == server.local_addr());
+            assert_eq!(
+                gateway.and_then(|gateway| gateway.individual_address),
+                Some(server.individual_address)
+            );
+            assert_eq!(server.client_count().await, 0);
+        }
+
+        let listener = first
+            .discovery_handle
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .abort_handle();
+        first.shutdown();
+        timeout(Duration::from_secs(1), async {
+            while !listener.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let gateways = scanner.discover(Duration::from_millis(250)).await.unwrap();
+        assert!(
+            !gateways
+                .iter()
+                .any(|gateway| gateway.addr == first.local_addr())
+        );
+        assert!(
+            gateways
+                .iter()
+                .any(|gateway| gateway.addr == second.local_addr())
+        );
+        assert!(
+            first
+                .enable_multicast_discovery(Ipv4Addr::LOCALHOST)
+                .is_err()
+        );
+        second.shutdown();
     }
 
     fn test_telegram(payload: u8) -> Telegram {
