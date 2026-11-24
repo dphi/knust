@@ -1,6 +1,7 @@
 //! KNX/IP gateway discovery implementation.
 
 use crate::error::{DiscoveryError, Result};
+use crate::protocol::knxip::{Hpai, KnxIpFrame, ServiceType as FrameType};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -46,8 +47,8 @@ impl GatewayScanner {
     ///
     /// # Errors
     ///
-    /// Returns [`DiscoveryError::NetworkError`] if both multicast and broadcast
-    /// sends fail, or receiving fails with anything other than a
+    /// Returns [`DiscoveryError::NetworkError`] if all search sends fail,
+    /// or receiving fails with anything other than a
     /// timeout. Malformed responses from individual gateways are logged and
     /// skipped rather than returned as an error.
     pub async fn discover(&self, discovery_timeout: Duration) -> Result<Vec<GatewayInfo>> {
@@ -70,7 +71,10 @@ impl GatewayScanner {
             .socket
             .local_addr()
             .map_err(DiscoveryError::NetworkError)?;
-        let discovery_request = Self::build_discovery_request(local_addr);
+        let discovery_request = Self::build_discovery_request(local_addr, FrameType::SearchRequest);
+        let extended_request =
+            Self::build_discovery_request(local_addr, FrameType::SearchRequestExtended);
+        let extended = self.socket.send_to(&extended_request, multicast_addr).await;
         let multicast = self
             .socket
             .send_to(&discovery_request, multicast_addr)
@@ -79,8 +83,12 @@ impl GatewayScanner {
             .socket
             .send_to(&discovery_request, broadcast_addr)
             .await;
-        if let (Err(multicast_error), Err(broadcast_error)) = (multicast, broadcast) {
-            log::debug!("Multicast discovery failed: {multicast_error}");
+        if let (Err(extended_error), Err(multicast_error), Err(broadcast_error)) =
+            (extended, multicast, broadcast)
+        {
+            log::debug!(
+                "Multicast discovery failed: {multicast_error}; extended search failed: {extended_error}"
+            );
             return Err(DiscoveryError::NetworkError(broadcast_error).into());
         }
 
@@ -94,7 +102,17 @@ impl GatewayScanner {
                     Ok((len, addr)) => {
                         match self.parse_discovery_response(&buf[..len], addr) {
                             Ok(gateway_info) => {
-                                gateways.insert(gateway_info.addr, gateway_info);
+                                let extended = buf[2..4]
+                                    == (FrameType::SearchResponseExtended as u16).to_be_bytes();
+                                if extended
+                                    || gateways.get(&gateway_info.addr).is_none_or(
+                                        |(previous_extended, _): &(bool, GatewayInfo)| {
+                                            !*previous_extended
+                                        },
+                                    )
+                                {
+                                    gateways.insert(gateway_info.addr, (extended, gateway_info));
+                                }
                             }
                             Err(e) => {
                                 // Log parsing errors but continue discovery
@@ -138,7 +156,7 @@ impl GatewayScanner {
                 if gateways.is_empty() {
                     Err(DiscoveryError::NoGatewaysFound.into())
                 } else {
-                    Ok(gateways.into_values().collect())
+                    Ok(gateways.into_values().map(|(_, info)| info).collect())
                 }
             }
             Ok(Err(e)) => Err(e.into()),
@@ -151,24 +169,25 @@ impl GatewayScanner {
                     .into())
                 } else {
                     // Return partial results even on timeout
-                    Ok(gateways.into_values().collect())
+                    Ok(gateways.into_values().map(|(_, info)| info).collect())
                 }
             }
         }
     }
 
     /// Build a KNX/IP discovery request frame.
-    fn build_discovery_request(local_addr: SocketAddr) -> Vec<u8> {
-        let mut frame = vec![0x06, 0x10, 0x02, 0x01, 0x00, 0x0e, 0x08, 0x01];
-        if let SocketAddr::V4(addr) = local_addr {
-            if !addr.ip().is_unspecified() {
-                frame.extend_from_slice(&addr.ip().octets());
-                frame.extend_from_slice(&addr.port().to_be_bytes());
-                return frame;
-            }
+    fn build_discovery_request(local_addr: SocketAddr, kind: FrameType) -> Vec<u8> {
+        let hpai = if local_addr.ip().is_unspecified() {
+            Hpai::route_back()
+        } else {
+            Hpai::new(local_addr)
+        };
+        let mut body = hpai.serialize();
+        if kind == FrameType::SearchRequestExtended {
+            // Request Device Info, Supported Services, Secured Services and Tunneling Info.
+            body.extend_from_slice(&[6, 4, 1, 2, 6, 7]);
         }
-        frame.extend_from_slice(&[0; 6]);
-        frame
+        KnxIpFrame::new(kind, body).serialize()
     }
 
     /// Parse a discovery response frame.
@@ -176,14 +195,15 @@ impl GatewayScanner {
     /// # Errors
     /// Returns [`DiscoveryError::InvalidResponse`] for an invalid header, endpoint, or DIB.
     pub fn parse_discovery_response(&self, data: &[u8], source: SocketAddr) -> Result<GatewayInfo> {
-        use crate::protocol::knxip::{Hpai, KnxIpFrame, ServiceType as FrameType};
-
         let invalid = |reason: String| DiscoveryError::InvalidResponse {
             addr: source.to_string(),
             reason,
         };
         let frame = KnxIpFrame::parse(data).map_err(|error| invalid(error.to_string()))?;
-        if frame.header.service_type != FrameType::SearchResponse {
+        if !matches!(
+            frame.header.service_type,
+            FrameType::SearchResponse | FrameType::SearchResponseExtended
+        ) {
             return Err(invalid("Not a search response".to_owned()).into());
         }
         let endpoint = Hpai::parse(&frame.body).map_err(|error| invalid(error.to_string()))?;
@@ -207,6 +227,10 @@ impl GatewayScanner {
         let mut device_serial = String::new();
         let mut mac_address = None;
         let mut multicast_ip = None;
+        let mut tunneling_version = 0;
+        let mut supports_secure = false;
+        let mut secured_services = None;
+        let mut tunneling_slots = None;
         let mut dibs = &frame.body[Hpai::LENGTH..];
 
         while let Some(&length) = dibs.first() {
@@ -248,11 +272,18 @@ impl GatewayScanner {
                     for family in dib[2..].chunks_exact(2) {
                         let service = match family[0] {
                             0x03 => ServiceType::DeviceManagement,
-                            0x04 => ServiceType::Tunneling,
+                            0x04 => {
+                                tunneling_version = tunneling_version.max(family[1]);
+                                ServiceType::Tunneling
+                            }
                             0x05 => ServiceType::Routing,
                             0x06 => ServiceType::RemoteLogging,
                             0x07 => ServiceType::RemoteConfiguration,
                             0x08 => ServiceType::ObjectServer,
+                            0x09 => {
+                                supports_secure |= family[1] >= 1;
+                                continue;
+                            }
                             _ => continue,
                         };
                         if !supported_services.contains(&service) {
@@ -260,17 +291,38 @@ impl GatewayScanner {
                         }
                     }
                 }
+                0x06 => secured_services = Some(&dib[2..]),
+                0x07 => {
+                    if dib.len() % 4 != 0 {
+                        return Err(
+                            invalid("Invalid tunneling information DIB length".to_owned()).into(),
+                        );
+                    }
+                    tunneling_slots = Some((dib[4..].len() / 4) as u8);
+                }
                 _ => {}
             }
         }
 
+        let requires_secure = |family| {
+            secured_services
+                .map(|services| services.chunks_exact(2).any(|entry| entry[0] == family))
+        };
         let supports_tunneling = supported_services.contains(&ServiceType::Tunneling);
         let supports_routing = supported_services.contains(&ServiceType::Routing);
         let capabilities = GatewayCapabilities {
             supports_tunneling,
             supports_routing,
             supports_device_management: supported_services.contains(&ServiceType::DeviceManagement),
-            max_tunneling_connections: if supports_tunneling { 4 } else { 1 },
+            max_tunneling_connections: tunneling_slots.unwrap_or(if supports_tunneling {
+                4
+            } else {
+                1
+            }),
+            supports_tcp_tunneling: tunneling_version >= 2,
+            supports_secure,
+            tunneling_requires_secure: requires_secure(0x04),
+            routing_requires_secure: requires_secure(0x05),
         };
         let multicast_addr = multicast_ip
             .filter(|_| supports_routing)
@@ -327,6 +379,18 @@ pub struct GatewayCapabilities {
 
     /// Maximum number of concurrent tunneling connections
     pub max_tunneling_connections: u8,
+
+    /// The gateway advertises Tunneling service version 2 or later.
+    pub supports_tcp_tunneling: bool,
+
+    /// The gateway advertises the KNX IP Security service.
+    pub supports_secure: bool,
+
+    /// Whether the gateway requires IP Secure for tunneling, if reported.
+    pub tunneling_requires_secure: Option<bool>,
+
+    /// Whether the gateway requires IP Secure for routing, if reported.
+    pub routing_requires_secure: Option<bool>,
 }
 
 /// KNX/IP service types
@@ -378,27 +442,58 @@ mod tests {
         let expected_port = scanner.socket.local_addr().unwrap().port();
         let responder = tokio::spawn(async move {
             let mut buf = [0; 128];
-            for _ in 0..2 {
-                let (len, source) =
+            let mut extended_requests = 0;
+            let mut source = None;
+            for _ in 0..3 {
+                let (len, from) =
                     tokio::time::timeout(Duration::from_secs(2), peer.recv_from(&mut buf))
                         .await
                         .unwrap()
                         .unwrap();
-                assert_eq!(&buf[..8], &[6, 0x10, 2, 1, 0, 14, 8, 1]);
-                assert_eq!(&buf[8..12], &[127, 0, 0, 1]);
+                source = Some(from);
+                assert_eq!(&buf[6..12], &[8, 1, 127, 0, 0, 1]);
                 assert_eq!(u16::from_be_bytes([buf[12], buf[13]]), expected_port);
-                assert_eq!(len, 14);
-                peer.send_to(&[6, 0x10, 2, 2, 0, 14, 8, 1, 127, 0, 0, 1, 0, 0], source)
-                    .await
-                    .unwrap();
+                match buf[3] {
+                    1 => assert_eq!(
+                        &buf[..len],
+                        &[6, 0x10, 2, 1, 0, 14, 8, 1, 127, 0, 0, 1, buf[12], buf[13]]
+                    ),
+                    0x0b => {
+                        extended_requests += 1;
+                        assert_eq!(&buf[..6], &[6, 0x10, 2, 0x0b, 0, 20]);
+                        assert_eq!(&buf[14..len], &[6, 4, 1, 2, 6, 7]);
+                    }
+                    other => panic!("unexpected search service {other}"),
+                }
             }
+            assert_eq!(extended_requests, 1);
+            let source = source.unwrap();
+            peer.send_to(
+                &[
+                    6, 0x10, 2, 0x0c, 0, 40, 8, 1, 127, 0, 0, 1, 0, 0, 10, 2, 2, 2, 4, 2, 5, 1, 9,
+                    1, 4, 6, 4, 2, 12, 7, 0, 248, 0x11, 1, 0, 7, 0x11, 2, 0, 7,
+                ],
+                source,
+            )
+            .await
+            .unwrap();
+            peer.send_to(&[6, 0x10, 2, 2, 0, 14, 8, 1, 127, 0, 0, 1, 0, 0], source)
+                .await
+                .unwrap();
         });
         let gateways = scanner
             .discover_to(Duration::from_millis(250), multicast, unicast)
             .await
             .unwrap();
         responder.await.unwrap();
-        assert_eq!(gateways.len(), 1);
+        let [gateway] = &gateways[..] else {
+            panic!("expected one gateway, found {gateways:?}");
+        };
+        let caps = &gateway.capabilities;
+        assert!(caps.supports_tcp_tunneling && caps.supports_secure);
+        assert_eq!(caps.tunneling_requires_secure, Some(true));
+        assert_eq!(caps.routing_requires_secure, Some(false));
+        assert_eq!(caps.max_tunneling_connections, 2);
     }
 
     #[tokio::test]
@@ -457,7 +552,10 @@ mod tests {
 
     #[test]
     fn wildcard_discovery_uses_route_back_endpoint() {
-        let request = GatewayScanner::build_discovery_request("0.0.0.0:1234".parse().unwrap());
+        let request = GatewayScanner::build_discovery_request(
+            "0.0.0.0:1234".parse().unwrap(),
+            FrameType::SearchRequest,
+        );
         assert_eq!(&request[8..], &[0; 6]);
     }
 }
