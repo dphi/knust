@@ -654,7 +654,6 @@ impl Default for KnxBuilder {
     }
 }
 
-const P2P_CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
 const P2P_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 const P2P_MAX_RETRANSMISSIONS: usize = 3;
 
@@ -1437,29 +1436,21 @@ impl Knx {
 
     /// Check whether an individual address is occupied by a device.
     ///
-    /// A device that establishes a P2P link or refuses it occupies the address;
-    /// no response to the link or descriptor request means the address is free.
-    /// `timeout` applies to the descriptor request; P2P connection setup uses its
-    /// standard timeout.
+    /// A descriptor response or an explicit P2P refusal indicates an occupied
+    /// address. A timeout indicates no device answered the probe.
     pub async fn check_individual_address(
         &self,
         destination: crate::protocol::IndividualAddress,
         timeout: std::time::Duration,
     ) -> Result<bool> {
-        let mut connection = match self.connect_p2p(destination).await {
-            Ok(connection) => connection,
-            Err(crate::error::KnxError::Device(
-                crate::error::DeviceError::CommunicationTimeout { .. },
-            )) => return Ok(false),
-            Err(crate::error::KnxError::Device(
-                crate::error::DeviceError::CommunicationRefused { .. },
-            )) => return Ok(true),
-            Err(error) => return Err(error),
-        };
+        let mut connection = self.connect_p2p(destination).await?;
         let response = connection.read_device_descriptor(0, timeout).await;
         let _ = connection.close().await;
         match response {
-            Ok(_) => Ok(true),
+            Ok(_)
+            | Err(crate::error::KnxError::Device(
+                crate::error::DeviceError::CommunicationRefused { .. },
+            )) => Ok(true),
             Err(crate::error::KnxError::Device(
                 crate::error::DeviceError::CommunicationTimeout { .. },
             )) => Ok(false),
@@ -1669,7 +1660,7 @@ impl Knx {
             self.register_telegram_callback_filtered(P2pTelegramCallback { tx }, filter, false)
                 .await,
         );
-        let mut connection = P2pConnection {
+        let connection = P2pConnection {
             knx: self.clone(),
             destination,
             receiver,
@@ -1682,7 +1673,6 @@ impl Knx {
         connection
             .send_control(crate::protocol::TpciFrame::Connect)
             .await?;
-        connection.wait_until_connected().await?;
         Ok(connection)
     }
 
@@ -3526,28 +3516,6 @@ impl P2pConnection {
             .await
     }
 
-    async fn wait_until_connected(&mut self) -> Result<()> {
-        let deadline = tokio::time::Instant::now() + P2P_CONNECTION_TIMEOUT;
-        loop {
-            let telegram = self
-                .next_channel_event_until(deadline, P2P_CONNECTION_TIMEOUT)
-                .await?;
-            if telegram.telegram_type == TelegramType::IndividualControl {
-                match crate::protocol::TpciFrame::decode(telegram.tpci) {
-                    crate::protocol::TpciFrame::Connect => return Ok(()),
-                    crate::protocol::TpciFrame::Disconnect => {
-                        return Err(crate::error::DeviceError::CommunicationRefused {
-                            device: format!("individual address {}", self.destination),
-                        }
-                        .into());
-                    }
-                    _ => {}
-                }
-            }
-            self.pending.push_back(telegram);
-        }
-    }
-
     /// Send one connected-data APDU, repeating it up to three times after the
     /// initial transmission if its matching T_ACK is lost or rejected. Success
     /// does not wait for a CEMI L_Data.con bus confirmation.
@@ -3594,11 +3562,9 @@ impl P2pConnection {
                             break;
                         }
                         crate::protocol::TpciFrame::Disconnect => {
-                            return Err(crate::error::ProtocolError::InvalidFrame {
-                                details: format!(
-                                    "{} disconnected the P2P session",
-                                    self.destination
-                                ),
+                            self.closed = true;
+                            return Err(DeviceError::CommunicationRefused {
+                                device: format!("individual address {}", self.destination),
                             }
                             .into());
                         }
@@ -3634,8 +3600,8 @@ impl P2pConnection {
                     == crate::protocol::TpciFrame::Disconnect
                 {
                     self.closed = true;
-                    return Err(crate::error::ProtocolError::InvalidFrame {
-                        details: format!("{} disconnected the P2P session", self.destination),
+                    return Err(DeviceError::CommunicationRefused {
+                        device: format!("individual address {}", self.destination),
                     }
                     .into());
                 }
@@ -5020,11 +4986,6 @@ mod integration_tests {
             connect_request.destination,
             Address::Individual(connected_device)
         );
-        let mut connect_response = Telegram::individual_data(client_address, Vec::new());
-        connect_response.source = connected_device;
-        connect_response.telegram_type = TelegramType::IndividualControl;
-        connect_response.tpci = TpciFrame::Connect.encode();
-        server.send(connect_response).await.unwrap();
         let descriptor_read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
             .await
             .unwrap()
@@ -5068,16 +5029,22 @@ mod integration_tests {
             .await
             .unwrap()
             .unwrap();
+        let descriptor = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(descriptor.payload, [0x03, 0x00]);
         let mut refusal = Telegram::individual_data(client_address, Vec::new());
         refusal.source = refusing_device;
         refusal.telegram_type = TelegramType::IndividualControl;
         refusal.tpci = TpciFrame::Disconnect.encode();
         server.send(refusal).await.unwrap();
         assert!(checking.await.unwrap().unwrap());
-        let _refusal_ack = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
-            .await
-            .unwrap()
-            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), peer_traffic.recv())
+                .await
+                .is_err()
+        );
 
         let knx_for_check = knx.clone();
         let checking = tokio::spawn(async move {
@@ -5089,11 +5056,6 @@ mod integration_tests {
             .await
             .unwrap()
             .unwrap();
-        let mut connect_response = Telegram::individual_data(client_address, Vec::new());
-        connect_response.source = silent_device;
-        connect_response.telegram_type = TelegramType::IndividualControl;
-        connect_response.tpci = TpciFrame::Connect.encode();
-        server.send(connect_response).await.unwrap();
         let descriptor_read = tokio::time::timeout(Duration::from_secs(2), peer_traffic.recv())
             .await
             .unwrap()
@@ -5144,11 +5106,6 @@ mod integration_tests {
             .await
             .unwrap()
             .unwrap();
-        let mut connect_response = Telegram::individual_data(client_address, Vec::new());
-        connect_response.source = device_address;
-        connect_response.telegram_type = TelegramType::IndividualControl;
-        connect_response.tpci = TpciFrame::Connect.encode();
-        server.send(connect_response).await.unwrap();
         let mut p2p = connect.await.unwrap().unwrap();
 
         let switching = tokio::spawn(async move {
@@ -5277,11 +5234,6 @@ mod integration_tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(connect.tpci, TpciFrame::Connect.encode());
-            let mut response = Telegram::individual_data(client_address, Vec::new());
-            response.source = device_address;
-            response.telegram_type = TelegramType::IndividualControl;
-            response.tpci = TpciFrame::Connect.encode();
-            server.send(response).await.unwrap();
             let descriptor = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
                 .await
                 .unwrap()
@@ -5408,11 +5360,6 @@ mod integration_tests {
             .unwrap()
             .unwrap();
         assert_eq!(request.tpci, TpciFrame::Connect.encode());
-        let mut response = Telegram::individual_data(client_address, Vec::new());
-        response.source = device_address;
-        response.telegram_type = TelegramType::IndividualControl;
-        response.tpci = TpciFrame::Connect.encode();
-        server.send(response).await.unwrap();
         let mut p2p = connect.await.unwrap().unwrap();
 
         let switching = tokio::spawn(async move {
@@ -5541,11 +5488,6 @@ mod integration_tests {
             Address::Individual(device_address)
         );
 
-        let mut connect_response = Telegram::individual_data(client_address, Vec::new());
-        connect_response.source = device_address;
-        connect_response.telegram_type = TelegramType::IndividualControl;
-        connect_response.tpci = TpciFrame::Connect.encode();
-        server.send(connect_response).await.unwrap();
         let mut p2p = connect.await.unwrap().unwrap();
         assert!(knx.connect_p2p(device_address).await.is_err());
 
