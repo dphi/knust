@@ -44,6 +44,90 @@ impl GatewayScanner {
         Ok(Self { socket })
     }
 
+    /// Query the description of a gateway at a known UDP address.
+    ///
+    /// For Core v2 and newer, follow the description request with an extended
+    /// search to fetch security and tunneling slot information. Each request
+    /// has its own `response_timeout`.
+    ///
+    /// # Errors
+    /// Returns a discovery error if the query fails, times out, or returns
+    /// invalid description data.
+    pub async fn describe(
+        &self,
+        gateway: SocketAddr,
+        response_timeout: Duration,
+    ) -> Result<GatewayInfo> {
+        let interface = self
+            .socket
+            .local_addr()
+            .map_err(DiscoveryError::NetworkError)?
+            .ip();
+        let socket = UdpSocket::bind(SocketAddr::new(interface, 0))
+            .await
+            .map_err(DiscoveryError::NetworkError)?;
+        socket
+            .connect(gateway)
+            .await
+            .map_err(DiscoveryError::NetworkError)?;
+        let local_addr = socket.local_addr().map_err(DiscoveryError::NetworkError)?;
+        let frame = Self::query_gateway(
+            &socket,
+            local_addr,
+            FrameType::DescriptionRequest,
+            FrameType::DescriptionResponse,
+            response_timeout,
+        )
+        .await?;
+        let info = Self::parse_gateway_dibs(&frame.body, gateway)?;
+        if info.core_version < 2 {
+            return Ok(info);
+        }
+
+        let frame = Self::query_gateway(
+            &socket,
+            local_addr,
+            FrameType::SearchRequestExtended,
+            FrameType::SearchResponseExtended,
+            response_timeout,
+        )
+        .await?;
+        let (_, dibs) = Self::search_response_parts(&frame.body, gateway)?;
+        Self::parse_gateway_dibs(dibs, gateway)
+    }
+
+    async fn query_gateway(
+        socket: &UdpSocket,
+        local_addr: SocketAddr,
+        request: FrameType,
+        expected: FrameType,
+        response_timeout: Duration,
+    ) -> Result<KnxIpFrame> {
+        let frame = Self::build_discovery_request(local_addr, request);
+        timeout(response_timeout, async {
+            socket
+                .send(&frame)
+                .await
+                .map_err(DiscoveryError::NetworkError)?;
+            let mut buf = [0; 4096];
+            loop {
+                let len = socket
+                    .recv(&mut buf)
+                    .await
+                    .map_err(DiscoveryError::NetworkError)?;
+                if let Ok(response) = KnxIpFrame::parse(&buf[..len])
+                    && response.header.service_type == expected
+                {
+                    return Ok(response);
+                }
+            }
+        })
+        .await
+        .map_err(|_| DiscoveryError::Timeout {
+            timeout_ms: response_timeout.as_millis() as u64,
+        })?
+    }
+
     /// Discover KNX/IP gateways on the network
     ///
     /// # Errors
@@ -207,7 +291,16 @@ impl GatewayScanner {
         ) {
             return Err(invalid("Not a search response".to_owned()).into());
         }
-        let endpoint = Hpai::parse(&frame.body).map_err(|error| invalid(error.to_string()))?;
+        let (addr, dibs) = Self::search_response_parts(&frame.body, source)?;
+        Self::parse_gateway_dibs(dibs, addr)
+    }
+
+    fn search_response_parts(body: &[u8], source: SocketAddr) -> Result<(SocketAddr, &[u8])> {
+        let invalid = |reason: String| DiscoveryError::InvalidResponse {
+            addr: source.to_string(),
+            reason,
+        };
+        let endpoint = Hpai::parse(body).map_err(|error| invalid(error.to_string()))?;
         if endpoint.host_protocol_code != Hpai::PROTOCOL_UDP {
             return Err(invalid("Search response requires a UDP endpoint".to_owned()).into());
         }
@@ -223,6 +316,14 @@ impl GatewayScanner {
                 endpoint.port
             },
         );
+        Ok((addr, &body[Hpai::LENGTH..]))
+    }
+
+    fn parse_gateway_dibs(mut dibs: &[u8], addr: SocketAddr) -> Result<GatewayInfo> {
+        let invalid = |reason: String| DiscoveryError::InvalidResponse {
+            addr: addr.to_string(),
+            reason,
+        };
         let mut name = format!("KNX Gateway {}", addr.ip());
         let mut individual_address = None;
         let mut core_version = 0;
@@ -234,7 +335,6 @@ impl GatewayScanner {
         let mut supports_secure = false;
         let mut secured_services = None;
         let mut tunneling_info = None;
-        let mut dibs = &frame.body[Hpai::LENGTH..];
 
         while let Some(&length) = dibs.first() {
             let length = usize::from(length);
@@ -625,6 +725,68 @@ mod tests {
         assert!(scanner.parse_discovery_response(&response, source).is_err());
         response[5] = response.len() as u8;
         assert!(scanner.parse_discovery_response(&response, source).is_ok());
+    }
+
+    #[tokio::test]
+    async fn unicast_description_selects_query_by_core_version() {
+        let scanner = GatewayScanner::new_with_interface(Ipv4Addr::LOCALHOST)
+            .await
+            .unwrap();
+        for core_version in [1, 2] {
+            let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let gateway = peer.local_addr().unwrap();
+            let responder = tokio::spawn(async move {
+                let mut buf = [0; 64];
+                let (len, source) = peer.recv_from(&mut buf).await.unwrap();
+                assert_eq!(len, 14);
+                assert_eq!(&buf[..8], &[6, 0x10, 2, 3, 0, 14, 8, 1]);
+                assert_eq!(&buf[8..12], &[127, 0, 0, 1]);
+                assert_eq!(u16::from_be_bytes([buf[12], buf[13]]), source.port());
+
+                // An unrelated search response from the gateway must not satisfy the query.
+                peer.send_to(&[6, 0x10, 2, 2, 0, 14, 8, 1, 0, 0, 0, 0, 0, 0], source)
+                    .await
+                    .unwrap();
+                peer.send_to(&[6, 0x10, 2, 4, 0, 10, 4, 2, 2, core_version], source)
+                    .await
+                    .unwrap();
+                if core_version == 1 {
+                    assert!(
+                        timeout(Duration::from_millis(100), peer.recv_from(&mut buf))
+                            .await
+                            .is_err()
+                    );
+                    return;
+                }
+
+                let (len, second_source) = peer.recv_from(&mut buf).await.unwrap();
+                assert_eq!(source, second_source);
+                assert_eq!(&buf[..6], &[6, 0x10, 2, 0x0b, 0, 20]);
+                assert_eq!(&buf[14..len], &[6, 4, 1, 2, 6, 7]);
+                peer.send_to(
+                    &[
+                        6, 0x10, 2, 0x0c, 0, 30, 8, 1, 192, 0, 2, 1, 0, 0, 8, 2, 2, 2, 4, 2, 9, 1,
+                        8, 7, 0, 248, 0x11, 1, 0, 7,
+                    ],
+                    source,
+                )
+                .await
+                .unwrap();
+            });
+
+            let info = scanner
+                .describe(gateway, Duration::from_secs(1))
+                .await
+                .unwrap();
+            assert_eq!(info.addr, gateway);
+            assert_eq!(info.core_version, core_version);
+            assert_eq!(info.capabilities.supports_tcp_tunneling, core_version == 2);
+            assert_eq!(
+                info.tunneling_info.map(|tunneling| tunneling.slots.len()),
+                (core_version == 2).then_some(1),
+            );
+            responder.await.unwrap();
+        }
     }
 
     #[test]
