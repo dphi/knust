@@ -1694,6 +1694,19 @@ impl Knx {
         result.and(close_result)
     }
 
+    /// Restart a device using a temporary P2P connection.
+    ///
+    /// A basic restart is unconfirmed; success means the request was sent.
+    pub async fn restart_device(
+        &self,
+        destination: crate::protocol::IndividualAddress,
+    ) -> Result<()> {
+        let mut connection = self.connect_p2p(destination).await?;
+        let result = connection.restart().await;
+        let close_result = connection.close().await;
+        result.and(close_result)
+    }
+
     /// Read a group value, starting the response deadline after transmission.
     ///
     /// # Errors
@@ -4402,6 +4415,14 @@ impl P2pConnection {
         }
     }
 
+    /// Send an unconfirmed basic restart to the connected device.
+    ///
+    /// The device can restart before acknowledging the telegram and the P2P
+    /// link may stop working. Close the connection after this operation.
+    pub async fn restart(&mut self) -> Result<()> {
+        self.send_data(vec![0x03, 0x80], false).await
+    }
+
     /// Perform a confirmed Master Reset on the connected device.
     ///
     /// Wait at least the returned process_time before sending another request.
@@ -5335,6 +5356,67 @@ mod integration_tests {
             assert_eq!(disconnect.tpci, TpciFrame::Disconnect.encode());
             assert_eq!(task.await.unwrap().is_ok(), mask != 0xffff);
         }
+        knx.shutdown().await.unwrap();
+        server.shutdown();
+    }
+
+    #[cfg(feature = "server")]
+    #[tokio::test]
+    async fn basic_restart_is_sent_without_waiting_for_device_ack() {
+        use crate::protocol::TpciFrame;
+        use crate::transport::TunnelServer;
+
+        let client_address = IndividualAddress::new(1, 1, 36);
+        let device_address = IndividualAddress::new(1, 1, 37);
+        let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), client_address)
+            .await
+            .unwrap();
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Tunneling)
+            .gateway_ip(server.local_addr().ip())
+            .gateway_port(server.local_addr().port())
+            .individual_address(client_address)
+            .build()
+            .await
+            .unwrap();
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+        let mut traffic = server.subscribe();
+        let client = knx.clone();
+        let restarting = tokio::spawn(async move { client.restart_device(device_address).await });
+
+        let connect = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(connect.destination, Address::Individual(device_address));
+        assert_eq!(connect.tpci, TpciFrame::Connect.encode());
+        let restart = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(restart.destination, Address::Individual(device_address));
+        assert_eq!(
+            restart.tpci,
+            TpciFrame::DataConnected { sequence: 0 }.encode()
+        );
+        assert_eq!(restart.payload, [0x03, 0x80]);
+        let disconnect = tokio::time::timeout(Duration::from_secs(2), traffic.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(disconnect.tpci, TpciFrame::Disconnect.encode());
+        tokio::time::timeout(Duration::from_secs(2), restarting)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), traffic.recv())
+                .await
+                .is_err()
+        );
+
         knx.shutdown().await.unwrap();
         server.shutdown();
     }
