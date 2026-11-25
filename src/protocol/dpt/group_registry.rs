@@ -7,8 +7,9 @@
 //! what a given address means.
 
 use std::collections::HashMap;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
 
 use super::DptType;
 use crate::error::{ProtocolError, Result};
@@ -35,7 +36,7 @@ fn write_lock<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
 
 /// Per-address state: the DPT binding plus everything needed to drive an
 /// optional TTL-based refresh (see [`GroupAddressRegistry::next_stale`]).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct Binding {
     dpt: DptType,
     /// Refresh interval; `None` means never auto-refreshed.
@@ -44,11 +45,14 @@ struct Binding {
     /// address was observed.
     last_seen: Option<Instant>,
     /// The payload of that last real telegram.
-    last_seen_value: Option<Vec<u8>>,
+    last_seen_value: Option<Arc<[u8]>>,
+    updates: Option<watch::Sender<GroupValueUpdate>>,
     /// When we last sent a refresh `GroupValueRead` for this address.
     /// Independent of `last_seen` — only a real answer bumps that.
     last_tried: Option<Instant>,
 }
+
+pub(crate) type GroupValueUpdate = Option<Arc<[u8]>>;
 
 impl Binding {
     fn new(dpt: DptType) -> Self {
@@ -57,6 +61,7 @@ impl Binding {
             ttl: None,
             last_seen: None,
             last_seen_value: None,
+            updates: None,
             last_tried: None,
         }
     }
@@ -73,13 +78,13 @@ pub struct GroupAddressState {
     pub last_tried: Option<Instant>,
 }
 
-impl From<Binding> for GroupAddressState {
-    fn from(binding: Binding) -> Self {
+impl From<&Binding> for GroupAddressState {
+    fn from(binding: &Binding) -> Self {
         Self {
             dpt: binding.dpt,
             ttl: binding.ttl,
             last_seen: binding.last_seen,
-            last_seen_value: binding.last_seen_value,
+            last_seen_value: binding.last_seen_value.as_deref().map(<[u8]>::to_vec),
             last_tried: binding.last_tried,
         }
     }
@@ -218,8 +223,33 @@ impl GroupAddressRegistry {
         if let Some(binding) = read_lock(&self.entries).get(&address) {
             let mut binding = write_lock(binding);
             binding.last_seen = Some(Instant::now());
-            binding.last_seen_value = Some(value.to_vec());
+            let value: Arc<[u8]> = value.into();
+            binding.last_seen_value = Some(value.clone());
+            if let Some(updates) = &binding.updates {
+                updates.send_replace(Some(value));
+            }
         }
+    }
+
+    pub(crate) fn subscribe(
+        &self,
+        address: RawGroupAddress,
+        dpt: DptType,
+    ) -> Result<watch::Receiver<GroupValueUpdate>> {
+        let entries = read_lock(&self.entries);
+        let mut binding = entries
+            .get(&address)
+            .map(write_lock)
+            .filter(|binding| binding.dpt == dpt)
+            .ok_or_else(|| ProtocolError::DptError {
+                dpt_type: dpt.number_str(),
+                details: format!("Group address {address} is no longer bound to this DPT"),
+            })?;
+        let latest = binding.last_seen_value.clone();
+        Ok(binding
+            .updates
+            .get_or_insert_with(|| watch::Sender::new(latest))
+            .subscribe())
     }
 
     /// Record that a refresh `GroupValueRead` was just sent for `address`.
@@ -273,7 +303,7 @@ impl GroupAddressRegistry {
     pub fn state(&self, address: RawGroupAddress) -> Option<GroupAddressState> {
         read_lock(&self.entries)
             .get(&address)
-            .map(|b| GroupAddressState::from(read_lock(b).clone()))
+            .map(|b| GroupAddressState::from(&*read_lock(b)))
     }
 }
 

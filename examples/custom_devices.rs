@@ -14,13 +14,9 @@
 
 use std::time::Duration;
 
-use async_trait::async_trait;
-
-use knust::application::callbacks::{TelegramCallbackFn, TelegramFilter};
 use knust::protocol::RawGroupAddress;
 use knust::protocol::dpt::{DPTSwitch, DPTTemperature};
-use knust::protocol::telegram::Telegram;
-use knust::{ConnectionConfig, ConnectionType, GroupAddress, Knx, KnxError};
+use knust::{ConnectionType, GroupAddress, GroupSubscription, Knx, KnxError};
 
 /// A minimal on/off actuator: one group address, one write.
 struct Switch {
@@ -50,33 +46,12 @@ impl Switch {
 /// A read/subscribe sensor. Decodes through the DPT 9.001 handle itself
 /// rather than parsing the 2-byte float by hand.
 struct TemperatureSensor {
-    knx: Knx,
     handle: GroupAddress<DPTTemperature>,
-}
-
-/// `Knx::register_telegram_callback_filtered` takes an (async) `TelegramCallbackFn`,
-/// not a plain closure — this is the standard wrapper shape for a sync one.
-struct OnTemperatureUpdate<F: Fn(f32) + Send + Sync> {
-    handle: GroupAddress<DPTTemperature>,
-    callback: F,
-}
-
-#[async_trait]
-impl<F: Fn(f32) + Send + Sync> TelegramCallbackFn for OnTemperatureUpdate<F> {
-    async fn call(&self, telegram: &Telegram) {
-        // `decode` already checks the telegram is addressed to this
-        // handle before touching the payload, and returns `None` rather
-        // than panicking for anything else.
-        if let Some(Ok(value)) = self.handle.decode(telegram) {
-            (self.callback)(value.value());
-        }
-    }
 }
 
 impl TemperatureSensor {
     fn new(knx: &Knx, address: RawGroupAddress) -> Result<Self, KnxError> {
         Ok(Self {
-            knx: knx.clone(),
             handle: knx.group_address::<DPTTemperature>(address)?,
         })
     }
@@ -86,21 +61,9 @@ impl TemperatureSensor {
         Ok(self.handle.read(Duration::from_secs(5)).await?.value())
     }
 
-    /// Passively subscribe to future readings (e.g. periodic sends from the device itself).
-    async fn on_update<F>(&self, callback: F)
-    where
-        F: Fn(f32) + Send + Sync + 'static,
-    {
-        self.knx
-            .register_telegram_callback_filtered(
-                OnTemperatureUpdate {
-                    handle: self.handle.clone(),
-                    callback,
-                },
-                TelegramFilter::GroupAddresses(vec![self.handle.address()]),
-                false, // don't fire for our own outgoing telegrams
-            )
-            .await;
+    /// Passively subscribe to future readings.
+    fn subscribe(&self) -> Result<GroupSubscription<DPTTemperature>, KnxError> {
+        self.handle.subscribe()
     }
 }
 
@@ -108,12 +71,11 @@ impl TemperatureSensor {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
-    let config = ConnectionConfig {
-        connection_type: ConnectionType::Routing,
-        individual_address: "1.1.240".parse()?,
-        ..Default::default()
-    };
-    let knx = Knx::new(config).await?;
+    let knx = Knx::builder()
+        .connection_type(ConnectionType::Routing)
+        .individual_address("1.1.240".parse()?)
+        .connect()
+        .await?;
 
     // `Switch::new`/`TemperatureSensor::new` are fallible now: registering
     // the same address under a *different* DPT elsewhere would be a
@@ -130,14 +92,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let temperature = TemperatureSensor::new(&knx, "2/1/1".parse()?)?;
-    temperature
-        .on_update(|celsius| println!("← temperature update: {celsius:.1}°C"))
-        .await;
+    let updates = temperature.subscribe()?;
 
     match temperature.read().await {
         Ok(celsius) => println!("✓ Temperature read: {celsius:.1}°C"),
         Err(e) => println!("⚠ Temperature read failed (expected without a real bus): {e}"),
     }
 
+    if let Some(Ok(value)) = updates.latest() {
+        println!("Latest observed temperature: {:.1}°C", value.value());
+    }
+    knx.shutdown().await?;
     Ok(())
 }

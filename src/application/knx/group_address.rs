@@ -4,8 +4,39 @@ use super::Knx;
 use crate::error::Result;
 use crate::log_application;
 use crate::logging::LogLevel;
-use crate::protocol::dpt::{DptType, DptValue, DptView, GroupAddressState, WriteValue};
+use crate::protocol::dpt::{
+    DptType, DptValue, DptView, GroupAddressState, GroupValueUpdate, WriteValue,
+};
 use crate::protocol::{Address, RawGroupAddress, Telegram, TelegramType};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::dpt::{DPTScaling, DPTSwitch};
+    use crate::transport::ConnectionType;
+
+    #[tokio::test]
+    async fn typed_subscription_coalesces_values_and_closes_when_unregistered() {
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Routing)
+            .build()
+            .await
+            .unwrap();
+        let address = "1/2/3".parse().unwrap();
+        let switch = knx.group_address::<DPTSwitch>(address).unwrap();
+        let mut subscription = switch.subscribe().unwrap();
+        assert!(subscription.latest().is_none());
+        knx.group_registry.record_seen(address, &[0]);
+        knx.group_registry.record_seen(address, &[1]);
+        assert!(subscription.recv().await.unwrap().unwrap().value());
+        assert!(subscription.latest().unwrap().unwrap().value());
+
+        knx.unregister_group_address(address).unwrap();
+        knx.group_address::<DPTScaling>(address).unwrap();
+        assert!(subscription.recv().await.is_none());
+        assert!(switch.subscribe().is_err());
+    }
+}
 
 /// A group address bound to DPT `T`, constructible only via
 /// [`Knx::group_address`] — holding one is proof that this bus already
@@ -32,6 +63,31 @@ pub struct GroupAddress<T: DptValue> {
     _dpt_value: std::marker::PhantomData<T>,
 }
 
+/// Latest-value feed for one typed group address.
+///
+/// If several telegrams arrive between reads, only the newest value is
+/// retained. Dropping the feed removes the subscription.
+pub struct GroupSubscription<T: DptValue> {
+    updates: tokio::sync::watch::Receiver<GroupValueUpdate>,
+    value_type: std::marker::PhantomData<T>,
+}
+
+impl<T: DptValue> GroupSubscription<T> {
+    /// Decode the latest cached value, if one has been observed.
+    #[must_use]
+    pub fn latest(&self) -> Option<Result<T>> {
+        let value = self.updates.borrow().clone();
+        value.as_deref().map(T::decode)
+    }
+
+    /// Wait for the next value update. Returns `None` when the binding closes.
+    pub async fn recv(&mut self) -> Option<Result<T>> {
+        self.updates.changed().await.ok()?;
+        let value = self.updates.borrow_and_update().clone();
+        value.as_deref().map(T::decode)
+    }
+}
+
 impl<T: DptValue> GroupAddress<T> {
     #[must_use]
     pub fn address(&self) -> RawGroupAddress {
@@ -41,6 +97,17 @@ impl<T: DptValue> GroupAddress<T> {
     #[must_use]
     pub fn dpt(&self) -> DptType {
         self.dpt
+    }
+
+    /// Observe incoming writes and responses for this group address.
+    ///
+    /// # Errors
+    /// Returns a DPT error if this handle's binding was removed or changed.
+    pub fn subscribe(&self) -> Result<GroupSubscription<T>> {
+        Ok(GroupSubscription {
+            updates: self.knx.group_registry.subscribe(self.address, self.dpt)?,
+            value_type: std::marker::PhantomData,
+        })
     }
 
     /// Resolve `value` against the bound DPT and wait for transmission.

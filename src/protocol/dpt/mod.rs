@@ -135,6 +135,7 @@ pub use dpt251::*;
 pub use dpt255::*;
 pub use dpt272::*;
 pub use dpt273::*;
+pub(crate) use group_registry::GroupValueUpdate;
 pub use group_registry::{GroupAddressRegistry, GroupAddressState};
 pub use payload::DptPayload;
 pub use registry::{DptMetadata, DptRegistry};

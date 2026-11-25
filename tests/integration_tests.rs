@@ -66,6 +66,17 @@ async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), Kn
         received.destination,
         knust::protocol::Address::Group(address)
     );
+    #[cfg(feature = "dpt")]
+    {
+        let switch = knx.group_address::<knust::protocol::dpt::DPTSwitch>(address)?;
+        let mut updates = switch.subscribe()?;
+        server.send(Telegram::group_write(address, vec![1])).await?;
+        let update = timeout(Duration::from_secs(1), updates.recv())
+            .await
+            .unwrap()
+            .unwrap()?;
+        assert!(update.value());
+    }
     knx.start().await?;
     knx.shutdown().await?;
     assert_eq!(knx.state().await, ConnectionState::Disconnected);

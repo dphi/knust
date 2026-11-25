@@ -76,11 +76,11 @@ pub mod transport;
 pub mod test_config;
 
 // Re-export commonly used types
-#[cfg(feature = "dpt")]
-pub use application::GroupAddress;
 pub use application::{
     ConnectionState, Knx, KnxBuilder, P2pConnection, P2pConnectionless, ScannedInterfaceObject,
 };
+#[cfg(feature = "dpt")]
+pub use application::{GroupAddress, GroupSubscription};
 #[cfg(feature = "secure")]
 pub use config::KeyringConfig;
 pub use config::{ConfigFormat, Configuration};
