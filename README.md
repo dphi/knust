@@ -50,21 +50,17 @@ instead of hand-building `Telegram`s. See
 handles like this into device structs.
 
 ```rust
-use knust::{Knx, ConnectionConfig, ConnectionType, IndividualAddress};
+use knust::{ConnectionType, IndividualAddress, Knx};
 use knust::protocol::dpt::DPTSwitch;
 
 #[tokio::main]
 async fn main() -> Result<(), knust::KnxError> {
-    // Configure connection
-    let config = ConnectionConfig {
-        connection_type: ConnectionType::Tunneling,
-        gateway_ip: Some("192.168.1.100".parse().unwrap()),
-        individual_address: IndividualAddress::new(1, 1, 240),
-        ..Default::default()
-    };
-
-    // Create Knx instance
-    let knx = Knx::new(config).await?;
+    let knx = Knx::builder()
+        .connection_type(ConnectionType::Tunneling)
+        .gateway("192.168.1.100:3671".parse()?)
+        .individual_address(IndividualAddress::new(1, 1, 240))
+        .build()
+        .await?;
 
     // Connect to KNX network
     knx.connect().await?;

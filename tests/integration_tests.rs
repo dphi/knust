@@ -40,12 +40,10 @@ async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), Kn
         IndividualAddress::new(1, 1, 240),
     )
     .await?;
-    let gateway = server.local_addr();
     let states = States::default();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(gateway.ip())
-        .gateway_port(gateway.port())
+        .gateway(server.local_addr())
         .connection_callback(states.clone())?
         .build()
         .await?;
