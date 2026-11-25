@@ -7,7 +7,10 @@ use knust::protocol::{Telegram, address::GroupAddress};
 #[test]
 fn converter_info_validates_enums_addresses_and_unknown_levels() {
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("272.600"), Some(DptType::ConverterInfo));
+    assert_eq!(
+        "272.600".parse::<DptType>().ok(),
+        Some(DptType::ConverterInfo)
+    );
     assert_eq!(
         registry
             .dpt_number_for_value_type("converter_info")

@@ -43,7 +43,7 @@ fn optional_temperature_fields_and_subtype_bounds() {
         ),
     ];
     for (dpt, number, payload) in cases {
-        assert_eq!(DptType::from_str(number), Some(dpt));
+        assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
         let raw = dpt.encode(&payload).unwrap();
         assert_eq!(&raw[2..4], [0x7f, 0xff]);
         let view = dpt.decode_ref(&raw).unwrap();

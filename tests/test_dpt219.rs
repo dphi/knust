@@ -5,7 +5,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 #[test]
 fn alarm_info_checks_priority_area_and_ignores_reserved_bits() {
     let reg = DptRegistry::new();
-    assert_eq!(DptType::from_str("219.001"), Some(DptType::AlarmInfo));
+    assert_eq!("219.001".parse::<DptType>().ok(), Some(DptType::AlarmInfo));
     assert_eq!(
         reg.dpt_number_for_value_type("alarm_info").unwrap(),
         "219.001"

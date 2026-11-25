@@ -11,7 +11,7 @@ fn next_modes_validate_per_subtype_and_preserve_undefined_delay() {
         (DptType::OccupancyModeNext, "206.104", 2, false),
         (DptType::BuildingModeNext, "206.105", 2, false),
     ] {
-        assert_eq!(DptType::from_str(number), Some(dpt));
+        assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
         for mode in 0..=u8::MAX {
             for delay in [0u16, 1, 65535] {
                 let [hi, lo] = delay.to_be_bytes();

@@ -8,7 +8,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn converter_results_validate_fields_and_preserve_unknown_charge() {
     let registry = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("245.600"),
+        "245.600".parse::<DptType>().ok(),
         Some(DptType::ConverterTestResult)
     );
     assert_eq!(

@@ -14,7 +14,7 @@ fn relative_color_components_apply_validity_and_ignore_reserved_bits() {
         (DptType::RelativeControlXYY, "253.600", 4, true),
         (DptType::RelativeControlRGB, "254.600", 3, false),
     ] {
-        assert_eq!(DptType::from_str(number), Some(dpt));
+        assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
         for first in 0..=u8::MAX {
             for flags in 0..=u8::MAX {
                 let mut raw = vec![0xf9; len];

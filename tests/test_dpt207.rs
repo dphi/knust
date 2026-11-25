@@ -21,7 +21,7 @@ fn actuator_subtypes_validate_percentages_and_masks() {
         (DptType::ActuatorPositionStatus, "207.105", false, false, 31),
         (DptType::LightingActuatorStatus, "207.600", true, true, 255),
     ] {
-        assert_eq!(DptType::from_str(number), Some(dpt));
+        assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
         for raw in 0..=u16::MAX {
             let bytes = raw.to_be_bytes();
             let valid = scaled || (optional && bytes[1] & 1 == 0) || bytes[0] <= 100;

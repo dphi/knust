@@ -272,7 +272,7 @@ pub trait DptValue: Sized + Send + Sync + std::fmt::Debug + Clone + PartialEq + 
     /// Returns [`ProtocolError::DptError`] if no runtime `DptType` is
     /// registered for [`Self::DPT_NUMBER`].
     fn dpt_type() -> Result<DptType> {
-        DptType::from_str(Self::DPT_NUMBER).ok_or_else(|| {
+        Self::DPT_NUMBER.parse().map_err(|_| {
             ProtocolError::DptError {
                 dpt_type: Self::DPT_NUMBER.to_string(),
                 details: "no runtime DptType registered for this DPT number".to_string(),

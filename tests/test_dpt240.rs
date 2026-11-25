@@ -8,7 +8,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn blind_positions_use_independent_validity_bits() {
     let registry = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("240.800"),
+        "240.800".parse::<DptType>().ok(),
         Some(DptType::CombinedPosition)
     );
     assert_eq!(

@@ -5,7 +5,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 #[test]
 fn access_data_encodes_decimal_digits_and_validates() {
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("15.000"), Some(DptType::AccessData));
+    assert_eq!("15.000".parse::<DptType>().ok(), Some(DptType::AccessData));
     assert_eq!(
         registry.dpt_number_for_value_type("access_data").unwrap(),
         "15.000"

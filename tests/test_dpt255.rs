@@ -8,7 +8,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn coordinates_validate_and_round_trip_wire_values() {
     let registry = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("255.001"),
+        "255.001".parse::<DptType>().ok(),
         Some(DptType::GeographicalLocation)
     );
     assert_eq!(

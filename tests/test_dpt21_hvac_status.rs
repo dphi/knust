@@ -15,7 +15,7 @@ macro_rules! check_typed_status {
             ($mask as u8).count_ones() as usize
         );
         assert_eq!(<$wrapper>::new(wrapper.value()).as_bytes(), &[$mask]);
-        let dpt = DptType::from_str($number).unwrap();
+        let dpt = $number.parse::<DptType>().unwrap();
         let registry = DptRegistry::new();
         assert_eq!(registry.metadata($number).unwrap().byte_length, 1);
         for raw in 0..=u8::MAX {
@@ -43,7 +43,7 @@ macro_rules! check_typed_status {
 
 macro_rules! check_typed_status16 {
     ($wrapper:ty, $number:literal, $mask:expr, $fields:expr) => {{
-        let dpt = DptType::from_str($number).unwrap();
+        let dpt = $number.parse::<DptType>().unwrap();
         let registry = DptRegistry::new();
         assert_eq!(registry.metadata($number).unwrap().byte_length, 2);
         for raw in 0..=u16::MAX {
@@ -109,7 +109,7 @@ fn dry_contact_and_phases_status_preserve_defined_bits() {
 
 #[test]
 fn rf_mode_info_decodes_invalid_received_flag_but_rejects_writes() {
-    let dpt = DptType::from_str("21.1000").unwrap();
+    let dpt = "21.1000".parse::<DptType>().unwrap();
     let registry = DptRegistry::new();
     assert!(RFModeInfo::default().asynchronous);
 

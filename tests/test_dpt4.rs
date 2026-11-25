@@ -87,7 +87,7 @@ fn character_length_validation_and_registry() {
         (DptType::CharacterLatin1, "character_latin_1"),
     ] {
         let number = dpt.number_str();
-        assert_eq!(DptType::from_str(&number), Some(dpt));
+        assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
         assert_eq!(dpt.byte_length(), 1);
         assert_eq!(registry.metadata(&number).unwrap().byte_length, 1);
         assert_eq!(registry.dpt_number_for_value_type(name).unwrap(), number);

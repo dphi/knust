@@ -9,7 +9,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn dali_gear_validates_group_addresses_and_ignores_reserved_bits() {
     let registry = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("237.600"),
+        "237.600".parse::<DptType>().ok(),
         Some(DptType::DALIControlGearDiagnostic)
     );
     assert_eq!(

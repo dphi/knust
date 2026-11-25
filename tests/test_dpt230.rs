@@ -7,7 +7,10 @@ use knust::protocol::{Telegram, address::GroupAddress};
 #[test]
 fn mbus_address_fields_round_trip_and_preserve_unknown_media() {
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("230.1000"), Some(DptType::MBusAddress));
+    assert_eq!(
+        "230.1000".parse::<DptType>().ok(),
+        Some(DptType::MBusAddress)
+    );
     assert_eq!(
         registry.dpt_number_for_value_type("mbus_address").unwrap(),
         "230.1000"

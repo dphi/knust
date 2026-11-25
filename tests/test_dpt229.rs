@@ -7,7 +7,10 @@ use knust::protocol::{Telegram, address::GroupAddress};
 #[test]
 fn metering_values_validate_unit_codes_and_status_flags() {
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("229.001"), Some(DptType::MeteringValue));
+    assert_eq!(
+        "229.001".parse::<DptType>().ok(),
+        Some(DptType::MeteringValue)
+    );
     assert_eq!(
         registry
             .dpt_number_for_value_type("metering_value")

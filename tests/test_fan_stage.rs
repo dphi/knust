@@ -7,7 +7,7 @@ use knust::protocol::dpt::{DPTFanStage, DptPayload, DptRegistry, DptType, DptVal
 #[test]
 fn fan_stage_preserves_every_octet() {
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("5.100"), Some(DptType::FanStage));
+    assert_eq!("5.100".parse::<DptType>().ok(), Some(DptType::FanStage));
     assert_eq!(
         registry.dpt_number_for_value_type("fan_stage").unwrap(),
         "5.100"

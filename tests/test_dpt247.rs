@@ -8,7 +8,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn converter_test_info_reuses_date_time_flags_and_encodes_updated_fields() {
     let reg = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("247.600"),
+        "247.600".parse::<DptType>().ok(),
         Some(DptType::ConverterTestInfo)
     );
     assert_eq!(

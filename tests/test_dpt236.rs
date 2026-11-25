@@ -8,7 +8,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn prioritised_mode_round_trips_every_octet() {
     let registry = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("236.001"),
+        "236.001".parse::<DptType>().ok(),
         Some(DptType::PrioritisedModeControl)
     );
     assert_eq!(

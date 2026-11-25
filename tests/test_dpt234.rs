@@ -22,7 +22,7 @@ fn language_and_region_codes_validate_and_normalize() {
             "DE",
         ),
     ] {
-        assert_eq!(DptType::from_str(number), Some(dpt));
+        assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
         assert_eq!(registry.dpt_number_for_value_type(kind).unwrap(), number);
         for input in ["de", "DE", "De", "dE"] {
             let view = dpt.decode_ref(input.as_bytes()).unwrap();

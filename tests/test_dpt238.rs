@@ -36,7 +36,7 @@ fn scene_configuration_and_dali_diagnostics_round_trip_all_octets() {
                 "238.600",
             ),
         ] {
-            assert_eq!(DptType::from_str(number), Some(dpt));
+            assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
             assert_eq!(DptPayload::from(dpt.decode_ref(&raw).unwrap()), payload);
             assert_eq!(dpt.encode(&payload).unwrap(), raw);
             assert_eq!(dpt.parse(&payload.formatted(None)).unwrap(), raw);

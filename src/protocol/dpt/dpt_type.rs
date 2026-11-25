@@ -388,23 +388,16 @@ impl DptType {
     /// Format as "main.sub" string (e.g., "9.001").
     #[must_use]
     pub fn number_str(&self) -> String {
-        format!("{}.{:03}", self.main(), self.sub())
+        self.to_string()
     }
 
     /// Look up a `DptType` by main and sub numbers.
     #[must_use]
     pub fn from_number(main: u16, sub: u16) -> Option<Self> {
-        Self::from_repr(u32::from(main) * 100_000 + u32::from(sub))
-    }
-
-    /// Parse a DPT number string like "9.001" or "9.1".
-    #[allow(clippy::should_implement_trait)]
-    #[must_use]
-    pub fn from_str(s: &str) -> Option<Self> {
-        let (main_s, sub_s) = s.split_once('.')?;
-        let main: u16 = main_s.parse().ok()?;
-        let sub: u16 = sub_s.parse().ok()?;
-        Self::from_number(main, sub)
+        let repr = u32::from(main)
+            .checked_mul(100_000)?
+            .checked_add(u32::from(sub))?;
+        Self::from_repr(repr)
     }
 
     /// Get the unit of measurement for this DPT, if any.
@@ -583,6 +576,30 @@ impl DptType {
             .into());
         }
         Ok(())
+    }
+}
+
+impl std::fmt::Display for DptType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{:03}", self.main(), self.sub())
+    }
+}
+
+impl std::str::FromStr for DptType {
+    type Err = crate::error::KnxError;
+
+    /// Parse a DPT number such as `"9.001"` or `"9.1"`.
+    fn from_str(s: &str) -> Result<Self> {
+        let dpt = s
+            .split_once('.')
+            .and_then(|(main, sub)| Self::from_number(main.parse().ok()?, sub.parse().ok()?));
+        dpt.ok_or_else(|| {
+            ProtocolError::DptError {
+                dpt_type: s.to_owned(),
+                details: "Unknown or invalid DPT number".to_owned(),
+            }
+            .into()
+        })
     }
 }
 

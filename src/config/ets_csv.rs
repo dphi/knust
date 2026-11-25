@@ -150,7 +150,7 @@ fn parse_group_address(s: &str) -> Option<GroupAddress> {
 /// Parse DPT from various ETS formats:
 /// - "DPST-9-1" -> `DptType` `from_number(9`, 1)
 /// - "DPT-9" -> `DptType` `from_number(9`, 1) (default sub=1)
-/// - "9.001" or "9.1" -> `DptType` `from_str`
+/// - "9.001" or "9.1" -> `str::parse`
 fn parse_dpt_string(s: &str) -> Option<DptType> {
     if s.is_empty() {
         return None;
@@ -168,7 +168,7 @@ fn parse_dpt_string(s: &str) -> Option<DptType> {
         return DptType::from_number(main, 1);
     }
 
-    DptType::from_str(s)
+    s.parse().ok()
 }
 
 #[cfg(test)]

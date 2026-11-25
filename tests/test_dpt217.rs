@@ -117,7 +117,7 @@ fn version_rejects_malformed_values_and_registers_typed_writes() {
             .is_err()
     );
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("217.001"), Some(DptType::Version));
+    assert_eq!("217.001".parse::<DptType>().ok(), Some(DptType::Version));
     assert_eq!(DPTVersion::dpt_type().unwrap(), DptType::Version);
     assert_eq!(
         registry.dpt_number_for_value_type("version").unwrap(),

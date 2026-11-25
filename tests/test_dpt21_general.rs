@@ -12,7 +12,7 @@ fn general_and_device_status_preserve_known_bits() {
         (DptType::GeneralStatus, "21.001", 31),
         (DptType::DeviceControl, "21.002", 7),
     ] {
-        assert_eq!(DptType::from_str(number), Some(dpt));
+        assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
         for raw in 0..=u8::MAX {
             let bytes = [raw];
             let view = dpt.decode_ref(&bytes).unwrap();

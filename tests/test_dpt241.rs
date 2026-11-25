@@ -5,7 +5,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 #[test]
 fn shutter_status_bits_and_position_validity_round_trip() {
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("241.800"), Some(DptType::StatusSAB));
+    assert_eq!("241.800".parse::<DptType>().ok(), Some(DptType::StatusSAB));
     assert_eq!(
         registry.dpt_number_for_value_type("status_sab").unwrap(),
         "241.800"

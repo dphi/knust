@@ -22,7 +22,10 @@ fn battery_info_view_borrows_the_input() {
 #[test]
 fn battery_info_decodes_unknown_levels_and_reserved_flags() {
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("246.600"), Some(DptType::BatteryInfo));
+    assert_eq!(
+        "246.600".parse::<DptType>().ok(),
+        Some(DptType::BatteryInfo)
+    );
     assert_eq!(
         registry.dpt_number_for_value_type("battery_info").unwrap(),
         "246.600"

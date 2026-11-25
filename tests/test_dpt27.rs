@@ -8,7 +8,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn output_masks_and_states_round_trip() {
     let registry = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("27.001"),
+        "27.001".parse::<DptType>().ok(),
         Some(DptType::CombinedInfoOnOff)
     );
     assert_eq!(

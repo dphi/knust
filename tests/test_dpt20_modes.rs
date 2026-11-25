@@ -22,7 +22,7 @@ fn modes_validate_and_round_trip_all_wire_values() {
             &["Disabled", "Stage A", "Stage B", "Both Stages"][..],
         ),
     ] {
-        assert_eq!(DptType::from_str(number), Some(dpt));
+        assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
         assert_eq!(registry.dpt_number_for_value_type(kind).unwrap(), number);
         for raw in 0..=u8::MAX {
             let bytes = [raw];

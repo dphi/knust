@@ -9,7 +9,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn color_temperature_transition_tracks_validity_and_rounding() {
     let reg = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("249.600"),
+        "249.600".parse::<DptType>().ok(),
         Some(DptType::ColorTemperatureTransition)
     );
     assert_eq!(

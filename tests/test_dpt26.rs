@@ -5,7 +5,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 #[test]
 fn scene_info_handles_every_octet_and_writes_canonical_values() {
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("26.001"), Some(DptType::SceneInfo));
+    assert_eq!("26.001".parse::<DptType>().ok(), Some(DptType::SceneInfo));
     assert_eq!(
         registry.dpt_number_for_value_type("scene_info").unwrap(),
         "26.001"

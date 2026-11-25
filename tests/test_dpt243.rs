@@ -8,7 +8,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn xyy_transition_validity_rounding_and_bounds() {
     let reg = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("243.600"),
+        "243.600".parse::<DptType>().ok(),
         Some(DptType::XYYColorTransition)
     );
     assert_eq!(

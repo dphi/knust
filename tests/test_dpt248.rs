@@ -8,7 +8,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn fixed_converter_info_validity_levels_and_feature_bits() {
     let registry = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("248.600"),
+        "248.600".parse::<DptType>().ok(),
         Some(DptType::ConverterInfoFix)
     );
     assert_eq!(

@@ -16,7 +16,7 @@ fn forecast_validity_sentinels_and_subtype_ranges() {
         (DptType::ForecastAirPollutants, "273.006"),
         (DptType::ForecastSunIntensity, "273.007"),
     ] {
-        assert_eq!(DptType::from_str(number), Some(dpt));
+        assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
         for mask in 0..16 {
             let value = Forecast {
                 delay_time: (mask & 8 != 0).then_some(60),

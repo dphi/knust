@@ -11,7 +11,7 @@ fn scaling_times_validate_writes_but_decode_zero_wire_values() {
         (DptType::ScalingSpeed, "225.001", 100u32),
         (DptType::ScalingStepTime, "225.002", 1u32),
     ] {
-        assert_eq!(DptType::from_str(number), Some(dpt));
+        assert_eq!(number.parse::<DptType>().ok(), Some(dpt));
         for ticks in [1u32, 2, 255, 65535] {
             for percent in 1..=100 {
                 let value = ScalingTime {

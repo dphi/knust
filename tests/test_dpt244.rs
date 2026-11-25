@@ -7,7 +7,10 @@ use knust::protocol::{Telegram, address::GroupAddress};
 #[test]
 fn converter_status_validates_enums_and_ignores_reserved_bits() {
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("244.600"), Some(DptType::ConverterStatus));
+    assert_eq!(
+        "244.600".parse::<DptType>().ok(),
+        Some(DptType::ConverterStatus)
+    );
     assert_eq!(
         registry
             .dpt_number_for_value_type("converter_status")

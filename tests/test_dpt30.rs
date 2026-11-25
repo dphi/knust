@@ -8,7 +8,7 @@ use knust::protocol::{Telegram, address::GroupAddress};
 fn all_channel_bits_use_knx_wire_order() {
     let registry = DptRegistry::new();
     assert_eq!(
-        DptType::from_str("30.1010"),
+        "30.1010".parse::<DptType>().ok(),
         Some(DptType::ChannelActivation24)
     );
     assert_eq!(

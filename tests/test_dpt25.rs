@@ -7,7 +7,10 @@ use knust::protocol::{Telegram, address::GroupAddress};
 #[test]
 fn repetitions_validate_all_octets_and_round_trip() {
     let registry = DptRegistry::new();
-    assert_eq!(DptType::from_str("25.1000"), Some(DptType::DoubleNibble));
+    assert_eq!(
+        "25.1000".parse::<DptType>().ok(),
+        Some(DptType::DoubleNibble)
+    );
     assert_eq!(
         registry.dpt_number_for_value_type("double_nibble").unwrap(),
         "25.1000"
