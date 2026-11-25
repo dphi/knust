@@ -215,7 +215,10 @@ struct GroupValueReadCallback {
 #[async_trait::async_trait]
 impl TelegramCallbackFn for GroupValueReadCallback {
     async fn call(&self, telegram: &Telegram) {
-        if telegram.destination == Address::Group(self.address) && !telegram.payload.is_empty() {
+        if telegram.telegram_type == TelegramType::GroupValueResponse
+            && telegram.destination == Address::Group(self.address)
+            && !telegram.payload.is_empty()
+        {
             let _ = self.tx.try_send(telegram.payload.clone());
         }
     }

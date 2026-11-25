@@ -469,6 +469,29 @@ async fn read_response_can_arrive_before_tunnelling_ack() {
     });
     let outgoing = receive(&peer).await;
     let request = TunnellingRequest::parse(&outgoing.body).unwrap();
+    let write = CemiFrame::new(
+        MessageCode::LDataInd,
+        IndividualAddress::new(1, 1, 1),
+        Address::Group(address),
+        GroupValueService::Write(vec![99]).encode(),
+    );
+    let update = KnxIpFrame::new(
+        ServiceType::TunnellingRequest,
+        TunnellingRequest::new(7, 0, write.serialize().unwrap()).serialize(),
+    );
+    peer.send_to(&update.serialize(), destination)
+        .await
+        .unwrap();
+    let telegram = timeout(
+        Duration::from_secs(1),
+        knx.telegram_queue.dequeue_incoming(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(telegram.telegram_type, TelegramType::GroupValueWrite);
+    knx.test_notify_telegram_received(&telegram).await;
+
     let cemi = CemiFrame::new(
         MessageCode::LDataInd,
         IndividualAddress::new(1, 1, 1),
@@ -477,7 +500,7 @@ async fn read_response_can_arrive_before_tunnelling_ack() {
     );
     let response = KnxIpFrame::new(
         ServiceType::TunnellingRequest,
-        TunnellingRequest::new(7, 0, cemi.serialize().unwrap()).serialize(),
+        TunnellingRequest::new(7, 1, cemi.serialize().unwrap()).serialize(),
     );
     peer.send_to(&response.serialize(), destination)
         .await
