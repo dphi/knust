@@ -125,7 +125,7 @@ pub enum ConnectionType {
 }
 
 /// Security configuration for secure connections.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SecurityConfig {
     /// Device authentication password (plaintext) — e.g. the FDSK printed on
     /// the device (strip the grouping hyphens/spaces first), or a custom
@@ -142,6 +142,15 @@ pub struct SecurityConfig {
 
     /// Security session timeout in seconds
     pub session_timeout: u32,
+}
+
+impl std::fmt::Debug for SecurityConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecurityConfig")
+            .field("has_user_password", &self.user_password.is_some())
+            .field("session_timeout", &self.session_timeout)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Backoff configuration for reconnection attempts

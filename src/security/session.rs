@@ -26,7 +26,7 @@ const MESSAGE_TAG_TUNNELLING: [u8; 2] = [0x00, 0x00];
 const DEVICE_SERIAL_NUMBER: [u8; 6] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// Configuration for secure session establishment.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionConfig {
     /// User ID for authentication (1-127)
     pub user_id: u8,
@@ -36,6 +36,16 @@ pub struct SessionConfig {
     pub device_auth_password: Option<String>,
     /// Session keepalive interval in seconds
     pub keepalive_interval: u32,
+}
+
+impl std::fmt::Debug for SessionConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionConfig")
+            .field("user_id", &self.user_id)
+            .field("has_device_auth", &self.device_auth_password.is_some())
+            .field("keepalive_interval", &self.keepalive_interval)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for SessionConfig {

@@ -425,3 +425,26 @@ mod property_tests {
         }
     }
 }
+#[test]
+fn public_connection_configuration_debug_omits_passwords() {
+    let device_password = "device-credential-fixture";
+    let user_password = "user-credential-fixture";
+    let session = crate::security::SessionConfig {
+        user_password: user_password.to_string(),
+        device_auth_password: Some(device_password.to_string()),
+        ..Default::default()
+    };
+    let connection = crate::transport::ConnectionConfig {
+        security: Some(crate::transport::SecurityConfig {
+            device_auth_password: device_password.to_string(),
+            user_password: Some(user_password.to_string()),
+            keyring_path: None,
+            session_timeout: 60,
+        }),
+        ..Default::default()
+    };
+    for debug in [format!("{session:?}"), format!("{connection:?}")] {
+        assert!(!debug.contains(device_password));
+        assert!(!debug.contains(user_password));
+    }
+}
