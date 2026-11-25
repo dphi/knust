@@ -25,14 +25,11 @@ use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{RwLock, broadcast, oneshot};
 
-use crate::error::{ProtocolError, Result, TransportError};
+use crate::error::{Result, TransportError};
 use crate::log_transport;
 use crate::logging::LogLevel;
 use crate::protocol::address::IndividualAddress;
-use crate::protocol::cemi::{
-    CemiFrame, CemiPropertyInfo, CemiPropertyReadRequest, CemiPropertyReadResponse,
-    CemiPropertyWriteRequest, CemiPropertyWriteResponse, MessageCode,
-};
+use crate::protocol::cemi::{CemiFrame, MessageCode};
 use crate::protocol::knxip::{
     ConnectRequest, ConnectResponse, ConnectionRequestInfo, ConnectionstateRequest,
     ConnectionstateResponse, DisconnectRequest, DisconnectResponse, Hpai, KnxIpFrame, ServiceType,
@@ -49,7 +46,10 @@ use crate::security::{SecureSession, SessionConfig};
 use super::frame_transport::{FrameTransport, TcpFrameTransport};
 use super::tunnel::SequenceValidationResult;
 
+mod device_management;
 mod discovery;
+
+pub use device_management::DeviceManagementHandler;
 
 /// How long a connected client may go without a heartbeat before eviction.
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(2 * 60);
@@ -93,19 +93,6 @@ impl ClientLink {
             ClientLink::Udp { peer_addr, .. } | ClientLink::Tcp { peer_addr, .. } => *peer_addr,
         }
     }
-}
-
-/// Application supplied handler for KNXnet/IP M_PropRead and M_PropWrite
-/// requests. Return KNX cEMI error codes for unsupported or inaccessible
-/// properties.
-pub trait DeviceManagementHandler: Send + Sync {
-    fn read_property(&self, property: CemiPropertyInfo) -> std::result::Result<Vec<u8>, u8>;
-
-    fn write_property(
-        &self,
-        property: CemiPropertyInfo,
-        data: &[u8],
-    ) -> std::result::Result<(), u8>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,11 +286,6 @@ impl TunnelServer {
             local_addr
         );
         Ok(server)
-    }
-
-    /// Configure the property handler used by device-management clients.
-    pub async fn set_device_management_handler(&self, handler: Arc<dyn DeviceManagementHandler>) {
-        *self.device_management_handler.write().await = Some(handler);
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -782,163 +764,6 @@ impl TunnelServer {
         Ok(Some(channel_id))
     }
 
-    async fn handle_device_configuration_request(self: &Arc<Self>, body: &[u8]) -> Result<()> {
-        let request = TunnellingRequest::parse(body)?;
-        let session = self
-            .sessions
-            .read()
-            .await
-            .get(&request.communication_channel_id)
-            .cloned();
-        let Some(session) = session else {
-            return Ok(());
-        };
-        if session.kind != ClientSessionKind::DeviceManagement {
-            return Ok(());
-        }
-        session.touch();
-
-        match session.validate_recv_seq(request.sequence_counter) {
-            SequenceValidationResult::Valid => {
-                let ack = TunnellingAck::new_ok(
-                    request.communication_channel_id,
-                    request.sequence_counter,
-                );
-                self.send_reply(
-                    ServiceType::DeviceConfigurationAck,
-                    &ack.serialize(),
-                    &session.link,
-                )
-                .await?;
-
-                let response = build_device_management_response(
-                    self.device_management_handler.read().await.as_deref(),
-                    &request.raw_cemi,
-                )?;
-                let server = self.clone();
-                let client_sequence = request.sequence_counter;
-                tokio::spawn(async move {
-                    if let Err(error) = server
-                        .send_device_configuration_response(
-                            &session,
-                            client_sequence,
-                            None,
-                            &response,
-                        )
-                        .await
-                    {
-                        log_transport!(
-                            LogLevel::Warn,
-                            "TunnelServer: failed to send device-configuration response: {}",
-                            error
-                        );
-                    }
-                });
-            }
-            SequenceValidationResult::Duplicate => {
-                let ack = TunnellingAck::new_ok(
-                    request.communication_channel_id,
-                    request.sequence_counter,
-                );
-                self.send_reply(
-                    ServiceType::DeviceConfigurationAck,
-                    &ack.serialize(),
-                    &session.link,
-                )
-                .await?;
-                let cached = session.last_device_response.lock().unwrap().clone();
-                if let Some((client_sequence, server_sequence, response)) = cached
-                    && client_sequence == request.sequence_counter
-                {
-                    let server = self.clone();
-                    tokio::spawn(async move {
-                        if let Err(error) = server
-                            .send_device_configuration_response(
-                                &session,
-                                client_sequence,
-                                Some(server_sequence),
-                                &response,
-                            )
-                            .await
-                        {
-                            log_transport!(
-                                LogLevel::Warn,
-                                "TunnelServer: failed to resend device-configuration response: {}",
-                                error
-                            );
-                        }
-                    });
-                }
-            }
-            SequenceValidationResult::Invalid { .. } => {
-                let ack = TunnellingAck::new_sequence_error(
-                    request.communication_channel_id,
-                    request.sequence_counter,
-                );
-                self.send_reply(
-                    ServiceType::DeviceConfigurationAck,
-                    &ack.serialize(),
-                    &session.link,
-                )
-                .await?;
-            }
-        }
-        Ok(())
-    }
-
-    async fn send_device_configuration_response(
-        &self,
-        session: &Arc<ClientSession>,
-        client_sequence: u8,
-        replay_sequence: Option<u8>,
-        cemi: &[u8],
-    ) -> Result<()> {
-        let _guard = session.send_lock.lock().await;
-        let sequence = replay_sequence.unwrap_or_else(|| session.send_seq.load(Ordering::SeqCst));
-        if replay_sequence.is_none() {
-            *session.last_device_response.lock().unwrap() =
-                Some((client_sequence, sequence, cemi.to_vec()));
-        }
-        let request = TunnellingRequest::new(session.channel_id, sequence, cemi.to_vec());
-        let frame = KnxIpFrame::new(ServiceType::DeviceConfigurationRequest, request.serialize())
-            .serialize();
-        let frame = self.maybe_encrypt(frame, session.link.peer_addr()).await?;
-
-        for attempt in 0..2u8 {
-            let (tx, rx) = oneshot::channel();
-            *session.pending_ack.lock().unwrap() = Some((sequence, tx));
-            session.link.send_frame(&frame).await?;
-            match tokio::time::timeout(ACK_TIMEOUT, rx).await {
-                Ok(Ok(ack)) if ack.status_code == TunnellingAck::STATUS_OK => {
-                    if session.send_seq.load(Ordering::SeqCst) == sequence {
-                        session
-                            .send_seq
-                            .store(sequence.wrapping_add(1), Ordering::SeqCst);
-                    }
-                    return Ok(());
-                }
-                Ok(Ok(_)) => {
-                    return Err(TransportError::InvalidConfiguration {
-                        details: "client rejected device-configuration response".into(),
-                    }
-                    .into());
-                }
-                _ if attempt == 0 => {
-                    log_transport!(
-                        LogLevel::Warn,
-                        "TunnelServer: device-configuration ACK timeout for channel {}, retrying once",
-                        session.channel_id
-                    );
-                }
-                _ => {}
-            }
-        }
-        Err(TransportError::Timeout {
-            timeout_ms: ACK_TIMEOUT.as_millis() as u64,
-        }
-        .into())
-    }
-
     async fn handle_tunnelling_request(
         self: &Arc<Self>,
         body: &[u8],
@@ -1272,61 +1097,6 @@ fn build_tunnelling_frame(telegram: &Telegram, channel_id: u8, sequence: u8) -> 
 fn build_tunnel_crd(addr: IndividualAddress) -> Vec<u8> {
     let [hi, lo] = addr.raw().to_be_bytes();
     vec![4, ConnectionRequestInfo::TUNNEL_CONNECTION, hi, lo]
-}
-
-fn build_device_management_response(
-    handler: Option<&dyn DeviceManagementHandler>,
-    cemi: &[u8],
-) -> Result<Vec<u8>> {
-    match cemi.first().copied() {
-        Some(code) if code == MessageCode::MPropReadReq.to_u8() => {
-            let request = CemiPropertyReadRequest::decode(cemi)?;
-            let (property, data, error_code) = match handler {
-                Some(handler) => match handler.read_property(request.property) {
-                    Ok(data) if !data.is_empty() => (request.property, data, None),
-                    Ok(_) => (request.property, Vec::new(), Some(0x01)),
-                    Err(error_code) => {
-                        let property = CemiPropertyInfo {
-                            number_of_elements: 0,
-                            ..request.property
-                        };
-                        (property, Vec::new(), Some(error_code))
-                    }
-                },
-                None => {
-                    let property = CemiPropertyInfo {
-                        number_of_elements: 0,
-                        ..request.property
-                    };
-                    (property, Vec::new(), Some(0x01))
-                }
-            };
-            CemiPropertyReadResponse {
-                property,
-                data,
-                error_code,
-            }
-            .encode()
-        }
-        Some(code) if code == MessageCode::MPropWriteReq.to_u8() => {
-            let request = CemiPropertyWriteRequest::decode(cemi)?;
-            let error_code = match handler {
-                Some(handler) => handler
-                    .write_property(request.property, &request.data)
-                    .err(),
-                None => Some(0x01),
-            };
-            CemiPropertyWriteResponse {
-                property: request.property,
-                error_code,
-            }
-            .encode()
-        }
-        _ => Err(ProtocolError::InvalidFrame {
-            details: "unsupported device-management cEMI request".into(),
-        }
-        .into()),
-    }
 }
 
 fn parse_cemi_to_telegram(cemi_data: &[u8]) -> Result<Telegram> {
