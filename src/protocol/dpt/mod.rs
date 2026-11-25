@@ -1,15 +1,20 @@
-//! Modern type-safe Data Point Type (DPT) system with const generics and compile-time validation.
+//! Typed codecs and runtime decoding for KNX datapoint types.
+//!
+//! Family modules such as [`dpt246`] contain the wire codec and borrowed view.
+//! Common values such as [`BatteryInfo`] are also available directly in this
+//! module. Use [`DptType::decode_ref`] when the datapoint number is known at runtime.
 
 use crate::error::{ProtocolError, Result};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
-pub mod decode;
-pub mod dpt_type;
-pub mod group_registry;
-pub mod payload;
-pub mod unit;
-pub mod view;
+mod decode;
+mod dpt_type;
+mod group_registry;
+mod parse;
+mod payload;
+mod unit;
+mod view;
 
 // DPT type modules - organized by DPT number like Python implementation
 pub mod dpt1; // Boolean
