@@ -412,18 +412,18 @@ mod unit_tests {
         assert!(knx.group_address::<DPTSwitch>(ga).is_ok());
 
         // Plain bool: passing e.g. a DPTScaling (or a u8) here wouldn't compile.
-        switch.write(true).await.unwrap();
+        switch.enqueue_write(true).await.unwrap();
         assert_eq!(knx.telegram_queue_size().await, 1);
 
         // The DPT value type itself still works too.
-        switch.write(DPTSwitch::new(false)).await.unwrap();
+        switch.enqueue_write(DPTSwitch::new(false)).await.unwrap();
         assert_eq!(knx.telegram_queue_size().await, 2);
 
         // String, checked against the bound DPT at runtime instead of at
         // compile time — the only shape that can fail on bad input.
-        switch.write("off").await.unwrap();
+        switch.enqueue_write("off").await.unwrap();
         assert_eq!(knx.telegram_queue_size().await, 3);
-        assert!(switch.write("banana").await.is_err());
+        assert!(switch.enqueue_write("banana").await.is_err());
 
         // Both the handle-scoped (typed) and the generic (dynamic) decode
         // path agree, because both read from the same registry binding.
@@ -498,7 +498,7 @@ mod unit_tests {
         // too — it re-checks the registry on every use, so it can't keep
         // silently operating under a DPT the registry no longer agrees on.
         assert!(switch.decode(&telegram).unwrap().is_err());
-        assert!(switch.write(true).await.is_err());
+        assert!(switch.enqueue_write(true).await.is_err());
 
         // The address is free to be bound to a different DPT now.
         knx.group_address::<DPTScaling>(switch_ga).unwrap();
