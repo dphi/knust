@@ -81,7 +81,7 @@ async fn tunnel_send_waits_for_cemi_confirmation_and_consumes_it() {
     .unwrap();
     knx.connection.send_replace(Some(connection));
     knx.start_telegram_receiving_task().await.unwrap();
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.sending_task.replace(knx.start_telegram_sending_task());
 
     let address = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
     for value in 1..=3 {
@@ -458,7 +458,7 @@ async fn read_response_can_arrive_before_tunnelling_ack() {
     .unwrap();
     knx.connection.send_replace(Some(connection.clone()));
     knx.start_telegram_receiving_task().await.unwrap();
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.sending_task.replace(knx.start_telegram_sending_task());
     let address = RawGroupAddress::try_from_raw(1).unwrap();
     let reading = tokio::spawn({
         let knx = knx.clone();
@@ -547,12 +547,12 @@ async fn shutdown_keeps_receiver_alive_until_queued_send_is_acknowledged() {
     })
     .await
     .unwrap();
-    let cleanup = knx.cleanup_task.write().await.take().unwrap();
-    cleanup.abort();
-    let _ = cleanup.await;
+    let mut cleanup = knx.cleanup_task.take().unwrap();
+    cleanup.0.abort();
+    let _ = (&mut cleanup.0).await;
     knx.connection.send_replace(Some(connection.clone()));
     knx.start_telegram_receiving_task().await.unwrap();
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.sending_task.replace(knx.start_telegram_sending_task());
     knx.send_telegram(&Telegram::group_write(
         RawGroupAddress::try_from_raw(1).unwrap(),
         vec![1],

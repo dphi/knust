@@ -41,7 +41,44 @@ pub use builder::KnxBuilder;
 use p2p::ActiveP2pSessions;
 pub use p2p::{P2pConnection, P2pConnectionless, ScannedInterfaceObject};
 
-type TaskSlot = Arc<RwLock<Option<JoinHandle<()>>>>;
+#[derive(Clone, Default)]
+struct TaskSlot(Arc<std::sync::Mutex<Option<OwnedTask>>>);
+
+struct OwnedTask(JoinHandle<()>);
+
+impl Drop for OwnedTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+impl TaskSlot {
+    fn replace(&self, task: JoinHandle<()>) {
+        let previous = self.0.lock().unwrap().replace(OwnedTask(task));
+        drop(previous);
+    }
+
+    fn take(&self) -> Option<OwnedTask> {
+        self.0.lock().unwrap().take()
+    }
+
+    fn is_running(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|task| !task.0.is_finished())
+    }
+
+    #[cfg(test)]
+    fn abort_handle(&self) -> Option<tokio::task::AbortHandle> {
+        self.0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|task| task.0.abort_handle())
+    }
+}
 
 /// Control events for connection management
 #[derive(Debug, Clone)]
@@ -342,15 +379,15 @@ impl Knx {
             individual_request_lock: Arc::new(tokio::sync::Mutex::new(())),
             active_p2p_sessions: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             pending_cemi_confirmation: Arc::new(std::sync::Mutex::new(None)),
-            processing_task: Arc::new(RwLock::new(None)),
-            receiving_task: Arc::new(RwLock::new(None)),
-            sending_task: Arc::new(RwLock::new(None)),
-            receive_drain_task: Arc::new(RwLock::new(Some(receive_drain_handle))),
-            control_task: Arc::new(RwLock::new(None)),
-            reconnect_task: Arc::new(RwLock::new(None)),
+            processing_task: TaskSlot::default(),
+            receiving_task: TaskSlot::default(),
+            sending_task: TaskSlot::default(),
+            receive_drain_task: TaskSlot::default(),
+            control_task: TaskSlot::default(),
+            reconnect_task: TaskSlot::default(),
             memory_monitor,
             performance_optimizer,
-            cleanup_task: Arc::new(RwLock::new(None)),
+            cleanup_task: TaskSlot::default(),
             event_handler,
             telegram_queue,
             control_tx,
@@ -360,8 +397,10 @@ impl Knx {
             #[cfg(feature = "dpt")]
             group_registry: Arc::new(GroupAddressRegistry::new()),
             #[cfg(feature = "dpt")]
-            refresh_task: Arc::new(RwLock::new(None)),
+            refresh_task: TaskSlot::default(),
         };
+
+        knx.receive_drain_task.replace(receive_drain_handle);
 
         // Start memory cleanup task
         knx.start_memory_cleanup_task().await?;
@@ -407,10 +446,7 @@ impl Knx {
             log_application!(LogLevel::Info, "Memory cleanup task stopped");
         });
 
-        {
-            let mut task = self.cleanup_task.write().await;
-            *task = Some(handle);
-        }
+        self.cleanup_task.replace(handle);
 
         Ok(())
     }
@@ -466,10 +502,7 @@ impl Knx {
             log_application!(LogLevel::Info, "Group address refresh task stopped");
         });
 
-        {
-            let mut task = self.refresh_task.write().await;
-            *task = Some(handle);
-        }
+        self.refresh_task.replace(handle);
 
         Ok(())
     }
@@ -560,8 +593,7 @@ impl Knx {
                                     log_application!(LogLevel::Info, "Auto-reconnect enabled, starting reconnection task");
 
                                     // Check if reconnection is already in progress
-                                    let mut reconnect_task_guard = reconnect_task.write().await;
-                                    if reconnect_task_guard.as_ref().is_none_or(|task| task.is_finished()) {
+                                    if !reconnect_task.is_running() {
                                         // Start reconnection task (following Python pattern)
                                         let reconnect_handle = Self::start_reconnection_task(
                                             config.clone(),
@@ -572,7 +604,7 @@ impl Knx {
                                             shutdown_flag.clone(),
                                         );
 
-                                        *reconnect_task_guard = Some(reconnect_handle);
+                                        reconnect_task.replace(reconnect_handle);
                                         log_application!(LogLevel::Debug, "Reconnection task started");
                                     } else {
                                         log_application!(LogLevel::Debug, "Reconnection already in progress");
@@ -597,10 +629,7 @@ impl Knx {
         });
 
         // Store the task handle
-        {
-            let mut task = self.control_task.write().await;
-            *task = Some(handle);
-        }
+        self.control_task.replace(handle);
 
         Ok(())
     }
@@ -973,7 +1002,8 @@ impl Knx {
         self.start_telegram_processing_task().await?;
 
         // Start the outgoing telegram sending task
-        *self.sending_task.write().await = Some(self.start_telegram_sending_task());
+        self.sending_task
+            .replace(self.start_telegram_sending_task());
 
         // Start the group-address refresh task
         #[cfg(feature = "dpt")]
@@ -1092,7 +1122,7 @@ impl Knx {
                 }
             }
         });
-        *self.receiving_task.write().await = Some(handle);
+        self.receiving_task.replace(handle);
         Ok(())
     }
 
@@ -1188,10 +1218,7 @@ impl Knx {
         });
 
         // Store the task handle
-        {
-            let mut task = self.processing_task.write().await;
-            *task = Some(handle);
-        }
+        self.processing_task.replace(handle);
 
         Ok(())
     }
@@ -1521,12 +1548,12 @@ impl Knx {
     }
 
     async fn finish_task(task: &TaskSlot, grace: std::time::Duration) {
-        let handle = task.write().await.take();
+        let handle = task.take();
         if let Some(mut handle) = handle
-            && tokio::time::timeout(grace, &mut handle).await.is_err()
+            && tokio::time::timeout(grace, &mut handle.0).await.is_err()
         {
-            handle.abort();
-            let _ = handle.await;
+            handle.0.abort();
+            let _ = (&mut handle.0).await;
         }
     }
 

@@ -241,14 +241,12 @@ impl Knx {
         ttl: std::time::Duration,
     ) -> Result<()> {
         self.group_registry.set_refresh_ttl(address, Some(ttl))?;
-        if let Ok(guard) = self.refresh_task.try_read() {
-            if guard.is_none() {
-                log_application!(
-                    LogLevel::Warn,
-                    "set_group_address_refresh({}) configured before Knx::start() — refresh won't run until start() is called",
-                    address
-                );
-            }
+        if !self.refresh_task.is_running() {
+            log_application!(
+                LogLevel::Warn,
+                "set_group_address_refresh({}) configured before Knx::start() — refresh won't run until start() is called",
+                address
+            );
         }
         Ok(())
     }

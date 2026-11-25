@@ -93,7 +93,7 @@ async fn sender_uses_replacement_connection() {
     let (old, _old_tx, mut old_sent) = peer();
     let (new, _new_tx, mut new_sent) = peer();
     knx.connection.send_replace(Some(old.clone()));
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.sending_task.replace(knx.start_telegram_sending_task());
     let telegram = Telegram::group_write(RawGroupAddress::try_from_raw(1).unwrap(), vec![1]);
     knx.send_telegram(&telegram).await.unwrap();
     let wire = timeout(Duration::from_secs(1), old_sent.recv())
@@ -389,7 +389,7 @@ async fn read_deadline_starts_after_transmission_not_enqueue() {
     );
     let (connection, _incoming, mut sent) = peer();
     knx.connection.send_replace(Some(connection));
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.sending_task.replace(knx.start_telegram_sending_task());
     timeout(Duration::from_secs(1), sent.recv())
         .await
         .unwrap()
@@ -435,7 +435,7 @@ async fn p2p_ack_deadline_starts_after_transmission() {
 
     let (connection, _incoming, mut sent) = peer();
     knx.connection.send_replace(Some(connection));
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.sending_task.replace(knx.start_telegram_sending_task());
     timeout(Duration::from_secs(1), sent.recv())
         .await
         .unwrap()
@@ -483,7 +483,7 @@ async fn timed_out_p2p_send_is_not_transmitted_later() {
     ));
     let (connection, _incoming, mut sent) = peer();
     knx.connection.send_replace(Some(connection));
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.sending_task.replace(knx.start_telegram_sending_task());
     assert!(
         timeout(Duration::from_millis(100), sent.recv())
             .await
@@ -518,7 +518,7 @@ async fn unsent_or_cancelled_reads_do_not_transmit_later_or_leak_callbacks() {
     );
     let (connection, _incoming, mut sent) = peer();
     knx.connection.send_replace(Some(connection));
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.sending_task.replace(knx.start_telegram_sending_task());
     assert!(
         timeout(Duration::from_millis(100), sent.recv())
             .await
@@ -561,7 +561,7 @@ async fn shutdown_cancels_reads_already_waiting_for_a_bus_response() {
     let knx = knx().await;
     let (connection, _incoming, mut sent) = peer();
     knx.connection.send_replace(Some(connection));
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.sending_task.replace(knx.start_telegram_sending_task());
     let reading = tokio::spawn({
         let knx = knx.clone();
         async move {

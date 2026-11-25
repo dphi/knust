@@ -52,9 +52,9 @@ async fn knx_without_cleanup() -> Knx {
     })
     .await
     .unwrap();
-    let handle = knx.cleanup_task.write().await.take().unwrap();
-    handle.abort();
-    let _ = handle.await;
+    let mut handle = knx.cleanup_task.take().unwrap();
+    handle.0.abort();
+    let _ = (&mut handle.0).await;
     knx
 }
 
@@ -66,7 +66,7 @@ async fn sending(knx: &Knx) -> Arc<BlockingConnection> {
         sent: AtomicUsize::new(0),
     });
     knx.connection.send_replace(Some(connection.clone()));
-    *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
+    knx.sending_task.replace(knx.start_telegram_sending_task());
     knx.send_telegram(&Telegram::group_write(
         RawGroupAddress::try_from_raw(1).unwrap(),
         vec![1],
@@ -124,6 +124,29 @@ impl Drop for Completed {
     }
 }
 
+#[tokio::test]
+async fn dropping_last_client_cancels_its_background_tasks() {
+    let knx = Knx::new(ConnectionConfig {
+        connection_type: ConnectionType::Routing,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let drain = knx.receive_drain_task.abort_handle().unwrap();
+    let cleanup = knx.cleanup_task.abort_handle().unwrap();
+    let clone = knx.clone();
+    drop(knx);
+    assert!(!cleanup.is_finished());
+    drop(clone);
+    timeout(Duration::from_secs(1), async {
+        while !drain.is_finished() || !cleanup.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
 #[tokio::test(start_paused = true)]
 async fn stop_aborts_and_joins_tasks_instead_of_detaching_them() {
     let knx = knx_without_cleanup().await;
@@ -140,7 +163,7 @@ async fn stop_aborts_and_joins_tasks_instead_of_detaching_them() {
     let expected = slots.len();
     for slot in &slots {
         let guard = Completed(completed.clone());
-        *slot.write().await = Some(tokio::spawn(async move {
+        slot.replace(tokio::spawn(async move {
             let _guard = guard;
             std::future::pending::<()>().await;
         }));
@@ -152,24 +175,18 @@ async fn stop_aborts_and_joins_tasks_instead_of_detaching_them() {
         "a timed-out task was detached"
     );
     for slot in slots {
-        assert!(slot.read().await.is_none());
+        assert!(slot.abort_handle().is_none());
     }
 }
 
 #[tokio::test(start_paused = true)]
 async fn stop_cancels_reconnect_before_waiting_for_sender_and_joins_receive_drain() {
     let knx = knx_without_cleanup().await;
-    let drain = knx
-        .receive_drain_task
-        .read()
-        .await
-        .as_ref()
-        .unwrap()
-        .abort_handle();
+    let drain = knx.receive_drain_task.abort_handle().unwrap();
     let connection = sending(&knx).await;
     let completed = Arc::new(AtomicUsize::new(0));
     let guard = Completed(completed.clone());
-    *knx.reconnect_task.write().await = Some(tokio::spawn(async move {
+    knx.reconnect_task.replace(tokio::spawn(async move {
         let _guard = guard;
         std::future::pending::<()>().await;
     }));
@@ -189,8 +206,8 @@ async fn stop_cancels_reconnect_before_waiting_for_sender_and_joins_receive_drai
     connection.release.add_permits(1);
     stopping.await.unwrap();
     assert!(drain.is_finished(), "receive drain survived stop");
-    assert!(knx.sending_task.read().await.is_none());
-    assert!(knx.receive_drain_task.read().await.is_none());
+    assert!(knx.sending_task.abort_handle().is_none());
+    assert!(knx.receive_drain_task.abort_handle().is_none());
 }
 
 #[tokio::test(start_paused = true)]
