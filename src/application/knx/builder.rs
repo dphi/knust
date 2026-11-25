@@ -281,6 +281,16 @@ impl KnxBuilder {
 
         Ok(knx)
     }
+
+    /// Build the client, connect it, and start processing telegrams.
+    ///
+    /// # Errors
+    /// Returns configuration, connection, or startup errors.
+    pub async fn connect(self) -> Result<Knx> {
+        let knx = self.build().await?;
+        knx.connect_and_start().await?;
+        Ok(knx)
+    }
 }
 
 impl Default for KnxBuilder {

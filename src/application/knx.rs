@@ -811,6 +811,9 @@ impl Knx {
     ///
     /// Returns configuration, handshake or transport errors for the selected connection.
     pub async fn connect(&self) -> Result<()> {
+        if self.telegram_queue.is_closed().await {
+            return Err(crate::error::TransportError::QueueClosed.into());
+        }
         *self.state.write().await = ConnectionState::Connecting;
         self.notify_connection_state_changed(ConnectionState::Connecting)
             .await;
@@ -848,9 +851,11 @@ impl Knx {
         self.notify_connection_state_changed(ConnectionState::Disconnecting)
             .await;
 
-        if let Some(connection) = self.connection.send_replace(None) {
-            connection.close().await?;
-        }
+        let result = match self.connection.send_replace(None) {
+            Some(connection) => connection.close().await,
+            None => Ok(()),
+        };
+        *self.channel_id.write().await = None;
 
         {
             let mut state = self.state.write().await;
@@ -861,7 +866,7 @@ impl Knx {
         self.notify_connection_state_changed(ConnectionState::Disconnected)
             .await;
 
-        Ok(())
+        result
     }
 
     /// Install group Data Secure keys and sender sequence baselines.
@@ -978,6 +983,12 @@ impl Knx {
     /// hasn't been called yet.
     pub async fn start(&self) -> Result<()> {
         let _lifecycle = self.lifecycle_lock.lock().await;
+        if self.telegram_queue.is_closed().await {
+            return Err(crate::error::TransportError::QueueClosed.into());
+        }
+        if self.sending_task.is_running() {
+            return Ok(());
+        }
         self.receiving_stop.store(false, Ordering::SeqCst);
         let timer = Timer::start(Component::Application, "knx_start");
         log_application!(
@@ -1592,9 +1603,11 @@ impl Knx {
     ///
     /// Returns the same errors as [`Self::connect`] and [`Self::start`].
     pub async fn run(&self) -> Result<()> {
-        self.connect().await?;
-        self.start().await?;
-        self.shutdown_notify.notified().await;
+        let stopped = self.shutdown_notify.notified();
+        tokio::pin!(stopped);
+        stopped.as_mut().enable();
+        self.connect_and_start().await?;
+        stopped.await;
         Ok(())
     }
 
@@ -1611,8 +1624,7 @@ impl Knx {
     where
         F: std::future::Future<Output = ()>,
     {
-        self.connect().await?;
-        self.start().await?;
+        self.connect_and_start().await?;
 
         // Wait for shutdown signal
         shutdown_signal.await;
@@ -1620,6 +1632,15 @@ impl Knx {
         // Perform clean shutdown
         self.shutdown().await?;
 
+        Ok(())
+    }
+
+    async fn connect_and_start(&self) -> Result<()> {
+        self.connect().await?;
+        if let Err(error) = self.start().await {
+            let _ = self.disconnect().await;
+            return Err(error);
+        }
         Ok(())
     }
 

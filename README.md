@@ -57,11 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connection_type(ConnectionType::Tunneling)
         .gateway("192.168.1.100:3671".parse()?)
         .individual_address("1.1.240".parse()?)
-        .build()
+        .connect()
         .await?;
-
-    // Connect to KNX network
-    knx.connect().await?;
 
     // Register 1/2/3 as DPT 1.001 (Switch). Fails if it's already bound
     // to a *different* DPT elsewhere — every address gets exactly one.
@@ -72,8 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // runtime, the others can't resolve to the wrong DPT at all.
     light.write(true).await?;
 
-    // Disconnect
-    knx.disconnect().await?;
+    knx.shutdown().await?;
 
     Ok(())
 }

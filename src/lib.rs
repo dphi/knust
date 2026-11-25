@@ -39,9 +39,9 @@
 //!         .connection_type(ConnectionType::Tunneling)
 //!         .gateway("192.168.1.100:3671".parse()?)
 //!         .individual_address("1.2.3".parse()?)
-//!         .build()
+//!         .connect()
 //!         .await?;
-//!     knx.connect().await?;
+//!     knx.shutdown().await?;
 //!     Ok(())
 //! }
 //! ```

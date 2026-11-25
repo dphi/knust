@@ -40,18 +40,31 @@ async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), Kn
         IndividualAddress::new(1, 1, 240),
     )
     .await?;
+    let mut incoming = server.subscribe();
     let states = States::default();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
         .gateway(server.local_addr())
         .connection_callback(states.clone())?
-        .build()
+        .connect()
         .await?;
 
-    knx.connect().await?;
     assert_eq!(knx.state().await, ConnectionState::Connected);
-    knx.disconnect().await?;
+    let address: RawGroupAddress = "1/2/3".parse()?;
+    knx.send_telegram(&Telegram::group_write(address, vec![1]))
+        .await?;
+    let received = timeout(Duration::from_secs(1), incoming.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        received.destination,
+        knust::protocol::Address::Group(address)
+    );
+    knx.start().await?;
+    knx.shutdown().await?;
     assert_eq!(knx.state().await, ConnectionState::Disconnected);
+    assert!(knx.start().await.is_err());
     assert_eq!(
         states.0.lock().unwrap().as_slice(),
         [
