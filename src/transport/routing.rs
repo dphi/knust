@@ -11,13 +11,27 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 
-fn configure_multicast(socket: &UdpSocket, interface: Option<Ipv4Addr>) -> std::io::Result<()> {
+fn configure_multicast(socket: &UdpSocket, interface: Ipv4Addr) -> std::io::Result<()> {
     let socket_ref = socket2::SockRef::from(socket);
     socket_ref.set_multicast_ttl_v4(16)?;
-    if let Some(interface) = interface {
-        socket_ref.set_multicast_if_v4(&interface)?;
-    }
-    Ok(())
+    socket_ref.set_multicast_if_v4(&interface)
+}
+
+pub(super) fn bind_multicast_listener(
+    group: Ipv4Addr,
+    port: u16,
+    interface: Ipv4Addr,
+) -> std::io::Result<UdpSocket> {
+    let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None)?;
+    #[cfg(windows)]
+    let bind_ip = Ipv4Addr::UNSPECIFIED;
+    #[cfg(not(windows))]
+    let bind_ip = group;
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&SocketAddr::from((bind_ip, port)).into())?;
+    socket.join_multicast_v4(&group, &interface)?;
+    UdpSocket::from_std(socket.into())
 }
 
 #[path = "routing_flow.rs"]
@@ -26,9 +40,11 @@ use flow::FlowControl;
 
 /// KNX/IP routing connection using multicast
 pub struct RoutingConnection {
-    socket: Arc<UdpSocket>,
+    send_socket: Arc<UdpSocket>,
+    receive_socket: Arc<UdpSocket>,
     multicast_addr: SocketAddr,
     local_addr: SocketAddr,
+    interface: Ipv4Addr,
     state: Arc<std::sync::RwLock<ConnectionState>>,
     stats: Arc<std::sync::RwLock<ConnectionStats>>,
     established_at: Option<Instant>,
@@ -48,64 +64,21 @@ impl RoutingConnection {
     ///
     /// # Errors
     ///
-    /// Returns [`TransportError::SocketError`] if binding or configuring the UDP
-    /// socket, querying its local address, or joining the KNX multicast group fails.
+    /// Returns [`TransportError::InvalidConfiguration`] for an IPv6 interface.
+    /// Returns [`TransportError::SocketError`] if the outbound interface cannot
+    /// be determined or the UDP sockets cannot be opened.
     pub async fn new(local_addr: Option<IpAddr>) -> Result<Self> {
-        let bind_addr = match local_addr {
-            Some(addr) => SocketAddr::new(addr, Self::MULTICAST_PORT),
-            None => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), Self::MULTICAST_PORT),
+        let interface = match local_addr {
+            Some(IpAddr::V4(ip)) => ip,
+            Some(IpAddr::V6(_)) => {
+                return Err(TransportError::InvalidConfiguration {
+                    details: "KNX routing multicast requires an IPv4 interface".to_owned(),
+                }
+                .into());
+            }
+            None => Ipv4Addr::UNSPECIFIED,
         };
-
-        let socket = UdpSocket::bind(bind_addr)
-            .await
-            .map_err(|e| TransportError::SocketError {
-                operation: "bind".to_string(),
-                source: e,
-            })?;
-
-        let actual_local_addr = socket
-            .local_addr()
-            .map_err(|e| TransportError::SocketError {
-                operation: "get_local_addr".to_string(),
-                source: e,
-            })?;
-
-        let multicast_addr =
-            SocketAddr::new(IpAddr::V4(Self::MULTICAST_ADDR), Self::MULTICAST_PORT);
-
-        configure_multicast(
-            &socket,
-            local_addr.and_then(|addr| match addr {
-                IpAddr::V4(ip) => Some(ip),
-                IpAddr::V6(_) => None,
-            }),
-        )
-        .map_err(|source| TransportError::SocketError {
-            operation: "configure_multicast".to_string(),
-            source,
-        })?;
-
-        // Join multicast group
-        socket
-            .join_multicast_v4(Self::MULTICAST_ADDR, Ipv4Addr::UNSPECIFIED)
-            .map_err(|e| TransportError::SocketError {
-                operation: "join_multicast".to_string(),
-                source: e,
-            })?;
-
-        Ok(Self {
-            socket: Arc::new(socket),
-            multicast_addr,
-            local_addr: actual_local_addr,
-            state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
-            stats: Arc::new(std::sync::RwLock::new(ConnectionStats::default())),
-            established_at: Some(Instant::now()),
-            routing_busy_count: Arc::new(std::sync::RwLock::new(0)),
-            lost_message_count: Arc::new(std::sync::RwLock::new(0)),
-            flow: std::sync::Mutex::new(FlowControl::default()),
-            send_lock: tokio::sync::Mutex::new(()),
-            flow_changed: tokio::sync::Notify::new(),
-        })
+        Self::new_with_interface(interface).await
     }
 
     /// Create a new routing connection with specific interface
@@ -116,44 +89,39 @@ impl RoutingConnection {
     /// socket, querying its local address, or joining the KNX multicast group on
     /// `interface_addr` fails.
     pub async fn new_with_interface(interface_addr: Ipv4Addr) -> Result<Self> {
-        let bind_addr = SocketAddr::new(IpAddr::V4(interface_addr), Self::MULTICAST_PORT);
-
-        let socket = UdpSocket::bind(bind_addr)
-            .await
-            .map_err(|e| TransportError::SocketError {
-                operation: "bind".to_string(),
-                source: e,
-            })?;
-
-        let actual_local_addr = socket
-            .local_addr()
-            .map_err(|e| TransportError::SocketError {
-                operation: "get_local_addr".to_string(),
-                source: e,
-            })?;
-
-        let multicast_addr =
-            SocketAddr::new(IpAddr::V4(Self::MULTICAST_ADDR), Self::MULTICAST_PORT);
-
-        configure_multicast(&socket, Some(interface_addr)).map_err(|source| {
-            TransportError::SocketError {
-                operation: "configure_multicast".to_string(),
-                source,
-            }
+        let multicast_addr = SocketAddr::from((Self::MULTICAST_ADDR, Self::MULTICAST_PORT));
+        let (send_socket, receive_socket, local_addr, interface) = async {
+            let interface = if interface_addr.is_unspecified() {
+                let route = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await?;
+                route.connect(multicast_addr).await?;
+                let SocketAddr::V4(address) = route.local_addr()? else {
+                    return Err(std::io::Error::other(
+                        "IPv4 multicast route returned an IPv6 address",
+                    ));
+                };
+                *address.ip()
+            } else {
+                interface_addr
+            };
+            let send = UdpSocket::bind((interface, 0)).await?;
+            configure_multicast(&send, interface)?;
+            let receive =
+                bind_multicast_listener(Self::MULTICAST_ADDR, Self::MULTICAST_PORT, interface)?;
+            let local_addr = send.local_addr()?;
+            Ok::<_, std::io::Error>((send, receive, local_addr, interface))
+        }
+        .await
+        .map_err(|source| TransportError::SocketError {
+            operation: "bind_routing_multicast".to_owned(),
+            source,
         })?;
 
-        // Join multicast group on specific interface
-        socket
-            .join_multicast_v4(Self::MULTICAST_ADDR, interface_addr)
-            .map_err(|e| TransportError::SocketError {
-                operation: "join_multicast_with_interface".to_string(),
-                source: e,
-            })?;
-
         Ok(Self {
-            socket: Arc::new(socket),
+            send_socket: Arc::new(send_socket),
+            receive_socket: Arc::new(receive_socket),
             multicast_addr,
-            local_addr: actual_local_addr,
+            local_addr,
+            interface,
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
             stats: Arc::new(std::sync::RwLock::new(ConnectionStats::default())),
             established_at: Some(Instant::now()),
@@ -178,6 +146,10 @@ impl RoutingConnection {
                 details: format!("Failed to parse routing frame: {e}"),
             })?;
 
+        self.process_routing_frame(frame).await
+    }
+
+    async fn process_routing_frame(&self, frame: KnxIpFrame) -> Result<Vec<u8>> {
         match frame.header.service_type {
             ServiceType::RoutingIndication => {
                 // This is a normal routing message containing CEMI data
@@ -291,7 +263,7 @@ impl RoutingConnection {
         matches!(self.state(), ConnectionState::Connected)
     }
 
-    /// Get local address
+    /// Get the local address and ephemeral port used for outgoing datagrams.
     #[must_use]
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
@@ -337,7 +309,7 @@ impl Connection for RoutingConnection {
                 }
             }
         }
-        self.socket
+        self.send_socket
             .send_to(frame, self.multicast_addr)
             .await
             .map_err(|e| {
@@ -366,7 +338,7 @@ impl Connection for RoutingConnection {
 
         loop {
             let mut buf = vec![0u8; 1024];
-            let (len, _addr) = self.socket.recv_from(&mut buf).await.map_err(|e| {
+            let (len, source) = self.receive_socket.recv_from(&mut buf).await.map_err(|e| {
                 if let Ok(mut stats) = self.stats.write() {
                     stats.record_receive_error(&e);
                 }
@@ -375,10 +347,25 @@ impl Connection for RoutingConnection {
                     source: e,
                 }
             })?;
+            if source == self.local_addr {
+                continue;
+            }
             buf.truncate(len);
 
+            let Ok(frame) = KnxIpFrame::parse(&buf) else {
+                continue;
+            };
+            if !matches!(
+                frame.header.service_type,
+                ServiceType::RoutingIndication
+                    | ServiceType::RoutingBusy
+                    | ServiceType::RoutingLostMessage
+            ) {
+                continue;
+            }
+
             // Consume routing control messages; the application expects full KNX/IP frames.
-            if self.process_routing_message(&buf).await?.is_empty() {
+            if self.process_routing_frame(frame).await?.is_empty() {
                 continue;
             }
             if let Ok(mut stats) = self.stats.write() {
@@ -397,8 +384,8 @@ impl Connection for RoutingConnection {
 
         // Leave multicast group
         let result = self
-            .socket
-            .leave_multicast_v4(Self::MULTICAST_ADDR, Ipv4Addr::UNSPECIFIED);
+            .receive_socket
+            .leave_multicast_v4(Self::MULTICAST_ADDR, self.interface);
 
         if let Ok(mut state) = self.state.write() {
             *state = ConnectionState::Disconnected;
@@ -450,12 +437,14 @@ mod health_tests {
     use super::*;
 
     async fn test_connection(destination: SocketAddr) -> RoutingConnection {
-        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
         let local_addr = socket.local_addr().unwrap();
         RoutingConnection {
-            socket: Arc::new(socket),
+            send_socket: socket.clone(),
+            receive_socket: socket,
             multicast_addr: destination,
             local_addr,
+            interface: Ipv4Addr::LOCALHOST,
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
             stats: Arc::new(std::sync::RwLock::new(ConnectionStats::default())),
             established_at: Some(Instant::now()),
@@ -470,10 +459,54 @@ mod health_tests {
     #[tokio::test]
     async fn multicast_socket_uses_knx_ttl_and_selected_interface() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        configure_multicast(&socket, Some(Ipv4Addr::LOCALHOST)).unwrap();
+        configure_multicast(&socket, Ipv4Addr::LOCALHOST).unwrap();
         let socket_ref = socket2::SockRef::from(&socket);
         assert_eq!(socket_ref.multicast_ttl_v4().unwrap(), 16);
         assert_eq!(socket_ref.multicast_if_v4().unwrap(), Ipv4Addr::LOCALHOST);
+    }
+
+    #[tokio::test]
+    async fn routing_peers_exchange_multicast_without_receiving_their_own_frames() {
+        let interface = Ipv4Addr::LOCALHOST;
+        let first = RoutingConnection::new(Some(interface.into()))
+            .await
+            .unwrap();
+        let second = RoutingConnection::new_with_interface(interface)
+            .await
+            .unwrap();
+        assert_eq!(first.local_addr().ip(), IpAddr::V4(interface));
+        assert_ne!(first.local_addr(), second.local_addr());
+
+        let search = KnxIpFrame::new(ServiceType::SearchRequest, vec![8, 1, 0, 0, 0, 0, 0, 0]);
+        first.send(&search.serialize()).await.unwrap();
+        let outbound = KnxIpFrame::new(ServiceType::RoutingIndication, vec![1]);
+        first.send(&outbound.serialize()).await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), second.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            outbound.serialize()
+        );
+
+        let reply = KnxIpFrame::new(ServiceType::RoutingIndication, vec![2]);
+        second.send(&reply.serialize()).await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), first.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            reply.serialize()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), second.recv())
+                .await
+                .is_err()
+        );
+
+        first.close().await.unwrap();
+        assert_eq!(first.state(), ConnectionState::Disconnected);
+        second.close().await.unwrap();
     }
 
     #[tokio::test]

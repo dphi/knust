@@ -45,7 +45,7 @@ use crate::protocol::telegram::TelegramType;
 use crate::security::{SecureSession, SessionConfig};
 
 use super::frame_transport::{FrameTransport, TcpFrameTransport};
-use super::routing::RoutingConnection;
+use super::routing::{RoutingConnection, bind_multicast_listener};
 use super::tunnel::SequenceValidationResult;
 
 /// How long a connected client may go without a heartbeat before eviction.
@@ -344,17 +344,11 @@ impl TunnelServer {
                 ));
             }
 
-            let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None)?;
-            let group = RoutingConnection::MULTICAST_ADDR;
-            #[cfg(windows)]
-            let bind_ip = Ipv4Addr::UNSPECIFIED;
-            #[cfg(not(windows))]
-            let bind_ip = group;
-            socket.set_reuse_address(true)?;
-            socket.set_nonblocking(true)?;
-            socket.bind(&SocketAddr::from((bind_ip, RoutingConnection::MULTICAST_PORT)).into())?;
-            socket.join_multicast_v4(&group, &interface)?;
-            UdpSocket::from_std(socket.into())
+            bind_multicast_listener(
+                RoutingConnection::MULTICAST_ADDR,
+                RoutingConnection::MULTICAST_PORT,
+                interface,
+            )
         })()
         .map_err(|source| TransportError::SocketError {
             operation: "enable_multicast_discovery".to_owned(),
