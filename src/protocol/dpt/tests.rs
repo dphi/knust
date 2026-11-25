@@ -526,6 +526,9 @@ fn test_dpt_wrapper() {
 #[test]
 fn test_dpt_registry() {
     let registry = DptRegistry::new();
+    assert!(registry.decode("1.001", &[]).is_err());
+    assert!(registry.encode("1.001", &true).is_err());
+    assert!(registry.metadata("65535.001").is_err());
 
     // Test DPTSwitch (using alias)
     let switch = DPTSwitch::new(true);
