@@ -165,6 +165,79 @@ async fn tunnel_send_waits_for_cemi_confirmation_and_consumes_it() {
     knx.stop().await;
 }
 
+#[cfg(feature = "dpt")]
+#[tokio::test]
+async fn typed_write_waits_for_its_confirmation_and_reports_rejection() {
+    use crate::error::TransportError;
+    use crate::protocol::{CemiFrame, cemi::MessageCode, dpt::DPTSwitch};
+
+    let knx = Knx::new(ConnectionConfig {
+        connection_type: ConnectionType::Routing,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let switch = knx
+        .group_address::<DPTSwitch>("1/2/3".parse().unwrap())
+        .unwrap();
+    assert!(matches!(
+        switch.write(true).await,
+        Err(KnxError::Transport(TransportError::ClientNotRunning))
+    ));
+    assert!(knx.telegram_queue.is_empty().await);
+
+    let (connection, peer) = connected_tunnel().await;
+    let destination = connection
+        .as_any()
+        .downcast_ref::<Tunnel>()
+        .unwrap()
+        .local_addr();
+    knx.connection.send_replace(Some(connection));
+    knx.start_telegram_receiving_task().await.unwrap();
+    knx.sending_task.replace(knx.start_telegram_sending_task());
+
+    let writing = tokio::spawn(async move { switch.write(true).await });
+    let request = TunnellingRequest::parse(&receive(&peer).await.body).unwrap();
+    let ack = TunnellingAck::new_ok(request.communication_channel_id, request.sequence_counter);
+    peer.send_to(
+        &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
+        destination,
+    )
+    .await
+    .unwrap();
+
+    let mut confirmation = CemiFrame::parse(&request.raw_cemi).unwrap();
+    confirmation.message_code = MessageCode::LDataCon;
+    let mut unrelated = confirmation.clone();
+    unrelated.apci_data = vec![0x80];
+    let mut sequence = 0;
+    for frame in [&unrelated, &confirmation] {
+        let mut frame = frame.clone();
+        frame.control_field.confirm = sequence == 1;
+        let response = TunnellingRequest::new(7, sequence, frame.serialize().unwrap());
+        peer.send_to(
+            &KnxIpFrame::new(ServiceType::TunnellingRequest, response.serialize()).serialize(),
+            destination,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            receive(&peer).await.header.service_type,
+            ServiceType::TunnellingAck
+        );
+        sequence += 1;
+    }
+
+    assert!(matches!(
+        timeout(Duration::from_secs(1), writing)
+            .await
+            .unwrap()
+            .unwrap(),
+        Err(KnxError::Transport(TransportError::NegativeConfirmation))
+    ));
+    knx.stop().await;
+}
+
 #[tokio::test]
 async fn foreign_requests_do_not_ack_advance_sequence_or_deliver() {
     use crate::protocol::{

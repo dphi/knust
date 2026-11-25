@@ -66,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔐 Attempting secure connection...");
     match secure_knx.connect().await {
         Ok(()) => {
+            secure_knx.start().await?;
             println!("✅ Secure connection established!");
 
             // Send a value over the secure tunnel via a typed group
@@ -87,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tokio::time::sleep(Duration::from_secs(2)).await;
 
-            secure_knx.disconnect().await?;
+            secure_knx.shutdown().await?;
             println!("🔌 Disconnected from secure gateway");
         }
         Err(e) => {

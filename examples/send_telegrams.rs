@@ -36,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect to KNX network
     knx.connect().await?;
+    knx.start().await?;
 
     println!("Sending typed values...");
 
@@ -96,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     knx.send_telegram(&raw_telegram).await?;
 
     // Disconnect
-    knx.disconnect().await?;
+    knx.shutdown().await?;
 
     println!("Send telegrams example completed successfully!");
     Ok(())

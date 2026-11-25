@@ -51,6 +51,11 @@ async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), Kn
 
     assert_eq!(knx.state().await, ConnectionState::Connected);
     let address: RawGroupAddress = "1/2/3".parse()?;
+    #[cfg(feature = "dpt")]
+    knx.group_address::<knust::protocol::dpt::DPTSwitch>(address)?
+        .write(true)
+        .await?;
+    #[cfg(not(feature = "dpt"))]
     knx.send_telegram(&Telegram::group_write(address, vec![1]))
         .await?;
     let received = timeout(Duration::from_secs(1), incoming.recv())

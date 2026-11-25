@@ -71,6 +71,14 @@ pub enum TransportError {
     #[error("Connection closed unexpectedly")]
     ConnectionClosed,
 
+    /// A typed operation requires a running client.
+    #[error("Client is not processing telegrams. Start it or use KnxBuilder::connect")]
+    ClientNotRunning,
+
+    /// The KNX interface reported that a telegram could not be sent on the bus.
+    #[error("KNX interface rejected the telegram (negative L_Data.con)")]
+    NegativeConfirmation,
+
     /// Invalid connection configuration
     #[error("Invalid connection configuration: {details}")]
     InvalidConfiguration { details: String },

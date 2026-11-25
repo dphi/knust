@@ -94,6 +94,13 @@ struct ConnectionControlMessage {
     connection: Arc<dyn Connection>,
 }
 
+struct PendingCemiConfirmation {
+    request: crate::protocol::CemiFrame,
+    result: tokio::sync::oneshot::Sender<Result<()>>,
+}
+
+type CemiConfirmationSlot = std::sync::Mutex<Option<PendingCemiConfirmation>>;
+
 // A cancelled read must unregister its callback even though Drop cannot await.
 struct ReadCallbackGuard {
     handler: Arc<EventHandler>,
@@ -187,7 +194,7 @@ pub struct Knx {
     lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
     individual_request_lock: Arc<tokio::sync::Mutex<()>>,
     active_p2p_sessions: ActiveP2pSessions,
-    pending_cemi_confirmation: Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    pending_cemi_confirmation: Arc<CemiConfirmationSlot>,
 
     /// Handle to the telegram processing task
     processing_task: TaskSlot,
@@ -882,7 +889,7 @@ impl Knx {
         *current = Some(keyring);
     }
 
-    /// Send a telegram to the KNX network.
+    /// Enqueue a telegram for transmission by the processing task.
     ///
     /// `telegram.source` is overwritten with this bus's configured
     /// individual address before sending — callers building a telegram
@@ -905,21 +912,14 @@ impl Knx {
     async fn send_telegram_acknowledged(&self, telegram: &Telegram) -> Result<()> {
         let mut telegram = telegram.clone();
         telegram.source = self.config.individual_address;
-        let (sent, completed) = self
+        let (_sent, completed) = self
             .telegram_queue
             .enqueue_outgoing_tracked(telegram)
             .await?;
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            sent.await
-                .map_err(|_| crate::error::TransportError::QueueClosed)?;
-            completed
-                .await
-                .map_err(|_| crate::error::TransportError::QueueClosed)??;
-            Ok::<_, KnxError>(())
-        })
-        .await
-        .map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })??;
-        Ok(())
+        tokio::time::timeout(std::time::Duration::from_secs(10), completed)
+            .await
+            .map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })?
+            .map_err(|_| crate::error::TransportError::QueueClosed)?
     }
 
     /// Read a group value, starting the response deadline after transmission.
@@ -1329,7 +1329,7 @@ impl Knx {
                         Err(error) => Err(error),
                     };
                     if let Err(error) = &result
-                        && !Self::is_cemi_confirmation_timeout(error)
+                        && !Self::is_cemi_confirmation_error(error)
                     {
                         if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
                             continue;
@@ -1385,7 +1385,7 @@ impl Knx {
                                 Err(error) => Err(error),
                             };
                             if let Err(error) = &result
-                                && !Self::is_cemi_confirmation_timeout(error)
+                                && !Self::is_cemi_confirmation_error(error)
                             {
                                 Self::report_connection_failure(
                                     &control_tx,
@@ -1472,12 +1472,17 @@ impl Knx {
         frame: &[u8],
         attempts: u8,
         receipt: &mut Option<crate::transport::queue::SendReceipt>,
-        pending_confirmation: &std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        pending_confirmation: &CemiConfirmationSlot,
     ) -> Result<()> {
         let receiver = if connection.as_any().is::<Tunnel>() {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            *pending_confirmation.lock().unwrap() = Some(tx);
-            Some(rx)
+            use crate::protocol::knxip::{KnxIpFrame, TunnellingRequest};
+
+            let request = TunnellingRequest::parse(&KnxIpFrame::parse(frame)?.body)?;
+            let request = crate::protocol::CemiFrame::parse(&request.raw_cemi)?;
+            let (result, receiver) = tokio::sync::oneshot::channel();
+            *pending_confirmation.lock().unwrap() =
+                Some(PendingCemiConfirmation { request, result });
+            Some(receiver)
         } else {
             None
         };
@@ -1487,17 +1492,19 @@ impl Knx {
             }
             return Err(error);
         }
-        if let Some(receiver) = receiver
-            && tokio::time::timeout(CEMI_CONFIRMATION_TIMEOUT, receiver)
-                .await
-                .is_err()
-        {
-            pending_confirmation.lock().unwrap().take();
-            return Err(DeviceError::CommunicationTimeout {
-                device: "L_Data.con".to_string(),
-                timeout_ms: CEMI_CONFIRMATION_TIMEOUT.as_millis() as u64,
+        if let Some(receiver) = receiver {
+            match tokio::time::timeout(CEMI_CONFIRMATION_TIMEOUT, receiver).await {
+                Ok(Ok(result)) => return result,
+                Ok(Err(_)) => return Err(crate::error::TransportError::ConnectionClosed.into()),
+                Err(_) => {
+                    pending_confirmation.lock().unwrap().take();
+                    return Err(DeviceError::CommunicationTimeout {
+                        device: "L_Data.con".to_string(),
+                        timeout_ms: CEMI_CONFIRMATION_TIMEOUT.as_millis() as u64,
+                    }
+                    .into());
+                }
             }
-            .into());
         }
         Ok(())
     }
@@ -1519,8 +1526,11 @@ impl Knx {
             .await;
     }
 
-    fn is_cemi_confirmation_timeout(error: &KnxError) -> bool {
+    fn is_cemi_confirmation_error(error: &KnxError) -> bool {
         matches!(
+            error,
+            KnxError::Transport(crate::error::TransportError::NegativeConfirmation)
+        ) || matches!(
             error,
             KnxError::Device(DeviceError::CommunicationTimeout { device, .. })
                 if device == "L_Data.con"
@@ -1874,9 +1884,7 @@ impl Knx {
         current_channel_id: Option<u8>,
         connection: &Arc<dyn Connection>,
         receive_limiter: Option<&ReceiveRateLimiter>,
-        pending_cemi_confirmation: Option<
-            &std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-        >,
+        pending_cemi_confirmation: Option<&CemiConfirmationSlot>,
         #[cfg(feature = "secure")] data_secure_keyring: &RwLock<Option<KeyRing>>,
     ) -> Result<bool> {
         use crate::protocol::knxip::{KnxIpFrame, ServiceType};
@@ -1968,9 +1976,7 @@ impl Knx {
         telegram_queue: &crate::transport::queue::TelegramQueue,
         connection: &Arc<dyn Connection>,
         receive_limiter: Option<&ReceiveRateLimiter>,
-        pending_cemi_confirmation: Option<
-            &std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-        >,
+        pending_cemi_confirmation: Option<&CemiConfirmationSlot>,
         #[cfg(feature = "secure")] data_secure_keyring: &RwLock<Option<KeyRing>>,
     ) -> Result<()> {
         use crate::protocol::knxip::{TunnellingAck, TunnellingRequest};
@@ -2020,13 +2026,24 @@ impl Knx {
                     log_application!(LogLevel::Warn, "Failed to send TunnellingAck: {}", e);
                 }
 
-                if crate::protocol::cemi::CemiFrame::parse(&tunnelling_request.raw_cemi).is_ok_and(
-                    |frame| frame.message_code == crate::protocol::cemi::MessageCode::LDataCon,
-                ) {
-                    if let Some(pending) = pending_cemi_confirmation
-                        && let Some(sender) = pending.lock().unwrap().take()
-                    {
-                        let _ = sender.send(());
+                if let Ok(frame) = crate::protocol::CemiFrame::parse(&tunnelling_request.raw_cemi)
+                    && frame.message_code == crate::protocol::cemi::MessageCode::LDataCon
+                {
+                    if let Some(pending) = pending_cemi_confirmation {
+                        let mut pending = pending.lock().unwrap();
+                        if pending.as_ref().is_some_and(|pending| {
+                            pending.request.dest_addr == frame.dest_addr
+                                && pending.request.tpci == frame.tpci
+                                && pending.request.apci_data == frame.apci_data
+                        }) && let Some(pending) = pending.take()
+                        {
+                            let result = if frame.control_field.confirm {
+                                Err(crate::error::TransportError::NegativeConfirmation.into())
+                            } else {
+                                Ok(())
+                            };
+                            let _ = pending.result.send(result);
+                        }
                     }
                     return Ok(());
                 }

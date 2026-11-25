@@ -155,6 +155,10 @@ registering the same address with a different DPT returns an error.
 Use `knust::protocol::RawGroupAddress` when working directly with telegrams
 or addresses whose DPT is determined at runtime.
 
+Use a running client from `Knx::builder().connect().await?` for typed I/O.
+`write().await` waits for transmission and, on a tunnel, a successful cEMI
+confirmation. Use `enqueue_write().await` when queue acceptance is sufficient.
+
 ```rust
 use std::time::Duration;
 use knust::protocol::dpt::DPTTemperature;
