@@ -40,7 +40,7 @@ pub use backoff::JitteredBackoff;
 pub use connection::{Connection, ConnectionStats, TransportState};
 pub use device_management::DeviceManagementConnection;
 pub use discovery::{
-    GatewayCapabilities, GatewayInfo, GatewayScanner, GatewayTunnelingInfo, ServiceType,
+    GatewayCapabilities, GatewayInfo, GatewayScanner, GatewayTunnelingInfo, ServiceFamily,
     TunnelingSlotStatus,
 };
 pub use frame_transport::{FrameTransport, TcpFrameTransport, TransportKind, UdpFrameTransport};

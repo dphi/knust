@@ -8,7 +8,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use crate::protocol::address::IndividualAddress;
 use crate::transport::connection::{Connection, TransportState};
 use crate::transport::{BackoffConfig, ConnectionConfig, ConnectionType, TcpConfig};
-use crate::transport::{GatewayScanner, RoutingConnection, ServiceType, Tunnel};
+use crate::transport::{GatewayScanner, RoutingConnection, ServiceFamily, Tunnel};
 
 #[cfg(test)]
 use crate::test_config::TestConfig;
@@ -283,7 +283,7 @@ proptest! {
             prop_assert_eq!(gateway.capabilities.supports_device_management, supports_device_mgmt);
             prop_assert_eq!(gateway.capabilities.supports_routing, supports_routing);
             prop_assert_eq!(gateway.multicast_addr, supports_routing.then(|| "224.0.23.14:3671".parse().unwrap()));
-            prop_assert!(gateway.supported_services.contains(&ServiceType::Core));
+            prop_assert!(gateway.supported_families.contains(&ServiceFamily::Core));
             Ok(())
         })?;
     }

@@ -327,7 +327,7 @@ impl GatewayScanner {
         let mut name = format!("KNX Gateway {}", addr.ip());
         let mut individual_address = None;
         let mut core_version = 0;
-        let mut supported_services = vec![ServiceType::Core];
+        let mut supported_families = vec![ServiceFamily::Core];
         let mut device_serial = String::new();
         let mut mac_address = None;
         let mut multicast_ip = None;
@@ -381,23 +381,23 @@ impl GatewayScanner {
                                 core_version = core_version.max(family[1]);
                                 continue;
                             }
-                            0x03 => ServiceType::DeviceManagement,
+                            0x03 => ServiceFamily::DeviceManagement,
                             0x04 => {
                                 tunneling_version = tunneling_version.max(family[1]);
-                                ServiceType::Tunneling
+                                ServiceFamily::Tunneling
                             }
-                            0x05 => ServiceType::Routing,
-                            0x06 => ServiceType::RemoteLogging,
-                            0x07 => ServiceType::RemoteConfiguration,
-                            0x08 => ServiceType::ObjectServer,
+                            0x05 => ServiceFamily::Routing,
+                            0x06 => ServiceFamily::RemoteLogging,
+                            0x07 => ServiceFamily::RemoteConfiguration,
+                            0x08 => ServiceFamily::ObjectServer,
                             0x09 => {
                                 supports_secure |= family[1] >= 1;
                                 continue;
                             }
                             _ => continue,
                         };
-                        if !supported_services.contains(&service) {
-                            supported_services.push(service);
+                        if !supported_families.contains(&service) {
+                            supported_families.push(service);
                         }
                     }
                 }
@@ -437,12 +437,13 @@ impl GatewayScanner {
             secured_services
                 .map(|services| services.chunks_exact(2).any(|entry| entry[0] == family))
         };
-        let supports_tunneling = supported_services.contains(&ServiceType::Tunneling);
-        let supports_routing = supported_services.contains(&ServiceType::Routing);
+        let supports_tunneling = supported_families.contains(&ServiceFamily::Tunneling);
+        let supports_routing = supported_families.contains(&ServiceFamily::Routing);
         let capabilities = GatewayCapabilities {
             supports_tunneling,
             supports_routing,
-            supports_device_management: supported_services.contains(&ServiceType::DeviceManagement),
+            supports_device_management: supported_families
+                .contains(&ServiceFamily::DeviceManagement),
             max_tunneling_connections: tunneling_info
                 .as_ref()
                 .map_or(if supports_tunneling { 4 } else { 1 }, |info| {
@@ -464,7 +465,7 @@ impl GatewayScanner {
             core_version,
             tunneling_info,
             capabilities,
-            supported_services,
+            supported_families,
             device_serial,
             mac_address,
             multicast_addr,
@@ -493,8 +494,8 @@ pub struct GatewayInfo {
     /// Gateway capabilities
     pub capabilities: GatewayCapabilities,
 
-    /// Supported service types
-    pub supported_services: Vec<ServiceType>,
+    /// Supported KNXnet/IP service families
+    pub supported_families: Vec<ServiceFamily>,
 
     /// Device serial number
     pub device_serial: String,
@@ -551,9 +552,9 @@ pub struct GatewayCapabilities {
     pub routing_requires_secure: Option<bool>,
 }
 
-/// KNX/IP service types
+/// KNXnet/IP service families advertised by gateways.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServiceType {
+pub enum ServiceFamily {
     /// Core services
     Core,
 
@@ -751,6 +752,10 @@ mod tests {
         assert_eq!(gateway.addr, server.local_addr());
         assert_eq!(gateway.individual_address, Some(address));
         assert_eq!(gateway.name, "Knust TunnelServer");
+        assert_eq!(
+            gateway.supported_families,
+            [ServiceFamily::Core, ServiceFamily::Tunneling]
+        );
         assert!(gateway.capabilities.supports_tcp_tunneling);
         assert!(!gateway.capabilities.supports_device_management);
         assert!(!gateway.capabilities.supports_routing);

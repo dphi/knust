@@ -47,7 +47,7 @@ async fn main() -> Result<(), knust::KnxError> {
         );
 
         println!("  Supported Services:");
-        for service in &gateway.supported_services {
+        for service in &gateway.supported_families {
             println!("    {service:?}");
         }
 
