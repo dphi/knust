@@ -807,7 +807,7 @@ impl TunnelServer {
         session: &Arc<ClientSession>,
         telegram: &Telegram,
     ) -> Result<()> {
-        let cemi = cemi_for_telegram(telegram, MessageCode::LDataInd).serialize()?;
+        let cemi = CemiFrame::from_telegram(telegram, MessageCode::LDataInd).serialize()?;
         self.send_cemi_to_session(session, &cemi).await
     }
 
@@ -911,26 +911,9 @@ fn build_tunnelling_frame_with_code(
     let request = TunnellingRequest::new(
         channel_id,
         sequence,
-        cemi_for_telegram(telegram, message_code).serialize()?,
+        CemiFrame::from_telegram(telegram, message_code).serialize()?,
     );
     Ok(KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize())
-}
-
-fn cemi_for_telegram(telegram: &Telegram, message_code: MessageCode) -> CemiFrame {
-    let mut cemi = CemiFrame::new(
-        message_code,
-        telegram.source,
-        telegram.destination,
-        telegram.encode_apdu(),
-    );
-    if matches!(
-        telegram.telegram_type,
-        crate::protocol::TelegramType::IndividualData
-            | crate::protocol::TelegramType::IndividualControl
-    ) {
-        cemi.tpci = telegram.tpci;
-    }
-    cemi
 }
 
 #[cfg(test)]

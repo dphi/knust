@@ -2373,19 +2373,7 @@ impl Knx {
         } else {
             MessageCode::LDataInd
         };
-        let mut frame = CemiFrame::new(
-            message_code,
-            telegram.source,
-            telegram.destination,
-            telegram.encode_apdu(),
-        );
-        if matches!(
-            telegram.telegram_type,
-            TelegramType::IndividualData | TelegramType::IndividualControl
-        ) {
-            frame.tpci = telegram.tpci;
-        }
-        frame
+        CemiFrame::from_telegram(telegram, message_code)
     }
 
     fn serialize_outgoing_cemi(

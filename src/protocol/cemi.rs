@@ -7,10 +7,10 @@
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
 use crate::logging::{Component, LogLevel, Timer};
-use crate::protocol::Priority;
 use crate::protocol::address::{Address, IndividualAddress, RawGroupAddress};
 #[cfg(test)]
 use crate::protocol::address::{MainGroup, MiddleGroup};
+use crate::protocol::{Priority, Telegram, TelegramType};
 
 /// CEMI frame structure with all required fields
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -463,6 +463,23 @@ impl CemiFrame {
         timer.finish_with_message(&format!("CEMI frame serialized ({} bytes)", result.len()));
 
         Ok(result)
+    }
+
+    pub(crate) fn from_telegram(telegram: &Telegram, message_code: MessageCode) -> Self {
+        let mut frame = Self::new(
+            message_code,
+            telegram.source,
+            telegram.destination,
+            telegram.encode_apdu(),
+        );
+        frame.control_field.priority = telegram.priority;
+        if matches!(
+            telegram.telegram_type,
+            TelegramType::IndividualData | TelegramType::IndividualControl
+        ) {
+            frame.tpci = telegram.tpci;
+        }
+        frame
     }
 
     /// Create a new CEMI frame with minimal required fields
@@ -1476,21 +1493,21 @@ mod tests {
             (2, Priority::Urgent),
             (3, Priority::Low),
         ] {
-            let mut frame = CemiFrame::new(
-                MessageCode::LDataInd,
-                IndividualAddress::new(1, 1, 1),
-                Address::Group("1/2/3".parse().unwrap()),
-                vec![0x81],
-            );
-            frame.control_field.priority = priority;
-            let wire = frame.serialize().unwrap();
-            assert_eq!((wire[2] >> 2) & 3, bits);
-            let received = CemiFrame::parse(&wire).unwrap();
-            assert_eq!(received.control_field.priority, priority);
-            assert_eq!(
-                Telegram::from_cemi_frame(received).unwrap().priority,
-                priority
-            );
+            let mut telegram = Telegram::group_write("1/2/3".parse().unwrap(), vec![1]);
+            telegram.source = IndividualAddress::new(1, 1, 1);
+            telegram.priority = priority;
+            for service in [MessageCode::LDataReq, MessageCode::LDataInd] {
+                let wire = CemiFrame::from_telegram(&telegram, service)
+                    .serialize()
+                    .unwrap();
+                assert_eq!((wire[2] >> 2) & 3, bits);
+                let received = CemiFrame::parse(&wire).unwrap();
+                assert_eq!(received.control_field.priority, priority);
+                assert_eq!(
+                    Telegram::from_cemi_frame(received).unwrap().priority,
+                    priority
+                );
+            }
         }
     }
 
