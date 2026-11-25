@@ -7,8 +7,8 @@
 //! thin wrapper that names and composes a handful of those handles into one
 //! domain object:
 //!
-//! - `Switch`: a write-only actuator, one `GroupAddress<DPTSwitch>`.
-//! - `TemperatureSensor`: read + subscribe, one `GroupAddress<DPTTemperature>`,
+//! - `Switch`: a write-only actuator, one `TypedGroupAddress<DPTSwitch>`.
+//! - `TemperatureSensor`: read + subscribe, one `TypedGroupAddress<DPTTemperature>`,
 //!   decoded through the DPT 9.001 value type itself instead of hand-rolled
 //!   byte math.
 
@@ -17,14 +17,13 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use knust::application::callbacks::{TelegramCallbackFn, TelegramFilter};
-use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::address::{MainGroup, MiddleGroup};
 use knust::protocol::dpt::{DPTSwitch, DPTTemperature};
 use knust::protocol::telegram::Telegram;
-use knust::{ConnectionConfig, ConnectionType, Knx, KnxError};
-// The typed group-address handle lives at the crate root as `GroupAddress`
-// too — aliased here since the raw, untyped address (above) already claims
-// that name in this file.
-use knust::GroupAddress as TypedGroupAddress;
+use knust::{
+    ConnectionConfig, ConnectionType, GroupAddress, IndividualAddress, Knx, KnxError,
+    TypedGroupAddress,
+};
 
 /// A minimal on/off actuator: one group address, one write.
 struct Switch {

@@ -1893,7 +1893,7 @@ mod tests {
     /// transferred to the final Knx instance and function identically to runtime-registered callbacks
     #[test]
     fn property_builder_callback_transfer() {
-        use crate::application::knx::Knx;
+        use crate::Knx;
         use crate::protocol::{
             address::{Address, GroupAddress, IndividualAddress},
             telegram::{Direction, Telegram, TelegramType},
@@ -2025,7 +2025,7 @@ mod tests {
     /// return a descriptive error without corrupting internal state
     #[test]
     fn property_registration_error_handling() {
-        use crate::application::knx::Knx;
+        use crate::Knx;
         use crate::error::KnxError;
         use crate::transport::ConnectionType;
 

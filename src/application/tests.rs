@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use tokio::time::timeout;
 
-use crate::application::knx::{Knx, KnxState};
 use crate::protocol::address::IndividualAddress;
 use crate::transport::{BackoffConfig, ConnectionConfig, ConnectionType, TcpConfig};
+use crate::{Knx, KnxState};
 
 /// Generate arbitrary connection configurations for property testing
 fn arb_connection_config() -> impl Strategy<Value = ConnectionConfig> {

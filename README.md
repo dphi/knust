@@ -160,7 +160,7 @@ let config = ConnectionConfig {
 ## Typed Group Addresses
 
 `Knx::group_address::<T>(address)` binds a group address to DPT `T` and
-returns a `GroupAddress<T>` handle. `T` is one of the DPT value types in
+returns a `TypedGroupAddress<T>` handle. `T` is one of the DPT value types in
 `knust::protocol::dpt` (`DPTSwitch`, `DPTScaling`, `DPTTemperature`, ...);
 the handle can't exist without the bus already agreeing `address` is that
 DPT — registering the same address again with a *different* `T` is an
@@ -224,7 +224,7 @@ for (address, dpt) in knx.registered_group_addresses() {
 ```
 
 `Knx::unregister_group_address(address)` removes a binding and frees the
-address to be registered under a different DPT; any `GroupAddress<T>`
+address to be registered under a different DPT; any `TypedGroupAddress<T>`
 handles obtained before the unregister re-check the registry on their next
 `write`/`read`/`decode` and error rather than keep using their now-stale
 `T`.
@@ -402,7 +402,7 @@ match knx.connect().await {
 The repository includes examples covering common tasks (`cargo run --example <name>`,
 some require the `secure`/`ets` features):
 
-- **custom_devices**: building device structs on typed `GroupAddress<T>` handles
+- **custom_devices**: building device structs on typed `TypedGroupAddress<T>` handles
 - **send_telegrams**: typed writes, plus the raw `Telegram`/`send_telegram` escape hatch
 - **value_reader**: typed reads across a few different DPTs
 - **read_responder**: answering a `GroupValueRead` with a `GroupValueResponse`

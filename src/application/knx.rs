@@ -1893,12 +1893,17 @@ impl Knx {
 
     /// Bind `address` to DPT `T` and return a handle for typed reads/writes.
     ///
-    /// This is the only way to obtain a [`GroupAddress`](TypedGroupAddress)
-    /// — it can't exist without a bus that has already agreed `address` is
-    /// DPT `T`. The binding is shared by [`Self::decode_group_value`] and
-    /// every other `GroupAddress` handle for the same address; registering
-    /// the same `(address, T)` pair again just returns a fresh handle to
-    /// the existing binding.
+    /// The binding is shared by [`Self::decode_group_value`] and every
+    /// [`TypedGroupAddress`] handle for the same address.
+    ///
+    /// ```
+    /// use knust::{Knx, TypedGroupAddress};
+    /// use knust::protocol::dpt::DPTSwitch;
+    ///
+    /// fn light(knx: &Knx) -> knust::Result<TypedGroupAddress<DPTSwitch>> {
+    ///     knx.group_address("1/2/3".parse()?)
+    /// }
+    /// ```
     ///
     /// # Errors
     ///
@@ -1975,7 +1980,7 @@ impl Knx {
 
     /// Configure a refresh TTL for `address`: if no real value is observed
     /// for it within `ttl`, the background refresh task
-    /// ([`Self::start_group_refresh_task`]) sends a `GroupValueRead` for it.
+    /// sends a `GroupValueRead` for it.
     ///
     /// The refresh task only runs once [`Self::start`] has been called; if
     /// `start()` hasn't run yet, this still records the TTL (it'll take
@@ -2048,7 +2053,7 @@ impl Knx {
     ///
     /// Returns `None` if `telegram` isn't a group telegram, carries no value
     /// (a `GroupValueRead`), or its address hasn't been registered. This is
-    /// the generic counterpart to [`GroupAddress::decode`](TypedGroupAddress::decode)
+    /// the generic counterpart to [`TypedGroupAddress::decode`]
     /// for callers (e.g. a bus monitor) that see telegrams for addresses
     /// they don't hold a specific handle for.
     #[cfg(feature = "dpt")]

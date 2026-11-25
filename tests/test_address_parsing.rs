@@ -1,6 +1,6 @@
 #![cfg(feature = "dpt")]
-use knust::protocol::address::{GroupAddress, IndividualAddress};
 use knust::protocol::dpt::DptType;
+use knust::{GroupAddress, IndividualAddress};
 
 #[test]
 fn address_and_dpt_parsers_reject_non_ascii_digits_and_trailing_newlines() {
