@@ -13,7 +13,7 @@
 use std::time::Duration;
 use tokio::time::sleep;
 
-use knust::protocol::address::{IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
+use knust::protocol::address::{MainGroup, MiddleGroup, RawGroupAddress};
 use knust::protocol::dpt::{DPTScaling, DPTSwitch};
 use knust::protocol::telegram::Telegram;
 use knust::{ConnectionConfig, ConnectionType, Knx};
@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ConnectionConfig {
         connection_type: ConnectionType::Tunneling,
         gateway_ip: Some("192.168.1.100".parse()?),
-        individual_address: IndividualAddress::new(1, 1, 240),
+        individual_address: "1.1.240".parse()?,
         ..Default::default()
     };
 

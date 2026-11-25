@@ -3,7 +3,7 @@
 //! This example demonstrates various ways to configure Knx for different
 //! use cases, including connection types, device setup, and advanced options.
 
-use knust::protocol::{IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
+use knust::protocol::{MainGroup, MiddleGroup, RawGroupAddress};
 use knust::transport::{BackoffConfig, SecurityConfig, TcpConfig};
 use knust::{Component, ConnectionConfig, ConnectionType, Knx, LogLevel, LoggingConfig};
 
@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         gateway_ip: Some("192.168.1.100".parse().unwrap()),
         gateway_port: Some(3671), // Standard KNX/IP port
         local_ip: None,           // Auto-detect
-        individual_address: IndividualAddress::new(1, 1, 240),
+        individual_address: "1.1.240".parse()?,
         security: None,
         timeout_ms: 5000,
         auto_reconnect: true,
@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         gateway_ip: None, // Not needed for routing
         gateway_port: Some(3671),
         local_ip: Some("192.168.1.50".parse().unwrap()), // Specify interface
-        individual_address: IndividualAddress::new(1, 1, 241),
+        individual_address: "1.1.241".parse()?,
         security: None,
         timeout_ms: 3000,
         auto_reconnect: false, // Routing doesn't need reconnection
@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         gateway_ip: Some("192.168.1.100".parse().unwrap()),
         gateway_port: Some(3671),
         local_ip: Some("192.168.1.50".parse().unwrap()),
-        individual_address: IndividualAddress::new(1, 1, 242),
+        individual_address: "1.1.242".parse()?,
         security: None,
         timeout_ms: 8000,
         auto_reconnect: true,
@@ -136,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         gateway_ip: Some("192.168.1.100".parse().unwrap()),
         gateway_port: Some(3671),
         local_ip: None,
-        individual_address: IndividualAddress::new(1, 1, 243),
+        individual_address: "1.1.243".parse()?,
         security: Some(security_config),
         timeout_ms: 15000, // Longer timeout for secure handshake
         auto_reconnect: true,
@@ -240,7 +240,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connection_type(ConnectionType::Tunneling)
         .gateway_ip("192.168.1.100".parse().unwrap())
         .gateway_port(3671)
-        .individual_address(IndividualAddress::new(1, 1, 244))
+        .individual_address("1.1.244".parse()?)
         .timeout_ms(7000)
         .auto_reconnect(true)
         .build()

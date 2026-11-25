@@ -6,7 +6,6 @@
 //! The example will try to read gateway configuration from .env.test file,
 //! or use a default address if not configured.
 
-use knust::protocol::IndividualAddress;
 use knust::transport::{BackoffConfig, TcpConfig};
 use knust::{ConnectionConfig, ConnectionType, Knx, KnxError};
 use std::time::Duration;
@@ -43,7 +42,7 @@ async fn main() -> Result<(), KnxError> {
         gateway_ip: Some(gateway_ip),
         gateway_port: Some(gateway_port),
         local_ip: None, // Let the system choose
-        individual_address: IndividualAddress::new(1, 1, 240),
+        individual_address: "1.1.240".parse()?,
         security: None,
         timeout_ms: 5000,
         auto_reconnect: true,

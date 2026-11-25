@@ -20,7 +20,7 @@ use knust::application::callbacks::{TelegramCallbackFn, TelegramFilter};
 use knust::protocol::RawGroupAddress;
 use knust::protocol::dpt::{DPTSwitch, DPTTemperature};
 use knust::protocol::telegram::Telegram;
-use knust::{ConnectionConfig, ConnectionType, GroupAddress, IndividualAddress, Knx, KnxError};
+use knust::{ConnectionConfig, ConnectionType, GroupAddress, Knx, KnxError};
 
 /// A minimal on/off actuator: one group address, one write.
 struct Switch {
@@ -110,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = ConnectionConfig {
         connection_type: ConnectionType::Routing,
-        individual_address: IndividualAddress::new(1, 1, 240),
+        individual_address: "1.1.240".parse()?,
         ..Default::default()
     };
     let knx = Knx::new(config).await?;

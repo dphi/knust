@@ -377,6 +377,14 @@ impl From<RawGroupAddress> for (u8, u8, u8) {
 /// - area: 0-15 (4 bits)
 /// - line: 0-15 (4 bits)
 /// - device: 0-255 (8 bits)
+///
+/// ```
+/// use knust::IndividualAddress;
+///
+/// let address: IndividualAddress = "1.2.3".parse()?;
+/// assert_eq!(address.to_string(), "1.2.3");
+/// # Ok::<(), knust::KnxError>(())
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct IndividualAddress(u16);
 
