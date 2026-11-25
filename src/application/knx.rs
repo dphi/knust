@@ -10,9 +10,9 @@ use crate::error::{ConfigurationError, DeviceError, KnxError, Result};
 use crate::log_application;
 use crate::logging::{Component, LogLevel, Timer};
 use crate::memory::{MemoryMonitor, PerformanceOptimizer};
-use crate::protocol::Telegram;
 #[cfg(feature = "dpt")]
-use crate::protocol::TelegramPriority;
+use crate::protocol::Priority;
+use crate::protocol::Telegram;
 #[cfg(feature = "dpt")]
 use crate::protocol::dpt::GroupAddressRegistry;
 use crate::protocol::{Address, RawGroupAddress, TelegramType};
@@ -868,7 +868,7 @@ impl Knx {
     /// Each tick, sends at most one `GroupValueRead` — for whichever
     /// registered address has gone longest without a refresh attempt among
     /// those past their configured TTL (see [`Self::set_group_address_refresh`]).
-    /// Paced at one per second and tagged [`TelegramPriority::Low`] so a
+    /// Paced at one per second and tagged [`Priority::Low`] so a
     /// large stale backlog (e.g. right after startup) trickles out instead
     /// of bursting onto the bus or crowding out real application traffic —
     /// the existing priority queue and rate limiter in
@@ -895,7 +895,7 @@ impl Knx {
 
                 if let Some(address) = group_registry.next_stale(std::time::Instant::now()) {
                     let mut read_telegram = Telegram::group_read(address);
-                    read_telegram.priority = TelegramPriority::Low;
+                    read_telegram.priority = Priority::Low;
 
                     match knx.send_telegram(&read_telegram).await {
                         Ok(()) => group_registry.record_tried(address),

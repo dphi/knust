@@ -158,12 +158,7 @@ impl Telegram {
             source: frame.source_addr,
             destination: frame.dest_addr,
             payload,
-            priority: match frame.control_field.priority {
-                super::cemi::Priority::System => Priority::System,
-                super::cemi::Priority::Normal => Priority::Normal,
-                super::cemi::Priority::Urgent => Priority::Urgent,
-                super::cemi::Priority::Low => Priority::Low,
-            },
+            priority: frame.control_field.priority,
             direction: Direction::Incoming,
             telegram_type,
             compact_payload: frame.apci_data.len() == 1,

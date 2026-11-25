@@ -7,6 +7,7 @@
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
 use crate::logging::{Component, LogLevel, Timer};
+use crate::protocol::Priority;
 use crate::protocol::address::{Address, IndividualAddress, RawGroupAddress};
 #[cfg(test)]
 use crate::protocol::address::{MainGroup, MiddleGroup};
@@ -920,19 +921,6 @@ pub enum AddressType {
     Group,
 }
 
-/// Priority enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Priority {
-    /// System priority (0)
-    System,
-    /// Normal priority (1)
-    Normal,
-    /// Urgent priority (2)
-    Urgent,
-    /// Low priority (3)
-    Low,
-}
-
 /// CEMI control field
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ControlField {
@@ -973,13 +961,7 @@ impl ControlField {
         let repeat = (value & 0x20) != 0;
         let system_broadcast = (value & 0x10) != 0;
 
-        let priority = match (value >> 2) & 0x03 {
-            0 => Priority::System,
-            1 => Priority::Normal,
-            2 => Priority::Urgent,
-            3 => Priority::Low,
-            _ => unreachable!(),
-        };
+        let priority = Priority::from_u8(value >> 2);
 
         let ack_request = (value & 0x02) != 0;
         let confirm = (value & 0x01) != 0;
@@ -1015,13 +997,7 @@ impl ControlField {
         let repeat = (high_byte & 0x20) == 0; // Note: 0 = repeat, 1 = do not repeat
         let system_broadcast = (high_byte & 0x10) == 0; // Note: 0 = system broadcast, 1 = broadcast
 
-        let priority = match (high_byte >> 2) & 0x03 {
-            0 => Priority::System,
-            1 => Priority::Normal,
-            2 => Priority::Urgent,
-            3 => Priority::Low,
-            _ => unreachable!(),
-        };
+        let priority = Priority::from_u8(high_byte >> 2);
 
         let ack_request = (high_byte & 0x02) != 0;
         let confirm = (high_byte & 0x01) != 0;
@@ -1062,12 +1038,7 @@ impl ControlField {
             result |= 0x10;
         }
 
-        result |= match self.priority {
-            Priority::System => 0,
-            Priority::Normal => 1,
-            Priority::Urgent => 2,
-            Priority::Low => 3,
-        } << 2;
+        result |= self.priority.to_u8() << 2;
 
         if self.ack_request {
             result |= 0x02;
@@ -1097,12 +1068,7 @@ impl ControlField {
             high_byte |= 0x10;
         }
 
-        high_byte |= match self.priority {
-            Priority::System => 0,
-            Priority::Normal => 1,
-            Priority::Urgent => 2,
-            Priority::Low => 3,
-        } << 2;
+        high_byte |= self.priority.to_u8() << 2;
 
         if self.ack_request {
             high_byte |= 0x02;
@@ -1498,6 +1464,34 @@ mod tests {
         let mut invalid = indication;
         invalid.element_count = 16;
         assert!(invalid.serialize().is_err());
+    }
+
+    #[test]
+    fn cemi_and_telegram_share_all_four_wire_priorities() {
+        use crate::protocol::Telegram;
+
+        for (bits, priority) in [
+            (0, Priority::System),
+            (1, Priority::Normal),
+            (2, Priority::Urgent),
+            (3, Priority::Low),
+        ] {
+            let mut frame = CemiFrame::new(
+                MessageCode::LDataInd,
+                IndividualAddress::new(1, 1, 1),
+                Address::Group("1/2/3".parse().unwrap()),
+                vec![0x81],
+            );
+            frame.control_field.priority = priority;
+            let wire = frame.serialize().unwrap();
+            assert_eq!((wire[2] >> 2) & 3, bits);
+            let received = CemiFrame::parse(&wire).unwrap();
+            assert_eq!(received.control_field.priority, priority);
+            assert_eq!(
+                Telegram::from_cemi_frame(received).unwrap().priority,
+                priority
+            );
+        }
     }
 
     #[test]

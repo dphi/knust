@@ -18,7 +18,7 @@ pub use address::{Address, IndividualAddress, MainGroup, MiddleGroup, RawGroupAd
 pub use apci::GroupValueService;
 pub use cemi::{
     AdditionalInfo, AddressType, CemiFrame, ControlField, ExtendedControlField, FrameType,
-    MessageCode, Priority,
+    MessageCode,
 };
 #[cfg(feature = "dpt")]
 pub use dpt::{
@@ -87,5 +87,5 @@ pub use management::{
     IndividualAddressSerialResponse, IndividualAddressSerialWrite,
 };
 pub use profile::PropertyDataType;
-pub use telegram::{Priority as TelegramPriority, Telegram, TelegramType};
+pub use telegram::{Priority, Telegram, TelegramType};
 pub use tpci::TpciFrame;
