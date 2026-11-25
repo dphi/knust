@@ -50,6 +50,18 @@ struct Binding {
     last_tried: Option<Instant>,
 }
 
+impl Binding {
+    fn new(dpt: DptType) -> Self {
+        Self {
+            dpt,
+            ttl: None,
+            last_seen: None,
+            last_seen_value: None,
+            last_tried: None,
+        }
+    }
+}
+
 /// Snapshot of a registered group address's DPT binding, refresh TTL, and
 /// last known value.
 #[derive(Debug, Clone)]
@@ -100,31 +112,41 @@ impl GroupAddressRegistry {
     /// a *different* DPT.
     pub fn register(&self, address: RawGroupAddress, dpt: DptType) -> Result<()> {
         let mut entries = write_lock(&self.entries);
-        match entries.get(&address) {
-            Some(existing) if read_lock(existing).dpt != dpt => Err(ProtocolError::DptError {
-                dpt_type: dpt.number_str(),
-                details: format!(
-                    "group address {address} is already registered as DPT {} (cannot rebind to DPT {})",
-                    read_lock(existing).dpt.number_str(),
-                    dpt.number_str()
-                ),
-            }
-            .into()),
-            Some(_) => Ok(()),
-            None => {
-                entries.insert(
-                    address,
-                    RwLock::new(Binding {
-                        dpt,
-                        ttl: None,
-                        last_seen: None,
-                        last_seen_value: None,
-                        last_tried: None,
-                    }),
-                );
-                Ok(())
-            }
+        Self::check_binding(&entries, address, dpt)?;
+        entries
+            .entry(address)
+            .or_insert_with(|| RwLock::new(Binding::new(dpt)));
+        Ok(())
+    }
+
+    #[cfg(feature = "ets")]
+    pub(crate) fn register_batch(&self, bindings: HashMap<RawGroupAddress, DptType>) -> Result<()> {
+        let mut entries = write_lock(&self.entries);
+        for (&address, &dpt) in &bindings {
+            Self::check_binding(&entries, address, dpt)?;
         }
+        for (address, dpt) in bindings {
+            entries
+                .entry(address)
+                .or_insert_with(|| RwLock::new(Binding::new(dpt)));
+        }
+        Ok(())
+    }
+
+    fn check_binding(
+        entries: &HashMap<RawGroupAddress, RwLock<Binding>>,
+        address: RawGroupAddress,
+        dpt: DptType,
+    ) -> Result<()> {
+        if let Some(existing) = entries.get(&address).map(|entry| read_lock(entry).dpt)
+            && existing != dpt
+        {
+            return Err(ProtocolError::DptError {
+                dpt_type: dpt.number_str(),
+                details: format!("group address {address} is already registered as DPT {existing} (cannot rebind to DPT {dpt})"),
+            }.into());
+        }
+        Ok(())
     }
 
     /// Look up the DPT bound to `address`, if any.

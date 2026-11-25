@@ -220,17 +220,19 @@ impl Knx {
     ///
     /// Returns [`ProtocolError::DptError`](crate::error::ProtocolError::DptError)
     /// on the first address already bound to a *different* DPT (by an
-    /// earlier import, or a [`Self::group_address`] call). Entries already
-    /// processed stay registered — this doesn't roll back a partial import.
+    /// earlier import, or a [`Self::group_address`] call). The entire
+    /// input is validated before any new binding is installed.
     #[cfg(feature = "ets")]
     pub fn register_group_addresses_from_ets(
         &self,
         configs: &std::collections::HashMap<RawGroupAddress, crate::config::GroupAddressConfig>,
     ) -> Result<()> {
-        for (address, config) in configs {
-            self.register_group_address_dyn(*address, config.dpt)?;
-        }
-        Ok(())
+        self.group_registry.register_batch(
+            configs
+                .iter()
+                .map(|(&address, config)| (address, config.dpt))
+                .collect(),
+        )
     }
 
     /// The DPT `address` is bound to, if it was registered via

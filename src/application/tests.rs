@@ -535,6 +535,18 @@ mod unit_tests {
                    \"Living Room Temp\";\"1/2/3\";\"DPST-9-1\"\n\
                    \"Hall Light\";\"1/2/4\";\"DPST-1-1\"\n";
         let parsed = parse_ets_csv(csv).unwrap();
+        let temperature: RawGroupAddress = "1/2/3".parse().unwrap();
+        let light: RawGroupAddress = "1/2/4".parse().unwrap();
+        knx.register_group_address_dyn(temperature, DptType::Temperature)
+            .unwrap();
+        let mut conflicting = parsed.clone();
+        conflicting.get_mut(&temperature).unwrap().dpt = DptType::Scaling;
+        assert!(knx.register_group_addresses_from_ets(&conflicting).is_err());
+        assert_eq!(
+            knx.group_address_dpt(temperature),
+            Some(DptType::Temperature)
+        );
+        assert_eq!(knx.group_address_dpt(light), None);
 
         knx.register_group_addresses_from_ets(&parsed).unwrap();
 
