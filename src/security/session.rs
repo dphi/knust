@@ -74,8 +74,8 @@ pub struct SecureSession {
     session_key: Arc<RwLock<SessionKey>>,
     /// Sequence number for outgoing frames
     sequence_number: AtomicU64,
-    /// Last received sequence number
-    sequence_number_received: AtomicU64,
+    /// Lowest sequence still acceptable from this peer.
+    next_receive_sequence: AtomicU64,
     /// Current session state
     state: Arc<RwLock<SecureSessionState>>,
     /// ECDH key pair for this session
@@ -110,7 +110,7 @@ impl SecureSession {
             session_id: 0,
             session_key: Arc::new(RwLock::new(SessionKey::default())),
             sequence_number: AtomicU64::new(0),
-            sequence_number_received: AtomicU64::new(0),
+            next_receive_sequence: AtomicU64::new(0),
             state: Arc::new(RwLock::new(SecureSessionState::Uninitialized)),
             key_pair: None,
             device_auth_code,
@@ -127,7 +127,7 @@ impl SecureSession {
 
         *self.state.write().await = SecureSessionState::Handshaking;
         self.sequence_number.store(0, Ordering::SeqCst);
-        self.sequence_number_received.store(0, Ordering::SeqCst);
+        self.next_receive_sequence.store(0, Ordering::SeqCst);
 
         public_key
     }
@@ -476,21 +476,11 @@ impl SecureSession {
         let encrypted_data = &encrypted_frame[22..encrypted_frame.len() - 16];
         let mac = &encrypted_frame[encrypted_frame.len() - 16..];
 
-        // Validate sequence number
         let received_seq = u64::from_be_bytes({
             let mut arr = [0u8; 8];
             arr[2..].copy_from_slice(sequence_info);
             arr
         });
-        let last_seq = self.sequence_number_received.load(Ordering::SeqCst);
-        if received_seq <= last_seq && last_seq != 0 {
-            return Err(SecurityError::CryptographicError {
-                operation: "decrypt".to_string(),
-                reason: format!("Invalid sequence number: {received_seq} <= {last_seq}"),
-            }
-            .into());
-        }
-
         // Build counter_0 for CTR decryption
         let mut counter_0 = Vec::with_capacity(16);
         counter_0.extend_from_slice(sequence_info);
@@ -527,9 +517,16 @@ impl SecureSession {
             .into());
         }
 
-        // Update received sequence number
-        self.sequence_number_received
-            .store(received_seq, Ordering::SeqCst);
+        let next = self
+            .next_receive_sequence
+            .fetch_max(received_seq + 1, Ordering::SeqCst);
+        if received_seq < next {
+            return Err(SecurityError::CryptographicError {
+                operation: "decrypt".to_string(),
+                reason: format!("Invalid sequence number: {received_seq} < {next}"),
+            }
+            .into());
+        }
 
         Ok(decrypted_data)
     }

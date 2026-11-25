@@ -204,8 +204,15 @@ mod session_tests {
         // in both directions.
         let plain = b"hello secure knx".to_vec();
         let encrypted_by_client = client.encrypt_frame(&plain).await.unwrap();
+        assert_eq!(encrypted_by_client[8..14], [0; 6]);
+        let mut tampered = encrypted_by_client.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(server.decrypt_frame(&tampered).await.is_err());
         let decrypted_by_server = server.decrypt_frame(&encrypted_by_client).await.unwrap();
         assert_eq!(decrypted_by_server, plain);
+        assert!(server.decrypt_frame(&encrypted_by_client).await.is_err());
+        let next = client.encrypt_frame(&plain).await.unwrap();
+        assert_eq!(server.decrypt_frame(&next).await.unwrap(), plain);
 
         let plain2 = b"reply from server".to_vec();
         let encrypted_by_server = server.encrypt_frame(&plain2).await.unwrap();
