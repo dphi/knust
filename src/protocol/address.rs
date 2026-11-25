@@ -404,12 +404,12 @@ impl IndividualAddress {
     /// Create an individual address from area/line/device components
     ///
     /// # Panics
-    /// Panics if any component is out of valid range in debug builds.
-    /// In release builds, invalid values are silently wrapped.
+    /// Panics if the area or line is out of range. Use [`Self::try_new`] for
+    /// unchecked input.
     #[must_use]
     pub const fn new(area: u8, line: u8, device: u8) -> Self {
-        debug_assert!(area <= Self::MAX_AREA, "area out of range");
-        debug_assert!(line <= Self::MAX_LINE, "line out of range");
+        assert!(area <= Self::MAX_AREA, "area out of range");
+        assert!(line <= Self::MAX_LINE, "line out of range");
 
         let raw = ((area as u16) << 12) | ((line as u16) << 8) | (device as u16);
         Self(raw)

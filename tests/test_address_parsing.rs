@@ -1,5 +1,14 @@
 #![cfg(feature = "dpt")]
 use knust::IndividualAddress;
+
+#[test]
+fn numeric_individual_addresses_reject_out_of_range_components() {
+    assert!(std::panic::catch_unwind(|| IndividualAddress::new(16, 0, 1)).is_err());
+    assert!(std::panic::catch_unwind(|| IndividualAddress::new(0, 16, 1)).is_err());
+    assert!(IndividualAddress::try_new(16, 0, 1).is_err());
+    assert!(IndividualAddress::try_new(0, 16, 1).is_err());
+    assert_eq!(IndividualAddress::new(15, 15, 255).raw(), u16::MAX);
+}
 use knust::protocol::RawGroupAddress;
 use knust::protocol::dpt::DptType;
 
