@@ -312,7 +312,10 @@ mod keyring_tests {
         let mut keyring = KeyRing::new();
         let addr = IndividualAddress::new(1, 2, 3);
 
-        // First sequence should succeed
+        assert!(keyring.validate_sequence(addr, 100).is_err());
+        keyring.set_sequence_number(addr, 99);
+
+        // First sequence after the configured baseline should succeed
         assert!(keyring.validate_sequence(addr, 100).is_ok());
 
         // Higher sequence should succeed

@@ -50,7 +50,7 @@ instead of hand-building `Telegram`s. See
 handles like this into device structs.
 
 ```rust
-use knust::{ConnectionType, IndividualAddress, Knx};
+use knust::{ConnectionType, Knx};
 use knust::protocol::dpt::DPTSwitch;
 
 #[tokio::main]
@@ -58,7 +58,7 @@ async fn main() -> Result<(), knust::KnxError> {
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
         .gateway("192.168.1.100:3671".parse()?)
-        .individual_address(IndividualAddress::new(1, 1, 240))
+        .individual_address("1.1.240".parse()?)
         .build()
         .await?;
 
@@ -92,7 +92,7 @@ use knust::Knx;
 let knx = Knx::builder()
     .connection_type(ConnectionType::Tunneling)
     .gateway_ip("192.168.1.100".parse().unwrap())
-    .individual_address(IndividualAddress::new(1, 1, 240))
+    .individual_address("1.1.240".parse()?)
     .timeout_ms(5000)
     .auto_reconnect(true)
     .build()
@@ -110,7 +110,7 @@ let config = ConnectionConfig {
     connection_type: ConnectionType::Tunneling,
     gateway_ip: Some("192.168.1.100".parse().unwrap()),
     gateway_port: Some(3671),
-    individual_address: IndividualAddress::new(1, 1, 240),
+    individual_address: "1.1.240".parse()?,
     ..Default::default()
 };
 ```
@@ -123,7 +123,7 @@ Best for monitoring multiple devices on the network:
 let config = ConnectionConfig {
     connection_type: ConnectionType::Routing,
     local_ip: Some("192.168.1.50".parse().unwrap()),
-    individual_address: IndividualAddress::new(1, 1, 241),
+    individual_address: "1.1.241".parse()?,
     ..Default::default()
 };
 ```
@@ -304,39 +304,16 @@ The following require the `secure` feature.
 
 ### KNX Data Security
 
-Encrypt group communication using KNX Data Security. **Experimental** —
-unlike KNX IP Secure (the session handshake above), this hasn't been
-verified against a reference implementation or real hardware, and isn't
-wired into the telegram send/receive path automatically; use
-`security::group::encrypt_group_payload`/`decrypt_group_payload` directly
-on APDU bytes:
+Load the ETS keyring and install it before starting the client. Knust encrypts
+outgoing telegrams for configured group addresses. On receive, it authenticates
+Data Secure telegrams and checks the sender's sequence automatically.
 
 ```rust
-use knust::security::{KeyRing, SecurityKey};
+use knust::config::keyring::KeyringParser;
 
-let mut keyring = KeyRing::new();
-
-// Add group keys
-let group_key = SecurityKey::from_hex("0123456789ABCDEF0123456789ABCDEF")?;
-let address = "1/2/1".parse()?;
-keyring.add_group_key(address, group_key);
-
-// Check if group is secured
-if keyring.is_group_secured(&address) {
-    println!("Group 1/2/1 is secured");
-}
-```
-
-### Sequence Number Validation
-
-Protect against replay attacks:
-
-```rust
-let sender = IndividualAddress::new(1, 2, 3);
-match keyring.validate_sequence(sender, sequence_number) {
-    Ok(()) => println!("Sequence number valid"),
-    Err(e) => println!("Replay attack detected: {}", e),
-}
+let keys = KeyringParser::parse_file_with_password("project.knxkeys", password).await?;
+let keyring = keys.into_data_secure_keyring_for("1.1.240".parse()?);
+knx.set_data_secure_keyring(keyring).await;
 ```
 
 ## Logging and Debugging
@@ -413,7 +390,6 @@ some require the `secure`/`ets` features):
 - **packet_listener** / **telegram_monitor**: passive bus monitoring
 - **datetime_sync**: sending DPT 10/11 time and date
 - **color_dpt_demo**: RGB/RGBW/XYY color DPTs
-- **sequence_validation_demo**: UDP sequence number handling
 
 Run `ls examples/` for the full, current list.
 

@@ -31,7 +31,6 @@ cargo run --example basic_demo
 - **`color_dpt_demo`** - RGB/RGBW/XYY color DPTs
 - **`datetime_sync`** - Date/time synchronization
 - **`connection_handling`** - Connection management and error handling
-- **`sequence_validation_demo`** - UDP sequence number handling
 - **`packet_listener`** - Passive bus monitoring
 - **`tunnel_smoke`** - Read-only smoke test against a real gateway
 - **`secure_tunnel_smoke`** - Read-only smoke test against a real KNX IP Secure gateway
@@ -45,7 +44,7 @@ Example configuration:
 let config = ConnectionConfig {
     connection_type: ConnectionType::Tunneling,
     gateway_ip: Some("192.168.1.100".parse()?),
-    individual_address: IndividualAddress::new(1, 1, 240),
+    individual_address: "1.1.240".parse()?,
     ..Default::default()
 };
 ```

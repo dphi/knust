@@ -2326,37 +2326,13 @@ impl Knx {
         let mut frame = crate::protocol::cemi::CemiFrame::parse(cemi_data)?;
         let is_data_secure = frame.tpci & 0x03 == 0x03 && frame.apci_data.first() == Some(&0xF1);
         if is_data_secure {
-            if frame.apci_data.len() < 8 {
-                return Err(SecurityError::CryptographicError {
-                    operation: "group decrypt".to_string(),
-                    reason: "Data Secure APDU is too short for its sequence number".to_string(),
-                }
-                .into());
-            }
-            let sequence_number = u64::from_be_bytes([
-                0,
-                0,
-                frame.apci_data[2],
-                frame.apci_data[3],
-                frame.apci_data[4],
-                frame.apci_data[5],
-                frame.apci_data[6],
-                frame.apci_data[7],
-            ]);
             let mut keyring = data_secure_keyring.write().await;
             let keyring = keyring
                 .as_mut()
                 .ok_or_else(|| SecurityError::InvalidCredentials {
                     details: "Data Secure frame received without group keys".to_string(),
                 })?;
-            if keyring.get_sequence_number(&frame.source_addr).is_none() {
-                return Err(SecurityError::InvalidCredentials {
-                    details: format!("No Data Secure sender entry for {}", frame.source_addr),
-                }
-                .into());
-            }
             frame = crate::security::decrypt_group_frame(keyring, &frame)?;
-            keyring.validate_sequence(frame.source_addr, sequence_number)?;
         }
         Telegram::from_cemi_frame(frame)
     }

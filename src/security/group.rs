@@ -71,7 +71,7 @@ fn seq_to_bytes(sequence_number: u64) -> [u8; 6] {
 /// The frame supplies the source, group destination, TPCI, address type, and
 /// frame format that are authenticated by the KNX wire format.
 /// The secured output is sequence number, encrypted APDU, and four-byte MAC.
-pub fn encrypt_group_payload(
+fn encrypt_group_payload(
     keyring: &KeyRing,
     frame: &CemiFrame,
     payload: &[u8],
@@ -139,11 +139,11 @@ pub fn encrypt_group_payload(
 ///
 /// `frame` must carry the original CEMI source/destination and control metadata;
 /// `secured_payload` is sequence number, encrypted APDU, and four-byte MAC.
-pub fn decrypt_group_payload(
+fn decrypt_group_payload(
     keyring: &KeyRing,
     frame: &CemiFrame,
     secured_payload: &[u8],
-) -> Result<Vec<u8>> {
+) -> Result<(Vec<u8>, u64)> {
     let min_len = SEQ_LENGTH + MAC_LENGTH;
     if secured_payload.len() < min_len {
         return Err(SecurityError::CryptographicError {
@@ -215,7 +215,7 @@ pub fn decrypt_group_payload(
         sequence_number
     );
 
-    Ok(decrypted_payload)
+    Ok((decrypted_payload, sequence_number))
 }
 
 /// Build the secure APDU fields for a group CEMI frame.
@@ -253,9 +253,13 @@ pub fn encrypt_group_frame(
     Ok(secure_frame)
 }
 
-/// Restore a group CEMI frame from a secured APDU.
-pub fn decrypt_group_frame(keyring: &KeyRing, frame: &CemiFrame) -> Result<CemiFrame> {
-    if frame.apci_data.len() < 2 || frame.apci_data[0] != 0xF1 || frame.apci_data[1] != 0x10 {
+/// Authenticate a secured group CEMI frame and advance its sender's replay counter.
+///
+/// # Errors
+/// Rejects malformed frames, missing keys or sender entries, authentication
+/// failures, and sequences at or below the last accepted value.
+pub fn decrypt_group_frame(keyring: &mut KeyRing, frame: &CemiFrame) -> Result<CemiFrame> {
+    if frame.tpci & 0x03 != 0x03 || !frame.apci_data.starts_with(&[0xF1, 0x10]) {
         return Err(SecurityError::CryptographicError {
             operation: "group decrypt".to_string(),
             reason: "Unsupported Data Secure service or algorithm".to_string(),
@@ -263,7 +267,7 @@ pub fn decrypt_group_frame(keyring: &KeyRing, frame: &CemiFrame) -> Result<CemiF
         .into());
     }
 
-    let apdu = decrypt_group_payload(keyring, frame, &frame.apci_data[2..])?;
+    let (apdu, sequence_number) = decrypt_group_payload(keyring, frame, &frame.apci_data[2..])?;
     if apdu.is_empty() {
         return Err(SecurityError::CryptographicError {
             operation: "group decrypt".to_string(),
@@ -281,6 +285,7 @@ pub fn decrypt_group_frame(keyring: &KeyRing, frame: &CemiFrame) -> Result<CemiF
             reason: "Decrypted APDU exceeds the CEMI length field".to_string(),
         }
     })?;
+    keyring.validate_sequence(frame.source_addr, sequence_number)?;
     Ok(plain_frame)
 }
 
@@ -332,8 +337,9 @@ mod tests {
             Address::Group("0/4/0".parse::<RawGroupAddress>().unwrap()),
             vec![0x00],
         );
-        let keyring = reference_keyring();
-        let secure = encrypt_group_frame(&keyring, &plain, 160170101607).unwrap();
+        let mut keyring = reference_keyring();
+        let sequence = 160_170_101_607;
+        let secure = encrypt_group_frame(&keyring, &plain, sequence).unwrap();
 
         assert_eq!(secure.tpci, 0x03);
         assert_eq!(secure.data_length, 14);
@@ -341,10 +347,25 @@ mod tests {
         assert_eq!(&secure.apci_data[8..10], &[0xCD, 0x18]);
         assert_eq!(&secure.apci_data[10..], &[0x4A, 0xFE, 0x57, 0x44]);
 
-        let restored = decrypt_group_frame(&keyring, &secure).unwrap();
+        assert!(decrypt_group_frame(&mut keyring, &secure).is_err());
+        keyring.set_sequence_number(plain.source_addr, sequence - 1);
+        let mut tampered = secure.clone();
+        tampered.apci_data[8] ^= 1;
+        assert!(decrypt_group_frame(&mut keyring, &tampered).is_err());
+        assert_eq!(
+            keyring.get_sequence_number(&plain.source_addr),
+            Some(sequence - 1)
+        );
+
+        let restored = decrypt_group_frame(&mut keyring, &secure).unwrap();
         assert_eq!(restored.tpci, plain.tpci);
         assert_eq!(restored.apci_data, plain.apci_data);
         assert_eq!(restored.data_length, plain.data_length);
+        assert_eq!(
+            keyring.get_sequence_number(&plain.source_addr),
+            Some(sequence)
+        );
+        assert!(decrypt_group_frame(&mut keyring, &secure).is_err());
     }
 
     #[test]
@@ -357,7 +378,7 @@ mod tests {
 
         assert_eq!(
             decrypt_group_payload(&keyring, &frame, &secured).unwrap(),
-            [0x00, 0x00]
+            (vec![0x00, 0x00], 160_170_101_607)
         );
 
         let mut tampered = secured;

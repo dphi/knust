@@ -147,7 +147,7 @@ impl KeyRing {
         self.group_keys.keys()
     }
 
-    /// Set the last valid sequence number for an individual address.
+    /// Set the last valid sequence number for a configured Data Secure sender.
     pub fn set_sequence_number(&mut self, address: IndividualAddress, seq: u64) {
         self.sequence_numbers.insert(address, seq);
     }
@@ -160,24 +160,20 @@ impl KeyRing {
 
     /// Validate and update sequence number for replay protection.
     ///
-    /// Returns Ok(()) if the sequence number is valid (greater than last seen),
-    /// and updates the stored value.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SecurityError::CryptographicError`] if `seq` is not greater
-    /// than the last valid sequence number seen for `address`.
-    pub fn validate_sequence(&mut self, address: IndividualAddress, seq: u64) -> Result<()> {
-        if let Some(&last_seq) = self.sequence_numbers.get(&address)
-            && seq <= last_seq
-        {
+    pub(super) fn validate_sequence(&mut self, address: IndividualAddress, seq: u64) -> Result<()> {
+        let last_seq = self.sequence_numbers.get_mut(&address).ok_or_else(|| {
+            SecurityError::InvalidCredentials {
+                details: format!("No Data Secure sender entry for {address}"),
+            }
+        })?;
+        if seq <= *last_seq {
             return Err(SecurityError::CryptographicError {
                 operation: "sequence validation".to_string(),
                 reason: format!("Sequence number {seq} not greater than last valid {last_seq}"),
             }
             .into());
         }
-        self.sequence_numbers.insert(address, seq);
+        *last_seq = seq;
         Ok(())
     }
 

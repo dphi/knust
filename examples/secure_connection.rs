@@ -4,7 +4,7 @@
 //! with proper authentication, encryption, and key management.
 
 use knust::protocol::dpt::DPTSwitch;
-use knust::protocol::{IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
+use knust::protocol::{MainGroup, MiddleGroup, RawGroupAddress};
 use knust::security::{KeyRing, SecurityCredentials, SecurityKey};
 use knust::transport::{BackoffConfig, SecurityConfig};
 use knust::{Component, ConnectionType, Knx, LogLevel, LoggingConfig};
@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         connection_type: ConnectionType::SecureTunneling,
         gateway_ip: Some("192.168.1.100".parse().unwrap()),
         gateway_port: Some(3671),
-        individual_address: IndividualAddress::new(1, 1, 240),
+        individual_address: "1.1.240".parse()?,
         security: Some(security_config),
         timeout_ms: 10000,
         auto_reconnect: true,
@@ -160,32 +160,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🔐 Added tunnel credentials for gateway 192.168.1.100");
 
-    // Example 4: Sequence number management for replay protection
-    println!("\n🔄 Example 4: Sequence Number Management");
-    println!("----------------------------------------");
-
-    let sender_addr = IndividualAddress::new(1, 2, 3);
-
-    // Simulate receiving telegrams with sequence numbers
-    let test_sequences = vec![100, 101, 102, 105, 104]; // Note: 104 < 105, should be rejected
-
-    for seq in test_sequences {
-        match enhanced_keyring.validate_sequence(sender_addr, seq) {
-            Ok(()) => {
-                println!("✅ Sequence {seq} from {sender_addr} accepted");
-            }
-            Err(e) => {
-                println!("❌ Sequence {seq} from {sender_addr} rejected: {e}");
-            }
-        }
-    }
-
-    println!("📊 Keyring statistics:");
-    println!("   Group keys: {}", enhanced_keyring.group_key_count());
-    println!("   Tracked senders: {}", enhanced_keyring.sender_count());
-
-    // Example 5: Configuration file example
-    println!("\n📄 Example 5: Configuration File Format");
+    // Example 4: Configuration file example
+    println!("\n📄 Example 4: Configuration File Format");
     println!("----------------------------------------");
 
     println!("Example secure connection configuration (TOML format):");
