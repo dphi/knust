@@ -1,7 +1,7 @@
 //! Telegram queue implementation for ordered processing with priority support.
 
 use crate::error::{Result, TransportError};
-use crate::protocol::telegram::Telegram;
+use crate::protocol::telegram::{Priority, Telegram};
 use crate::transport::rate_limit::{RateLimitConfig, RateLimiter};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
@@ -52,6 +52,7 @@ struct QueueState {
 #[derive(Debug)]
 struct PriorityTelegram {
     telegram: Telegram,
+    priority: Priority,
     sequence: u64,
     enqueued_at: Instant,
     receipt: Option<SendReceipt>,
@@ -70,7 +71,7 @@ impl SendReceipt {
 
 impl PartialEq for PriorityTelegram {
     fn eq(&self, other: &Self) -> bool {
-        self.telegram.priority == other.telegram.priority && self.sequence == other.sequence
+        self.priority == other.priority && self.sequence == other.sequence
     }
 }
 
@@ -86,7 +87,7 @@ impl Ord for PriorityTelegram {
     fn cmp(&self, other: &Self) -> Ordering {
         // Higher priority values should be processed first (reverse order for BinaryHeap)
         // If priorities are equal, use sequence number for FIFO within priority
-        match other.telegram.priority.cmp(&self.telegram.priority) {
+        match other.priority.cmp(&self.priority) {
             Ordering::Equal => other.sequence.cmp(&self.sequence),
             other_order => other_order,
         }
@@ -228,6 +229,11 @@ impl TelegramQueue {
 
         // Create priority telegram with sequence number
         let priority_telegram = PriorityTelegram {
+            priority: if self.config.priority_processing {
+                telegram.priority
+            } else {
+                Priority::Normal
+            },
             telegram,
             sequence: state.stats.sequence_counter,
             enqueued_at: Instant::now(),
@@ -237,12 +243,7 @@ impl TelegramQueue {
         state.stats.sequence_counter += 1;
         state.stats.total_enqueued += 1;
 
-        if self.config.priority_processing {
-            state.outgoing.push(priority_telegram);
-        } else {
-            // If priority processing is disabled, treat as FIFO
-            state.outgoing.push(priority_telegram);
-        }
+        state.outgoing.push(priority_telegram);
 
         state.stats.current_size = state.outgoing.len() + state.incoming.len();
         if state.stats.current_size > state.stats.peak_size {
@@ -324,6 +325,7 @@ impl TelegramQueue {
 
     pub(crate) async fn dequeue_outgoing_job(&self) -> Option<(Telegram, Option<SendReceipt>)> {
         loop {
+            let changed = self.notify.notified();
             let mut state = self.state.lock().await;
             if let Some(priority_telegram) = state.outgoing.pop() {
                 state.stats.total_dequeued += 1;
@@ -347,7 +349,7 @@ impl TelegramQueue {
             }
 
             drop(state);
-            self.notify.notified().await;
+            changed.await;
         }
     }
 
@@ -356,6 +358,7 @@ impl TelegramQueue {
     /// Returns `None` once the queue is closed and drained.
     pub async fn dequeue_incoming(&self) -> Option<Telegram> {
         loop {
+            let changed = self.notify.notified();
             let mut state = self.state.lock().await;
             if let Some(telegram) = state.incoming.pop_front() {
                 state.stats.total_dequeued += 1;
@@ -375,7 +378,7 @@ impl TelegramQueue {
             }
 
             drop(state);
-            self.notify.notified().await;
+            changed.await;
         }
     }
 
@@ -685,6 +688,23 @@ mod tests {
             queue.dequeue_outgoing().await.unwrap().priority,
             Priority::Low
         );
+    }
+
+    #[tokio::test]
+    async fn disabling_priority_processing_preserves_fifo_and_wire_priority() {
+        let queue = TelegramQueue::with_config(QueueConfig {
+            priority_processing: false,
+            ..Default::default()
+        });
+        for priority in [Priority::Low, Priority::System, Priority::Urgent] {
+            queue
+                .enqueue_outgoing(create_test_telegram(priority))
+                .await
+                .unwrap();
+        }
+        for expected in [Priority::Low, Priority::System, Priority::Urgent] {
+            assert_eq!(queue.dequeue_outgoing().await.unwrap().priority, expected);
+        }
     }
 
     #[tokio::test]
