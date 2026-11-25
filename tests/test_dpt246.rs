@@ -1,8 +1,23 @@
 #![cfg(feature = "dpt")]
 use knust::protocol::dpt::{
-    BatteryInfo, DPTBatteryInfo, DptPayload, DptRegistry, DptType, DptValue,
+    BatteryInfo, DPTBatteryInfo, DptPayload, DptRegistry, DptType, DptValue, DptView,
+    dpt246::BatteryInfoView,
 };
 use knust::protocol::{Telegram, address::GroupAddress};
+
+#[test]
+fn battery_info_view_borrows_the_input() {
+    let bytes = [0x04, 0xff];
+    let DptView::BatteryInfo(view) = DptType::BatteryInfo.decode_ref(&bytes).unwrap() else {
+        panic!("expected battery information");
+    };
+    let view: BatteryInfoView<'_> = view;
+    let value: BatteryInfo = view.value();
+    assert!(std::ptr::eq(view.raw(), bytes.as_slice()));
+    assert!(value.battery_fully_charged);
+    assert_eq!(value.charge_level, None);
+    assert!(DptType::BatteryInfo.decode_ref(&bytes[..1]).is_err());
+}
 
 #[test]
 fn battery_info_decodes_unknown_levels_and_reserved_flags() {

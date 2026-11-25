@@ -108,3 +108,23 @@ impl WriteValue<DPTBatteryInfo> for BatteryInfo {
         DPTBatteryInfo::new(self)
     }
 }
+
+/// Borrowed DPT 246.600 battery information.
+#[derive(Debug, Clone, Copy)]
+pub struct BatteryInfoView<'a>(&'a [u8; 2]);
+
+impl<'a> BatteryInfoView<'a> {
+    pub(super) fn from_bytes(bytes: &'a [u8]) -> Result<Self> {
+        Ok(Self(bytes.try_into().map_err(|_| bad())?))
+    }
+
+    #[must_use]
+    pub fn value(&self) -> BatteryInfo {
+        BatteryInfo::decode(*self.0)
+    }
+
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

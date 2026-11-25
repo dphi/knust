@@ -1,6 +1,7 @@
 //! Zero-copy view types for DPT-encoded bytes.
 
 use super::dpt_type::DptType;
+use super::dpt246::BatteryInfoView;
 use super::payload::DptPayload;
 use crate::error::{ProtocolError, Result};
 
@@ -496,19 +497,6 @@ impl<'a> ConverterStatusView<'a> {
     #[must_use]
     pub fn value(&self) -> super::dpt244::ConverterStatus {
         super::dpt244::ConverterStatus::decode([self.0[0], self.0[1]]).expect("validated status")
-    }
-    #[must_use]
-    pub fn raw(&self) -> &'a [u8] {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct BatteryInfoView<'a>(pub(crate) &'a [u8]);
-impl<'a> BatteryInfoView<'a> {
-    #[must_use]
-    pub fn value(&self) -> super::dpt246::BatteryInfo {
-        super::dpt246::BatteryInfo::decode([self.0[0], self.0[1]])
     }
     #[must_use]
     pub fn raw(&self) -> &'a [u8] {

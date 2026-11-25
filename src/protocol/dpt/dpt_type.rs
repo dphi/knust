@@ -1,7 +1,8 @@
+use super::dpt246::BatteryInfoView;
 use super::payload::DptPayload;
 use super::unit::Unit;
 use super::view::{
-    AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView, ChannelActivation8View,
+    AccessDataView, ActuatorView, AlarmInfoView, BoolView, ChannelActivation8View,
     ChannelActivation16View, ChannelActivation24View, CharacterView, CodeView,
     ColorTemperatureTransitionView, CombinedInfoOnOffView, CombinedPositionView, Control2View,
     ControlView, ConverterInfoFixView, ConverterInfoView, ConverterStatusView,
@@ -810,7 +811,7 @@ impl DptType {
                 )?;
                 Ok(DptView::ConverterInfoFix(ConverterInfoFixView(bytes)))
             }
-            246 => Ok(DptView::BatteryInfo(BatteryInfoView(bytes))),
+            246 => BatteryInfoView::from_bytes(bytes).map(DptView::BatteryInfo),
             244 => {
                 super::dpt244::ConverterStatus::decode([bytes[0], bytes[1]])?;
                 Ok(DptView::ConverterStatus(ConverterStatusView(bytes)))

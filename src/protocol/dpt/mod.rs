@@ -123,7 +123,7 @@ pub use dpt242::*;
 pub use dpt243::*;
 pub use dpt244::*;
 pub use dpt245::*;
-pub use dpt246::*;
+pub use dpt246::{BatteryInfo, DPTBatteryInfo};
 pub use dpt247::*;
 pub use dpt248::*;
 pub use dpt249::*;
@@ -135,7 +135,7 @@ pub use group_registry::{GroupAddressRegistry, GroupAddressState};
 pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
-    AccessDataView, ActuatorView, AlarmInfoView, BatteryInfoView, BoolView, ChannelActivation8View,
+    AccessDataView, ActuatorView, AlarmInfoView, BoolView, ChannelActivation8View,
     ChannelActivation16View, ChannelActivation24View, CharacterView, CodeView,
     ColorTemperatureTransitionView, CombinedInfoOnOffView, CombinedPositionView, Control2View,
     ControlView, ConverterInfoFixView, ConverterInfoView, ConverterStatusView,
