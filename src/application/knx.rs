@@ -910,12 +910,16 @@ impl Knx {
     }
 
     async fn send_telegram_acknowledged(&self, telegram: &Telegram) -> Result<()> {
-        let mut telegram = telegram.clone();
-        telegram.source = self.config.individual_address;
-        let (_sent, completed) = self
-            .telegram_queue
-            .enqueue_outgoing_tracked(telegram)
-            .await?;
+        let job = crate::transport::queue::OutgoingTelegram::new(telegram.clone());
+        self.send_tracked_job(job).await
+    }
+
+    async fn send_tracked_job(
+        &self,
+        mut job: crate::transport::queue::OutgoingTelegram,
+    ) -> Result<()> {
+        job.telegram.source = self.config.individual_address;
+        let (_sent, completed) = self.telegram_queue.enqueue_tracked_job(job).await?;
         tokio::time::timeout(std::time::Duration::from_secs(10), completed)
             .await
             .map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })?
@@ -1266,7 +1270,9 @@ impl Knx {
                 }
 
                 // Dequeue outgoing telegram for sending
-                if let Some((telegram, mut receipt)) = telegram_queue.dequeue_outgoing_job().await {
+                if let Some(mut job) = telegram_queue.dequeue_outgoing_job().await {
+                    let telegram = &job.telegram;
+                    let mut receipt = job.receipt.take();
                     if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
                         continue;
                     }
@@ -1306,7 +1312,7 @@ impl Knx {
                     }
                     #[cfg(feature = "secure")]
                     let frame_result = Self::build_outgoing_frame_with_security(
-                        &telegram,
+                        telegram,
                         &connection,
                         &data_secure_keyring,
                         &data_secure_sequence,
@@ -1314,7 +1320,7 @@ impl Knx {
                     .await;
                     #[cfg(not(feature = "secure"))]
                     let frame_result =
-                        Self::build_outgoing_frame_for_connection(&telegram, &connection);
+                        Self::build_outgoing_frame_for_connection(telegram, &connection);
                     let mut result = match frame_result {
                         Ok(frame_data) => {
                             Self::send_telegram_frame_with_confirmation(
@@ -1362,7 +1368,7 @@ impl Knx {
                             #[cfg(feature = "secure")]
                             let replacement_frame_result =
                                 Self::build_outgoing_frame_with_security(
-                                    &telegram,
+                                    telegram,
                                     &replacement,
                                     &data_secure_keyring,
                                     &data_secure_sequence,
@@ -1370,7 +1376,7 @@ impl Knx {
                                 .await;
                             #[cfg(not(feature = "secure"))]
                             let replacement_frame_result =
-                                Self::build_outgoing_frame_for_connection(&telegram, &replacement);
+                                Self::build_outgoing_frame_for_connection(telegram, &replacement);
                             result = match replacement_frame_result {
                                 Ok(frame) => {
                                     Self::send_telegram_frame_with_confirmation(
@@ -1417,6 +1423,7 @@ impl Knx {
                             );
                         }
                     }
+                    drop(job);
                     if let Some(receipt) = receipt {
                         let _ = receipt.completed.send(result);
                     }

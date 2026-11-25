@@ -8,12 +8,33 @@ use crate::protocol::dpt::{
     DptType, DptValue, DptView, GroupAddressState, GroupValueUpdate, WriteValue,
 };
 use crate::protocol::{Address, RawGroupAddress, Telegram, TelegramType};
+use crate::transport::queue::OutgoingTelegram;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocol::dpt::{DPTScaling, DPTSwitch};
     use crate::transport::ConnectionType;
+
+    #[tokio::test]
+    async fn a_queued_typed_write_blocks_rebinding_until_discarded() {
+        let knx = Knx::builder()
+            .connection_type(ConnectionType::Routing)
+            .build()
+            .await
+            .unwrap();
+        let address = "1/2/3".parse().unwrap();
+        let switch = knx.group_address::<DPTSwitch>(address).unwrap();
+        switch.enqueue_write(true).await.unwrap();
+        assert!(knx.unregister_group_address(address).is_err());
+        knx.stop().await;
+        assert_eq!(
+            knx.unregister_group_address(address).unwrap(),
+            Some(DptType::Switch)
+        );
+        knx.group_address::<DPTScaling>(address).unwrap();
+        assert!(switch.enqueue_write(false).await.is_err());
+    }
 
     #[tokio::test]
     async fn typed_subscription_coalesces_values_and_closes_when_unregistered() {
@@ -133,21 +154,30 @@ impl<T: DptValue> GroupAddress<T> {
     /// if the client has no sender task.
     pub async fn write(&self, value: impl WriteValue<T>) -> Result<()> {
         self.require_running()?;
-        let telegram = self.write_telegram(value)?;
-        self.knx.send_telegram_acknowledged(&telegram).await
+        self.knx.send_tracked_job(self.write_job(value)?).await
     }
 
     /// Queue a typed write and return as soon as it is accepted into the queue.
     ///
+    /// The DPT binding stays reserved until the queued write finishes or is discarded.
+    ///
     /// # Errors
     /// Returns a DPT validation error or the queue errors from [`Knx::send_telegram`].
     pub async fn enqueue_write(&self, value: impl WriteValue<T>) -> Result<()> {
-        self.knx.send_telegram(&self.write_telegram(value)?).await
+        self.knx
+            .telegram_queue
+            .enqueue_job(self.write_job(value)?)
+            .await
     }
 
-    fn write_telegram(&self, value: impl WriteValue<T>) -> Result<Telegram> {
-        self.check_dpt_current()?;
-        Telegram::group_write_value(self.address, value)
+    fn write_job(&self, value: impl WriteValue<T>) -> Result<OutgoingTelegram> {
+        let permit = self
+            .knx
+            .group_registry
+            .reserve_write(self.address, self.dpt)?;
+        let mut telegram = Telegram::group_write_value(self.address, value)?;
+        telegram.source = self.knx.config.individual_address;
+        Ok(OutgoingTelegram::typed(telegram, permit))
     }
 
     fn require_running(&self) -> Result<()> {
@@ -376,7 +406,10 @@ impl Knx {
     /// than silently using their original DPT if `address` is rebound to a
     /// different one.
     #[must_use]
-    pub fn unregister_group_address(&self, address: RawGroupAddress) -> Option<DptType> {
+    ///
+    /// # Errors
+    /// Returns a DPT error while a typed write is queued or in flight.
+    pub fn unregister_group_address(&self, address: RawGroupAddress) -> Result<Option<DptType>> {
         self.group_registry.unregister(address)
     }
 

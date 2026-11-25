@@ -51,11 +51,40 @@ struct QueueState {
 /// Wrapper for telegrams with priority ordering
 #[derive(Debug)]
 struct PriorityTelegram {
-    telegram: Telegram,
+    job: OutgoingTelegram,
     priority: Priority,
     sequence: u64,
     enqueued_at: Instant,
-    receipt: Option<SendReceipt>,
+}
+
+#[derive(Debug)]
+pub(crate) struct OutgoingTelegram {
+    pub(crate) telegram: Telegram,
+    pub(crate) receipt: Option<SendReceipt>,
+    #[cfg(feature = "dpt")]
+    _write_permit: Option<crate::protocol::dpt::GroupWritePermit>,
+}
+
+impl OutgoingTelegram {
+    pub(crate) fn new(telegram: Telegram) -> Self {
+        Self {
+            telegram,
+            receipt: None,
+            #[cfg(feature = "dpt")]
+            _write_permit: None,
+        }
+    }
+
+    #[cfg(feature = "dpt")]
+    pub(crate) fn typed(
+        telegram: Telegram,
+        permit: crate::protocol::dpt::GroupWritePermit,
+    ) -> Self {
+        Self {
+            _write_permit: Some(permit),
+            ..Self::new(telegram)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -178,7 +207,7 @@ impl TelegramQueue {
     /// Returns [`TransportError::QueueClosed`] if the queue has been closed,
     /// or [`TransportError::QueueFull`] if it is at capacity.
     pub async fn enqueue_outgoing(&self, telegram: Telegram) -> Result<()> {
-        self.enqueue_outgoing_inner(telegram, None).await
+        self.enqueue_job(OutgoingTelegram::new(telegram)).await
     }
 
     pub(crate) async fn enqueue_outgoing_tracked(
@@ -188,24 +217,28 @@ impl TelegramQueue {
         tokio::sync::oneshot::Receiver<()>,
         tokio::sync::oneshot::Receiver<Result<()>>,
     )> {
+        self.enqueue_tracked_job(OutgoingTelegram::new(telegram))
+            .await
+    }
+
+    pub(crate) async fn enqueue_tracked_job(
+        &self,
+        mut job: OutgoingTelegram,
+    ) -> Result<(
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Receiver<Result<()>>,
+    )> {
         let (transmitted, sent) = tokio::sync::oneshot::channel();
         let (completed, result) = tokio::sync::oneshot::channel();
-        self.enqueue_outgoing_inner(
-            telegram,
-            Some(SendReceipt {
-                transmitted: Some(transmitted),
-                completed,
-            }),
-        )
-        .await?;
+        job.receipt = Some(SendReceipt {
+            transmitted: Some(transmitted),
+            completed,
+        });
+        self.enqueue_job(job).await?;
         Ok((sent, result))
     }
 
-    async fn enqueue_outgoing_inner(
-        &self,
-        telegram: Telegram,
-        receipt: Option<SendReceipt>,
-    ) -> Result<()> {
+    pub(crate) async fn enqueue_job(&self, job: OutgoingTelegram) -> Result<()> {
         let mut state = self.state.lock().await;
 
         if state.closed {
@@ -224,20 +257,19 @@ impl TelegramQueue {
             return Err(TransportError::QueueFull.into());
         }
 
-        let log_dest = format!("{}", telegram.destination);
-        let log_prio = telegram.priority;
+        let log_dest = format!("{}", job.telegram.destination);
+        let log_prio = job.telegram.priority;
 
         // Create priority telegram with sequence number
         let priority_telegram = PriorityTelegram {
             priority: if self.config.priority_processing {
-                telegram.priority
+                log_prio
             } else {
                 Priority::Normal
             },
-            telegram,
+            job,
             sequence: state.stats.sequence_counter,
             enqueued_at: Instant::now(),
-            receipt,
         };
 
         state.stats.sequence_counter += 1;
@@ -318,12 +350,10 @@ impl TelegramQueue {
     ///
     /// Returns `None` once the queue is closed and drained.
     pub async fn dequeue_outgoing(&self) -> Option<Telegram> {
-        self.dequeue_outgoing_job()
-            .await
-            .map(|(telegram, _)| telegram)
+        self.dequeue_outgoing_job().await.map(|job| job.telegram)
     }
 
-    pub(crate) async fn dequeue_outgoing_job(&self) -> Option<(Telegram, Option<SendReceipt>)> {
+    pub(crate) async fn dequeue_outgoing_job(&self) -> Option<OutgoingTelegram> {
         loop {
             let changed = self.notify.notified();
             let mut state = self.state.lock().await;
@@ -337,11 +367,11 @@ impl TelegramQueue {
                 log_queue!(
                     LogLevel::Debug,
                     "Outgoing dequeued: dest={} wait={:?} remaining={}",
-                    priority_telegram.telegram.destination,
+                    priority_telegram.job.telegram.destination,
                     processing_time,
                     state.outgoing.len()
                 );
-                return Some((priority_telegram.telegram, priority_telegram.receipt));
+                return Some(priority_telegram.job);
             }
 
             if state.closed {

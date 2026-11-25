@@ -39,6 +39,7 @@ fn write_lock<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
 #[derive(Debug)]
 struct Binding {
     dpt: DptType,
+    pending_writes: Arc<()>,
     /// Refresh interval; `None` means never auto-refreshed.
     ttl: Option<Duration>,
     /// When the last real `GroupValueWrite`/`GroupValueResponse` for this
@@ -54,10 +55,17 @@ struct Binding {
 
 pub(crate) type GroupValueUpdate = Option<Arc<[u8]>>;
 
+/// Keeps a group binding in place while a typed telegram can still be sent.
+#[derive(Debug)]
+pub(crate) struct GroupWritePermit {
+    _binding: Arc<()>,
+}
+
 impl Binding {
     fn new(dpt: DptType) -> Self {
         Self {
             dpt,
+            pending_writes: Arc::new(()),
             ttl: None,
             last_seen: None,
             last_seen_value: None,
@@ -165,11 +173,46 @@ impl GroupAddressRegistry {
     /// Remove `address`'s binding, if any, returning the DPT it was bound
     /// to. The address is free to be registered under a different DPT
     /// afterward.
-    pub fn unregister(&self, address: RawGroupAddress) -> Option<DptType> {
-        write_lock(&self.entries).remove(&address).map(|b| {
+    ///
+    /// # Errors
+    /// Returns a DPT error while a typed write for the binding is pending.
+    pub fn unregister(&self, address: RawGroupAddress) -> Result<Option<DptType>> {
+        let mut entries = write_lock(&self.entries);
+        if let Some(binding) = entries.get(&address) {
+            let binding = read_lock(binding);
+            if Arc::strong_count(&binding.pending_writes) > 1 {
+                return Err(ProtocolError::DptError {
+                    dpt_type: binding.dpt.number_str(),
+                    details: format!(
+                        "Group address {address} has a queued or in-flight typed write"
+                    ),
+                }
+                .into());
+            }
+        }
+        Ok(entries.remove(&address).map(|b| {
             b.into_inner()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .dpt
+        }))
+    }
+
+    pub(crate) fn reserve_write(
+        &self,
+        address: RawGroupAddress,
+        dpt: DptType,
+    ) -> Result<GroupWritePermit> {
+        let entries = read_lock(&self.entries);
+        let binding = entries
+            .get(&address)
+            .map(read_lock)
+            .filter(|binding| binding.dpt == dpt)
+            .ok_or_else(|| ProtocolError::DptError {
+                dpt_type: dpt.number_str(),
+                details: format!("Group address {address} is no longer bound to this DPT"),
+            })?;
+        Ok(GroupWritePermit {
+            _binding: binding.pending_writes.clone(),
         })
     }
 
@@ -348,12 +391,12 @@ mod tests {
         let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         registry.register(ga, DptType::Switch).unwrap();
 
-        assert_eq!(registry.unregister(ga), Some(DptType::Switch));
+        assert_eq!(registry.unregister(ga).unwrap(), Some(DptType::Switch));
         assert_eq!(registry.get(ga), None);
         assert!(registry.is_empty());
 
         // Unregistering something not present is a harmless no-op.
-        assert_eq!(registry.unregister(ga), None);
+        assert_eq!(registry.unregister(ga).unwrap(), None);
 
         // The address can now be rebound to a different DPT.
         registry.register(ga, DptType::Temperature).unwrap();

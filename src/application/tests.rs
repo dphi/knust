@@ -481,13 +481,13 @@ mod unit_tests {
 
         // Unregister: the binding disappears from lookups...
         assert_eq!(
-            knx.unregister_group_address(switch_ga),
+            knx.unregister_group_address(switch_ga).unwrap(),
             Some(DptType::Switch)
         );
         assert!(knx.group_address_dpt(switch_ga).is_none());
         assert_eq!(knx.registered_group_addresses().len(), 1);
         // ...unregistering again is a harmless no-op.
-        assert!(knx.unregister_group_address(switch_ga).is_none());
+        assert!(knx.unregister_group_address(switch_ga).unwrap().is_none());
 
         // ...decode_group_value (which relies on the registry) stops
         // resolving it...

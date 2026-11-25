@@ -198,6 +198,8 @@ async fn typed_write_waits_for_its_confirmation_and_reports_rejection() {
 
     let writing = tokio::spawn(async move { switch.write(true).await });
     let request = TunnellingRequest::parse(&receive(&peer).await.body).unwrap();
+    let group = "1/2/3".parse().unwrap();
+    assert!(knx.unregister_group_address(group).is_err());
     let ack = TunnellingAck::new_ok(request.communication_channel_id, request.sequence_counter);
     peer.send_to(
         &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),
@@ -235,6 +237,7 @@ async fn typed_write_waits_for_its_confirmation_and_reports_rejection() {
             .unwrap(),
         Err(KnxError::Transport(TransportError::NegativeConfirmation))
     ));
+    assert!(knx.unregister_group_address(group).unwrap().is_some());
     knx.stop().await;
 }
 
