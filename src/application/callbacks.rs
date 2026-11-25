@@ -165,17 +165,19 @@ impl<F: Fn(ConnectionState) + Send + Sync> ConnectionCallbackFn for SyncConnecti
 }
 
 /// Internal storage entry for telegram callbacks
+#[derive(Clone)]
 struct TelegramCallbackEntry {
     id: CallbackHandle,
-    callback: Box<dyn TelegramCallbackFn + Send + Sync>,
+    callback: Arc<dyn TelegramCallbackFn + Send + Sync>,
     filter: TelegramFilter,
     include_outgoing: bool,
 }
 
 /// Internal storage entry for connection callbacks
+#[derive(Clone)]
 struct ConnectionCallbackEntry {
     id: CallbackHandle,
-    callback: Box<dyn ConnectionCallbackFn + Send + Sync>,
+    callback: Arc<dyn ConnectionCallbackFn + Send + Sync>,
 }
 
 /// Central event handler managing all callback operations
@@ -208,10 +210,10 @@ struct ConnectionCallbackEntry {
 /// ```
 pub struct EventHandler {
     /// Storage for telegram callbacks
-    telegram_callbacks: Arc<RwLock<Vec<TelegramCallbackEntry>>>,
+    telegram_callbacks: Arc<RwLock<Arc<Vec<TelegramCallbackEntry>>>>,
 
     /// Storage for connection callbacks
-    connection_callbacks: Arc<RwLock<Vec<ConnectionCallbackEntry>>>,
+    connection_callbacks: Arc<RwLock<Arc<Vec<ConnectionCallbackEntry>>>>,
 
     /// Atomic counter for generating unique callback handles
     next_id: Arc<AtomicU64>,
@@ -222,8 +224,8 @@ impl EventHandler {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            telegram_callbacks: Arc::new(RwLock::new(Vec::new())),
-            connection_callbacks: Arc::new(RwLock::new(Vec::new())),
+            telegram_callbacks: Arc::new(RwLock::new(Arc::new(Vec::new()))),
+            connection_callbacks: Arc::new(RwLock::new(Arc::new(Vec::new()))),
             next_id: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -272,13 +274,13 @@ impl EventHandler {
         let handle = self.generate_handle();
         let entry = TelegramCallbackEntry {
             id: handle,
-            callback: Box::new(callback),
+            callback: Arc::new(callback),
             filter,
             include_outgoing,
         };
 
         let mut callbacks = self.telegram_callbacks.write().await;
-        callbacks.push(entry);
+        Arc::make_mut(&mut callbacks).push(entry);
 
         handle
     }
@@ -353,11 +355,11 @@ impl EventHandler {
         let handle = self.generate_handle();
         let entry = ConnectionCallbackEntry {
             id: handle,
-            callback: Box::new(callback),
+            callback: Arc::new(callback),
         };
 
         let mut callbacks = self.connection_callbacks.write().await;
-        callbacks.push(entry);
+        Arc::make_mut(&mut callbacks).push(entry);
 
         handle
     }
@@ -372,7 +374,7 @@ impl EventHandler {
     pub async fn unregister_telegram_callback(&self, handle: CallbackHandle) -> bool {
         let mut callbacks = self.telegram_callbacks.write().await;
         if let Some(pos) = callbacks.iter().position(|entry| entry.id == handle) {
-            callbacks.remove(pos);
+            Arc::make_mut(&mut callbacks).remove(pos);
             true
         } else {
             false
@@ -389,7 +391,7 @@ impl EventHandler {
     pub async fn unregister_connection_callback(&self, handle: CallbackHandle) -> bool {
         let mut callbacks = self.connection_callbacks.write().await;
         if let Some(pos) = callbacks.iter().position(|entry| entry.id == handle) {
-            callbacks.remove(pos);
+            Arc::make_mut(&mut callbacks).remove(pos);
             true
         } else {
             false
@@ -434,13 +436,13 @@ impl EventHandler {
         let handle = self.generate_handle();
         let entry = TelegramCallbackEntry {
             id: handle,
-            callback,
+            callback: Arc::from(callback),
             filter,
             include_outgoing,
         };
 
         let mut callbacks = self.telegram_callbacks.write().await;
-        callbacks.push(entry);
+        Arc::make_mut(&mut callbacks).push(entry);
 
         handle
     }
@@ -461,11 +463,11 @@ impl EventHandler {
         let handle = self.generate_handle();
         let entry = ConnectionCallbackEntry {
             id: handle,
-            callback,
+            callback: Arc::from(callback),
         };
 
         let mut callbacks = self.connection_callbacks.write().await;
-        callbacks.push(entry);
+        Arc::make_mut(&mut callbacks).push(entry);
 
         handle
     }
@@ -474,13 +476,14 @@ impl EventHandler {
     ///
     /// This method is called internally when a telegram is received.
     /// It invokes all registered telegram callbacks that match the telegram's
-    /// filter criteria, in registration order. Failed callbacks are logged
+    /// filter criteria, in registration order. Registry changes take effect
+    /// on the next notification. Failed callbacks are logged
     /// but don't prevent other callbacks from executing.
     ///
     /// # Arguments
     /// * `telegram` - The received telegram
     pub async fn notify_telegram_received(&self, telegram: &Telegram) {
-        let callbacks = self.telegram_callbacks.read().await;
+        let callbacks = self.telegram_callbacks.read().await.clone();
 
         for entry in callbacks.iter() {
             // Check if we should skip outgoing telegrams
@@ -522,12 +525,12 @@ impl EventHandler {
     /// Notify all registered connection callbacks
     ///
     /// This method is called internally when the connection state changes.
-    /// It invokes all registered connection callbacks in registration order.
+    /// It invokes a snapshot of the registered callbacks in registration order.
     ///
     /// # Arguments
     /// * `state` - The new connection state
     pub async fn notify_connection_state_changed(&self, state: ConnectionState) {
-        let callbacks = self.connection_callbacks.read().await;
+        let callbacks = self.connection_callbacks.read().await.clone();
 
         for entry in callbacks.iter() {
             // Execute callback and handle any errors
@@ -570,8 +573,8 @@ impl EventHandler {
         let mut telegram_callbacks = self.telegram_callbacks.write().await;
         let mut connection_callbacks = self.connection_callbacks.write().await;
 
-        telegram_callbacks.clear();
-        connection_callbacks.clear();
+        *telegram_callbacks = Arc::new(Vec::new());
+        *connection_callbacks = Arc::new(Vec::new());
     }
 }
 
@@ -590,6 +593,68 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::time::{Duration, sleep};
+
+    struct UnregisterSelf {
+        handler: std::sync::Weak<EventHandler>,
+        handle: Arc<std::sync::OnceLock<CallbackHandle>>,
+    }
+
+    impl UnregisterSelf {
+        async fn unregister(&self) {
+            let handler = self.handler.upgrade().unwrap();
+            assert!(
+                handler
+                    .unregister_callback(*self.handle.get().unwrap())
+                    .await
+            );
+        }
+    }
+
+    #[async_trait]
+    impl TelegramCallbackFn for UnregisterSelf {
+        async fn call(&self, _: &Telegram) {
+            self.unregister().await;
+        }
+    }
+
+    #[async_trait]
+    impl ConnectionCallbackFn for UnregisterSelf {
+        async fn call(&self, _: ConnectionState) {
+            self.unregister().await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn callbacks_can_unregister_themselves_during_delivery() {
+        let handler = Arc::new(EventHandler::new());
+        let make_callback = || {
+            let handle = Arc::new(std::sync::OnceLock::new());
+            let callback = UnregisterSelf {
+                handler: Arc::downgrade(&handler),
+                handle: handle.clone(),
+            };
+            (handle, callback)
+        };
+
+        let (handle, callback) = make_callback();
+        handle
+            .set(handler.register_telegram_callback(callback).await)
+            .unwrap();
+        let telegram = Telegram::group_write("1/2/3".parse().unwrap(), vec![1]);
+        let mut incoming = telegram;
+        incoming.direction = crate::protocol::telegram::Direction::Incoming;
+        handler.notify_telegram_received(&incoming).await;
+        assert_eq!(handler.telegram_callback_count().await, 0);
+
+        let (handle, callback) = make_callback();
+        handle
+            .set(handler.register_connection_callback(callback).await)
+            .unwrap();
+        handler
+            .notify_connection_state_changed(ConnectionState::Connected)
+            .await;
+        assert_eq!(handler.connection_callback_count().await, 0);
+    }
 
     /// Async connection-callback wrapper used by `test_async_callback_execution`.
     struct AsyncWrapper {
