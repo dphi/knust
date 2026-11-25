@@ -158,6 +158,14 @@ impl KeyRing {
         self.sequence_numbers.get(address).copied()
     }
 
+    pub(crate) fn merge_sequence_baselines(&mut self, previous: &Self) {
+        for (address, sequence) in &mut self.sequence_numbers {
+            if let Some(old) = previous.get_sequence_number(address) {
+                *sequence = (*sequence).max(old);
+            }
+        }
+    }
+
     /// Validate and update sequence number for replay protection.
     ///
     pub(super) fn validate_sequence(&mut self, address: IndividualAddress, seq: u64) -> Result<()> {

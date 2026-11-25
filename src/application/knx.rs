@@ -832,10 +832,17 @@ impl Knx {
         Ok(())
     }
 
-    /// Enable group Data Secure with group keys and sender sequence baselines.
+    /// Install group Data Secure keys and sender sequence baselines.
+    ///
+    /// Reloading preserves the highest sequence already accepted for each
+    /// sender still present in the new keyring.
     #[cfg(feature = "secure")]
-    pub async fn set_data_secure_keyring(&self, keyring: KeyRing) {
-        *self.data_secure_keyring.write().await = Some(keyring);
+    pub async fn set_data_secure_keyring(&self, mut keyring: KeyRing) {
+        let mut current = self.data_secure_keyring.write().await;
+        if let Some(previous) = current.as_ref() {
+            keyring.merge_sequence_baselines(previous);
+        }
+        *current = Some(keyring);
     }
 
     /// Send a telegram to the KNX network.
@@ -2333,6 +2340,17 @@ impl Knx {
                     details: "Data Secure frame received without group keys".to_string(),
                 })?;
             frame = crate::security::decrypt_group_frame(keyring, &frame)?;
+        } else if let Address::Group(destination) = frame.dest_addr
+            && data_secure_keyring
+                .read()
+                .await
+                .as_ref()
+                .is_some_and(|keys| keys.is_group_secured(&destination))
+        {
+            return Err(SecurityError::AuthenticationFailed {
+                reason: format!("Plaintext telegram for secured group {destination}"),
+            }
+            .into());
         }
         Telegram::from_cemi_frame(frame)
     }

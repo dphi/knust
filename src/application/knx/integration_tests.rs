@@ -2975,6 +2975,7 @@ async fn data_secure_routing_drops_replayed_group_writes() {
 
     let local = Ipv4Addr::LOCALHOST;
     let address: RawGroupAddress = "13/7/226".parse().unwrap();
+    let ordinary: RawGroupAddress = "13/7/225".parse().unwrap();
     let source: IndividualAddress = "14.15.226".parse().unwrap();
     let keys = || {
         let mut keys = KeyRing::new();
@@ -3007,7 +3008,7 @@ async fn data_secure_routing_drops_replayed_group_writes() {
     receiver
         .register_telegram_callback_filtered(
             LoopbackCallback(events),
-            TelegramFilter::GroupAddresses(vec![address]),
+            TelegramFilter::GroupAddresses(vec![address, ordinary]),
             false,
         )
         .await;
@@ -3038,11 +3039,33 @@ async fn data_secure_routing_drops_replayed_group_writes() {
     assert_eq!(first.source, source);
     assert_eq!(first.payload, [1]);
 
+    receiver.set_data_secure_keyring(keys()).await;
     observer.send(&secured).await.unwrap();
     assert!(
         timeout(Duration::from_millis(100), callbacks.recv())
             .await
             .is_err()
+    );
+
+    for destination in [address, ordinary] {
+        let cemi = CemiFrame::new(
+            MessageCode::LDataInd,
+            source,
+            Address::Group(destination),
+            vec![0x81],
+        );
+        observer
+            .send_routing_indication(&cemi.serialize().unwrap())
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        timeout(Duration::from_secs(2), callbacks.recv())
+            .await
+            .unwrap()
+            .unwrap()
+            .destination,
+        Address::Group(ordinary)
     );
 
     switch.write(false).await.unwrap();
