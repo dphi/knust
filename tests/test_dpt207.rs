@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     BurnerControllerStatus, DPTStatusBUC, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn actuator_subtypes_validate_percentages_and_masks() {
@@ -53,9 +53,12 @@ fn actuator_subtypes_validate_percentages_and_masks() {
         value
     );
     assert_eq!(
-        Telegram::group_write_value::<DPTStatusBUC>(GroupAddress::try_from_raw(1).unwrap(), value)
-            .unwrap()
-            .payload,
+        Telegram::group_write_value::<DPTStatusBUC>(
+            RawGroupAddress::try_from_raw(1).unwrap(),
+            value
+        )
+        .unwrap()
+        .payload,
         typed.as_bytes()
     );
     assert!(

@@ -3,7 +3,7 @@
 use super::keys::*;
 use super::primitives::*;
 use super::session::*;
-use crate::protocol::address::{GroupAddress, IndividualAddress};
+use crate::protocol::address::{IndividualAddress, RawGroupAddress};
 
 #[cfg(test)]
 mod unit_tests {
@@ -297,7 +297,7 @@ mod keyring_tests {
     #[test]
     fn test_keyring_group_keys() {
         let mut keyring = KeyRing::new();
-        let addr = GroupAddress::from_parts(1, 2, 3).unwrap();
+        let addr = RawGroupAddress::from_parts(1, 2, 3).unwrap();
         let key = SecurityKey::new(vec![0u8; 16]);
 
         keyring.add_group_key(addr, key);

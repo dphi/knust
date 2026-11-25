@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use super::DptType;
 use crate::error::{ProtocolError, Result};
-use crate::protocol::address::GroupAddress;
+use crate::protocol::address::RawGroupAddress;
 #[cfg(test)]
 use crate::protocol::address::{MainGroup, MiddleGroup};
 
@@ -81,7 +81,7 @@ impl From<Binding> for GroupAddressState {
 /// contends with other addresses' updates, not with lookups on them.
 #[derive(Default)]
 pub struct GroupAddressRegistry {
-    entries: RwLock<HashMap<GroupAddress, RwLock<Binding>>>,
+    entries: RwLock<HashMap<RawGroupAddress, RwLock<Binding>>>,
 }
 
 impl GroupAddressRegistry {
@@ -98,7 +98,7 @@ impl GroupAddressRegistry {
     ///
     /// Returns [`ProtocolError::DptError`] if `address` is already bound to
     /// a *different* DPT.
-    pub fn register(&self, address: GroupAddress, dpt: DptType) -> Result<()> {
+    pub fn register(&self, address: RawGroupAddress, dpt: DptType) -> Result<()> {
         let mut entries = write_lock(&self.entries);
         match entries.get(&address) {
             Some(existing) if read_lock(existing).dpt != dpt => Err(ProtocolError::DptError {
@@ -129,7 +129,7 @@ impl GroupAddressRegistry {
 
     /// Look up the DPT bound to `address`, if any.
     #[must_use]
-    pub fn get(&self, address: GroupAddress) -> Option<DptType> {
+    pub fn get(&self, address: RawGroupAddress) -> Option<DptType> {
         read_lock(&self.entries)
             .get(&address)
             .map(|b| read_lock(b).dpt)
@@ -138,7 +138,7 @@ impl GroupAddressRegistry {
     /// Remove `address`'s binding, if any, returning the DPT it was bound
     /// to. The address is free to be registered under a different DPT
     /// afterward.
-    pub fn unregister(&self, address: GroupAddress) -> Option<DptType> {
+    pub fn unregister(&self, address: RawGroupAddress) -> Option<DptType> {
         write_lock(&self.entries).remove(&address).map(|b| {
             b.into_inner()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -149,7 +149,7 @@ impl GroupAddressRegistry {
     /// Snapshot of every registered `(address, dpt)` binding, for
     /// inspection. Order is unspecified.
     #[must_use]
-    pub fn entries(&self) -> Vec<(GroupAddress, DptType)> {
+    pub fn entries(&self) -> Vec<(RawGroupAddress, DptType)> {
         read_lock(&self.entries)
             .iter()
             .map(|(address, binding)| (*address, read_lock(binding).dpt))
@@ -172,7 +172,7 @@ impl GroupAddressRegistry {
     /// # Errors
     ///
     /// Returns [`ProtocolError::DptError`] if `address` isn't registered.
-    pub fn set_refresh_ttl(&self, address: GroupAddress, ttl: Option<Duration>) -> Result<()> {
+    pub fn set_refresh_ttl(&self, address: RawGroupAddress, ttl: Option<Duration>) -> Result<()> {
         let entries = read_lock(&self.entries);
         match entries.get(&address) {
             Some(binding) => {
@@ -192,7 +192,7 @@ impl GroupAddressRegistry {
     /// Record that a real `GroupValueWrite`/`GroupValueResponse` for
     /// `address` was just observed, remembering its payload. No-op if
     /// `address` isn't registered.
-    pub fn record_seen(&self, address: GroupAddress, value: &[u8]) {
+    pub fn record_seen(&self, address: RawGroupAddress, value: &[u8]) {
         if let Some(binding) = read_lock(&self.entries).get(&address) {
             let mut binding = write_lock(binding);
             binding.last_seen = Some(Instant::now());
@@ -203,7 +203,7 @@ impl GroupAddressRegistry {
     /// Record that a refresh `GroupValueRead` was just sent for `address`.
     /// Does not affect `last_seen`/staleness. No-op if `address` isn't
     /// registered.
-    pub fn record_tried(&self, address: GroupAddress) {
+    pub fn record_tried(&self, address: RawGroupAddress) {
         if let Some(binding) = read_lock(&self.entries).get(&address) {
             write_lock(binding).last_tried = Some(Instant::now());
         }
@@ -219,7 +219,7 @@ impl GroupAddressRegistry {
     /// stay at the front forever and starve every other stale address
     /// behind it.
     #[must_use]
-    pub fn next_stale(&self, now: Instant) -> Option<GroupAddress> {
+    pub fn next_stale(&self, now: Instant) -> Option<RawGroupAddress> {
         read_lock(&self.entries)
             .iter()
             .filter(|(_, binding)| {
@@ -248,7 +248,7 @@ impl GroupAddressRegistry {
     /// Snapshot of `address`'s full state — DPT, TTL, and last-seen/last-tried
     /// bookkeeping — if it's registered.
     #[must_use]
-    pub fn state(&self, address: GroupAddress) -> Option<GroupAddressState> {
+    pub fn state(&self, address: RawGroupAddress) -> Option<GroupAddressState> {
         read_lock(&self.entries)
             .get(&address)
             .map(|b| GroupAddressState::from(read_lock(b).clone()))
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn register_and_lookup() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         assert_eq!(registry.get(ga), None);
 
         registry.register(ga, DptType::Switch).unwrap();
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn reregistering_same_dpt_is_a_noop() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         registry.register(ga, DptType::Switch).unwrap();
         registry.register(ga, DptType::Switch).unwrap();
         assert_eq!(registry.len(), 1);
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn conflicting_dpt_is_rejected() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         registry.register(ga, DptType::Switch).unwrap();
         let err = registry.register(ga, DptType::Temperature).unwrap_err();
         assert!(err.to_string().contains("already registered"));
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn unregister_removes_binding_and_frees_the_address() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         registry.register(ga, DptType::Switch).unwrap();
 
         assert_eq!(registry.unregister(ga), Some(DptType::Switch));
@@ -311,8 +311,8 @@ mod tests {
     #[test]
     fn entries_snapshots_all_bindings() {
         let registry = GroupAddressRegistry::new();
-        let switch = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
-        let temp = GroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1);
+        let switch = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let temp = RawGroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1);
         registry.register(switch, DptType::Switch).unwrap();
         registry.register(temp, DptType::Temperature).unwrap();
 
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn set_refresh_ttl_requires_registration() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         let err = registry
             .set_refresh_ttl(ga, Some(Duration::from_secs(60)))
             .unwrap_err();
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn record_seen_sets_value_without_touching_last_tried() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         registry.register(ga, DptType::Switch).unwrap();
 
         registry.record_seen(ga, &[0x01]);
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn record_tried_sets_last_tried_without_touching_last_seen() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         registry.register(ga, DptType::Switch).unwrap();
 
         registry.record_tried(ga);
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn next_stale_ignores_addresses_without_ttl() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         registry.register(ga, DptType::Switch).unwrap();
 
         assert_eq!(registry.next_stale(Instant::now()), None);
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn next_stale_treats_never_seen_as_stale() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         registry.register(ga, DptType::Switch).unwrap();
         registry
             .set_refresh_ttl(ga, Some(Duration::from_secs(60)))
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn next_stale_respects_ttl_not_yet_elapsed() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         registry.register(ga, DptType::Switch).unwrap();
         registry
             .set_refresh_ttl(ga, Some(Duration::from_secs(60)))
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn next_stale_fires_once_ttl_elapses() {
         let registry = GroupAddressRegistry::new();
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         registry.register(ga, DptType::Switch).unwrap();
         registry
             .set_refresh_ttl(ga, Some(Duration::from_millis(10)))
@@ -411,8 +411,8 @@ mod tests {
     #[test]
     fn next_stale_round_robins_by_last_tried() {
         let registry = GroupAddressRegistry::new();
-        let first = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
-        let second = GroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1);
+        let first = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let second = RawGroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1);
         registry.register(first, DptType::Switch).unwrap();
         registry.register(second, DptType::Switch).unwrap();
         registry

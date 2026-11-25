@@ -94,7 +94,7 @@ async fn sender_uses_replacement_connection() {
     let (new, _new_tx, mut new_sent) = peer();
     knx.connection.send_replace(Some(old.clone()));
     *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
-    let telegram = Telegram::group_write(GroupAddress::try_from_raw(1).unwrap(), vec![1]);
+    let telegram = Telegram::group_write(RawGroupAddress::try_from_raw(1).unwrap(), vec![1]);
     knx.send_telegram(&telegram).await.unwrap();
     let wire = timeout(Duration::from_secs(1), old_sent.recv())
         .await
@@ -131,7 +131,7 @@ async fn receiver_uses_replacement_and_keeps_queue_open_after_socket_failure() {
     tokio::task::yield_now().await;
     assert!(
         knx.send_telegram(&Telegram::group_read(
-            GroupAddress::try_from_raw(1).unwrap()
+            RawGroupAddress::try_from_raw(1).unwrap()
         ))
         .await
         .is_ok(),
@@ -141,7 +141,7 @@ async fn receiver_uses_replacement_and_keeps_queue_open_after_socket_failure() {
     let cemi = CemiFrame::new(
         MessageCode::LDataInd,
         IndividualAddress::new(1, 1, 2),
-        Address::Group(GroupAddress::try_from_raw(1).unwrap()),
+        Address::Group(RawGroupAddress::try_from_raw(1).unwrap()),
         GroupValueService::Write(vec![1]).encode(),
     );
     let frame = crate::protocol::knxip::KnxIpFrame::new(
@@ -322,7 +322,7 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
             .unwrap()
             .unwrap();
         knx.send_telegram(&Telegram::group_write(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             vec![value],
         ))
         .await
@@ -342,7 +342,7 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
         let cemi = CemiFrame::new(
             MessageCode::LDataInd,
             IndividualAddress::new(1, 1, 2),
-            Address::Group(GroupAddress::try_from_raw(1).unwrap()),
+            Address::Group(RawGroupAddress::try_from_raw(1).unwrap()),
             GroupValueService::Write(vec![value]).encode(),
         );
         let incoming = KnxIpFrame::new(
@@ -373,7 +373,7 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
 #[tokio::test(start_paused = true)]
 async fn read_deadline_starts_after_transmission_not_enqueue() {
     let knx = knx().await;
-    let address = GroupAddress::try_from_raw(1).unwrap();
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
     let reading = tokio::spawn({
         let knx = knx.clone();
         async move {
@@ -495,7 +495,7 @@ async fn timed_out_p2p_send_is_not_transmitted_later() {
 #[tokio::test(start_paused = true)]
 async fn unsent_or_cancelled_reads_do_not_transmit_later_or_leak_callbacks() {
     let knx = knx().await;
-    let address = GroupAddress::try_from_raw(1).unwrap();
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
     let reading = tokio::spawn({
         let knx = knx.clone();
         async move { knx.read_group_value(address, Duration::from_secs(1)).await }
@@ -535,7 +535,7 @@ async fn shutdown_fails_unsent_reads_promptly() {
         let knx = knx.clone();
         async move {
             knx.read_group_value(
-                GroupAddress::try_from_raw(1).unwrap(),
+                RawGroupAddress::try_from_raw(1).unwrap(),
                 Duration::from_secs(60),
             )
             .await
@@ -566,7 +566,7 @@ async fn shutdown_cancels_reads_already_waiting_for_a_bus_response() {
         let knx = knx.clone();
         async move {
             knx.read_group_value(
-                GroupAddress::try_from_raw(1).unwrap(),
+                RawGroupAddress::try_from_raw(1).unwrap(),
                 Duration::from_secs(60),
             )
             .await

@@ -6,7 +6,7 @@
 
 #[cfg(test)]
 use crate::protocol::address::{MainGroup, MiddleGroup};
-use crate::protocol::{Telegram, address::GroupAddress};
+use crate::protocol::{Telegram, address::RawGroupAddress};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -47,10 +47,10 @@ impl std::fmt::Display for CallbackHandle {
 #[derive(Clone, Default)]
 pub enum TelegramFilter {
     /// Match specific group addresses
-    GroupAddresses(Vec<GroupAddress>),
+    GroupAddresses(Vec<RawGroupAddress>),
 
     /// Match a range of group addresses (inclusive)
-    AddressRange(GroupAddress, GroupAddress),
+    AddressRange(RawGroupAddress, RawGroupAddress),
 
     /// Custom filter function
     Custom(Arc<dyn Fn(&Telegram) -> bool + Send + Sync>),
@@ -901,7 +901,7 @@ mod tests {
     #[test]
     fn property_telegram_callback_invocation() {
         use crate::protocol::{
-            address::{Address, GroupAddress, IndividualAddress},
+            address::{Address, IndividualAddress, RawGroupAddress},
             telegram::{Direction, Telegram, TelegramType},
         };
         use std::collections::HashMap;
@@ -912,8 +912,8 @@ mod tests {
         proptest!(ProptestConfig::with_cases(20), |(
             // Generate telegram properties
             source_raw in 0u16..=0xFFFF,
-            dest_main in 0u8..=GroupAddress::MAX_MAIN,
-            dest_middle in 0u8..=GroupAddress::MAX_MIDDLE,
+            dest_main in 0u8..=RawGroupAddress::MAX_MAIN,
+            dest_middle in 0u8..=RawGroupAddress::MAX_MIDDLE,
             dest_sub in 0u8..=255u8,
             payload in prop::collection::vec(0u8..=255u8, 0..5),
             is_outgoing in prop::bool::ANY,
@@ -930,7 +930,7 @@ mod tests {
 
                 // Create telegram
                 let source = IndividualAddress::from_raw(source_raw);
-                let destination = Address::Group(GroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap());
+                let destination = Address::Group(RawGroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap());
                 let direction = if is_outgoing { Direction::Outgoing } else { Direction::Incoming };
 
                 let telegram = Telegram {
@@ -1008,7 +1008,7 @@ mod tests {
     #[test]
     fn property_telegram_filtering() {
         use crate::protocol::{
-            address::{Address, GroupAddress, IndividualAddress},
+            address::{Address, IndividualAddress, RawGroupAddress},
             telegram::{Direction, Telegram, TelegramType},
         };
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1018,14 +1018,14 @@ mod tests {
         proptest!(ProptestConfig::with_cases(20), |(
             // Generate telegram properties
             source_raw in 0u16..=0xFFFF,
-            dest_main in 0u8..=GroupAddress::MAX_MAIN,
-            dest_middle in 0u8..=GroupAddress::MAX_MIDDLE,
+            dest_main in 0u8..=RawGroupAddress::MAX_MAIN,
+            dest_middle in 0u8..=RawGroupAddress::MAX_MIDDLE,
             dest_sub in 0u8..=255u8,
             payload in prop::collection::vec(0u8..=255u8, 0..5),
 
             // Generate different filter addresses
             filter_addresses in prop::collection::vec(
-                (0u8..=GroupAddress::MAX_MAIN, 0u8..=GroupAddress::MAX_MIDDLE, 0u8..=GroupAddress::MAX_SUB), // (main, middle, sub)
+                (0u8..=RawGroupAddress::MAX_MAIN, 0u8..=RawGroupAddress::MAX_MIDDLE, 0u8..=RawGroupAddress::MAX_SUB), // (main, middle, sub)
                 1..3usize
             ),
         )| {
@@ -1034,7 +1034,7 @@ mod tests {
 
                 // Create telegram
                 let source = IndividualAddress::from_raw(source_raw);
-                let telegram_addr = GroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap();
+                let telegram_addr = RawGroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap();
                 let destination = Address::Group(telegram_addr);
 
                 let telegram = Telegram {
@@ -1057,7 +1057,7 @@ mod tests {
                     let counter = Arc::new(AtomicUsize::new(0));
                     callback_counters.push(counter.clone());
 
-                    let filter_addr = GroupAddress::from_parts(*filter_main, *filter_middle, *filter_sub).unwrap();
+                    let filter_addr = RawGroupAddress::from_parts(*filter_main, *filter_middle, *filter_sub).unwrap();
                     let filter = TelegramFilter::GroupAddresses(vec![filter_addr]);
 
                     // Determine if this filter should match the telegram
@@ -1113,7 +1113,7 @@ mod tests {
     #[test]
     fn property_callback_ordering() {
         use crate::protocol::{
-            address::{Address, GroupAddress, IndividualAddress},
+            address::{Address, IndividualAddress, RawGroupAddress},
             telegram::{Direction, Telegram, TelegramType},
         };
         use std::sync::Arc;
@@ -1124,8 +1124,8 @@ mod tests {
         proptest!(ProptestConfig::with_cases(20), |(
             // Generate telegram properties
             source_raw in 0u16..=0xFFFF,
-            dest_main in 0u8..=GroupAddress::MAX_MAIN,
-            dest_middle in 0u8..=GroupAddress::MAX_MIDDLE,
+            dest_main in 0u8..=RawGroupAddress::MAX_MAIN,
+            dest_middle in 0u8..=RawGroupAddress::MAX_MIDDLE,
             dest_sub in 0u8..=255u8,
             payload in prop::collection::vec(0u8..=255u8, 0..5),
 
@@ -1138,7 +1138,7 @@ mod tests {
 
                 // Create telegram
                 let source = IndividualAddress::from_raw(source_raw);
-                let destination = Address::Group(GroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap());
+                let destination = Address::Group(RawGroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap());
 
                 let telegram = Telegram {
                     source,
@@ -1189,7 +1189,7 @@ mod tests {
     #[test]
     fn property_error_isolation() {
         use crate::protocol::{
-            address::{Address, GroupAddress, IndividualAddress},
+            address::{Address, IndividualAddress, RawGroupAddress},
             telegram::{Direction, Telegram, TelegramType},
         };
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1199,8 +1199,8 @@ mod tests {
         proptest!(ProptestConfig::with_cases(20), |(
             // Generate telegram properties
             source_raw in 0u16..=0xFFFF,
-            dest_main in 0u8..=GroupAddress::MAX_MAIN,
-            dest_middle in 0u8..=GroupAddress::MAX_MIDDLE,
+            dest_main in 0u8..=RawGroupAddress::MAX_MAIN,
+            dest_middle in 0u8..=RawGroupAddress::MAX_MIDDLE,
             dest_sub in 0u8..=255u8,
             payload in prop::collection::vec(0u8..=255u8, 0..5),
 
@@ -1215,7 +1215,7 @@ mod tests {
 
                 // Create telegram
                 let source = IndividualAddress::from_raw(source_raw);
-                let destination = Address::Group(GroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap());
+                let destination = Address::Group(RawGroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap());
 
                 let telegram = Telegram {
                     source,
@@ -1354,7 +1354,7 @@ mod tests {
     #[test]
     fn property_callback_unregistration() {
         use crate::protocol::{
-            address::{Address, GroupAddress, IndividualAddress},
+            address::{Address, IndividualAddress, RawGroupAddress},
             telegram::{Direction, Telegram, TelegramType},
         };
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1364,8 +1364,8 @@ mod tests {
         proptest!(ProptestConfig::with_cases(20), |(
             // Generate telegram properties
             source_raw in 0u16..=0xFFFF,
-            dest_main in 0u8..=GroupAddress::MAX_MAIN,
-            dest_middle in 0u8..=GroupAddress::MAX_MIDDLE,
+            dest_main in 0u8..=RawGroupAddress::MAX_MAIN,
+            dest_middle in 0u8..=RawGroupAddress::MAX_MIDDLE,
             dest_sub in 0u8..=255u8,
             payload in prop::collection::vec(0u8..=255u8, 0..5),
 
@@ -1414,7 +1414,7 @@ mod tests {
 
                 // Create test data
                 let source = IndividualAddress::from_raw(source_raw);
-                let destination = Address::Group(GroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap());
+                let destination = Address::Group(RawGroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap());
                 let telegram = Telegram {
                     source,
                     destination,
@@ -1585,11 +1585,11 @@ mod tests {
 
                     let notification_handle = tokio::spawn(async move {
                         // Create test data
-                        use crate::protocol::{address::{Address, GroupAddress, IndividualAddress}, telegram::{Telegram, Direction, TelegramType}};
+                        use crate::protocol::{address::{Address, RawGroupAddress, IndividualAddress}, telegram::{Telegram, Direction, TelegramType}};
 
                         let telegram = Telegram {
                             source: IndividualAddress::from_raw(0x1234),
-                            destination: Address::Group(GroupAddress::new(MainGroup::new(0), MiddleGroup::new(1), 1)),
+                            destination: Address::Group(RawGroupAddress::new(MainGroup::new(0), MiddleGroup::new(1), 1)),
                             payload: vec![0x01],
                             priority: crate::protocol::telegram::Priority::Normal,
                             direction: Direction::Incoming,
@@ -1670,7 +1670,7 @@ mod tests {
     #[allow(clippy::similar_names)]
     fn property_sync_async_callback_support() {
         use crate::protocol::{
-            address::{Address, GroupAddress, IndividualAddress},
+            address::{Address, IndividualAddress, RawGroupAddress},
             telegram::{Direction, Telegram, TelegramType},
         };
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1801,7 +1801,7 @@ mod tests {
                 // Create test telegram
                 let telegram = Telegram {
                     source: IndividualAddress::from_raw(0x1234),
-                    destination: Address::Group(GroupAddress::new(MainGroup::new(0), MiddleGroup::new(1), 1)),
+                    destination: Address::Group(RawGroupAddress::new(MainGroup::new(0), MiddleGroup::new(1), 1)),
                     payload: vec![0x01],
                     priority: crate::protocol::telegram::Priority::Normal,
                     direction: Direction::Incoming,
@@ -1895,7 +1895,7 @@ mod tests {
     fn property_builder_callback_transfer() {
         use crate::Knx;
         use crate::protocol::{
-            address::{Address, GroupAddress, IndividualAddress},
+            address::{Address, IndividualAddress, RawGroupAddress},
             telegram::{Direction, Telegram, TelegramType},
         };
         use crate::transport::ConnectionType;
@@ -1910,8 +1910,8 @@ mod tests {
 
             // Generate test data
             source_raw in 0u16..=0xFFFF,
-            dest_main in 0u8..=GroupAddress::MAX_MAIN,
-            dest_middle in 0u8..=GroupAddress::MAX_MIDDLE,
+            dest_main in 0u8..=RawGroupAddress::MAX_MAIN,
+            dest_middle in 0u8..=RawGroupAddress::MAX_MIDDLE,
             dest_sub in 0u8..=255u8,
             payload in prop::collection::vec(0u8..=255u8, 0..3),
         )| {
@@ -1960,7 +1960,7 @@ mod tests {
 
                 // Create test data
                 let source = IndividualAddress::from_raw(source_raw);
-                let destination = Address::Group(GroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap());
+                let destination = Address::Group(RawGroupAddress::from_parts(dest_main, dest_middle, dest_sub).unwrap());
                 let telegram = Telegram {
                     source,
                     destination,

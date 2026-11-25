@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     DPTGeographicalLocation, DptPayload, DptRegistry, DptType, DptValue, GeographicalLocation,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn coordinates_validate_and_round_trip_wire_values() {
@@ -43,7 +43,7 @@ fn coordinates_validate_and_round_trip_wire_values() {
         );
         assert!(registry.decode("255.001", &raw).is_ok());
         let telegram = Telegram::group_write_value::<DPTGeographicalLocation>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value,
         )
         .unwrap();

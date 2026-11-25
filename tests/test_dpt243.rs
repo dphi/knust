@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     DPTColorXYYTransition, DptPayload, DptRegistry, DptType, DptValue, XYYColorTransition,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn xyy_transition_validity_rounding_and_bounds() {
@@ -49,7 +49,7 @@ fn xyy_transition_validity_rounding_and_bounds() {
     );
     assert_eq!(
         Telegram::group_write_value::<DPTColorXYYTransition>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

@@ -1,6 +1,6 @@
 #![cfg(feature = "dpt")]
 use knust::protocol::dpt::{DPTHVACModeNext, DptPayload, DptRegistry, DptType, DptValue, ModeNext};
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn next_modes_validate_per_subtype_and_preserve_undefined_delay() {
@@ -55,7 +55,7 @@ fn next_modes_validate_per_subtype_and_preserve_undefined_delay() {
     );
     assert_eq!(
         Telegram::group_write_value::<DPTHVACModeNext>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

@@ -3,7 +3,7 @@ use knust::protocol::dpt::{
     DPTCombinedStatusHVA, DPTCombinedStatusRTC, DPTCombinedStatusRTSM, DptPayload, DptRegistry,
     DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn combined_hvac_statuses_preserve_known_bits_and_ignore_reserved_bits() {
@@ -44,7 +44,7 @@ fn combined_hvac_statuses_preserve_known_bits_and_ignore_reserved_bits() {
         );
         assert_eq!(
             Telegram::group_write_value::<DPTCombinedStatusRTSM>(
-                GroupAddress::try_from_raw(1).unwrap(),
+                RawGroupAddress::try_from_raw(1).unwrap(),
                 typed.value()
             )
             .unwrap()

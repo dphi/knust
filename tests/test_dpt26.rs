@@ -1,6 +1,6 @@
 #![cfg(feature = "dpt")]
 use knust::protocol::dpt::{DPTSceneInfo, DptPayload, DptRegistry, DptType, DptValue, SceneInfo};
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn scene_info_handles_every_octet_and_writes_canonical_values() {
@@ -33,7 +33,7 @@ fn scene_info_handles_every_octet_and_writes_canonical_values() {
         );
         assert!(registry.decode("26.001", &raw).is_ok());
         let telegram = Telegram::group_write_value::<DPTSceneInfo>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             expected,
         )
         .unwrap();

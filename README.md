@@ -50,8 +50,7 @@ instead of hand-building `Telegram`s. See
 handles like this into device structs.
 
 ```rust
-use knust::{Knx, ConnectionConfig, ConnectionType};
-use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::{Knx, ConnectionConfig, ConnectionType, IndividualAddress};
 use knust::protocol::dpt::DPTSwitch;
 
 #[tokio::main]
@@ -72,7 +71,7 @@ async fn main() -> Result<(), knust::KnxError> {
 
     // Register 1/2/3 as DPT 1.001 (Switch). Fails if it's already bound
     // to a *different* DPT elsewhere — every address gets exactly one.
-    let light = knx.group_address::<DPTSwitch>(GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3))?;
+    let light = knx.group_address::<DPTSwitch>("1/2/3".parse()?)?;
 
     // `write` accepts a bool, `DPTSwitch` itself, or a string like "on" —
     // all checked against the bound DPT; only the string can fail at
@@ -160,18 +159,18 @@ let config = ConnectionConfig {
 ## Typed Group Addresses
 
 `Knx::group_address::<T>(address)` binds a group address to DPT `T` and
-returns a `TypedGroupAddress<T>` handle. `T` is one of the DPT value types in
+returns a `GroupAddress<T>` handle. `T` is one of the DPT value types in
 `knust::protocol::dpt` (`DPTSwitch`, `DPTScaling`, `DPTTemperature`, ...);
-the handle can't exist without the bus already agreeing `address` is that
-DPT — registering the same address again with a *different* `T` is an
-error, not a silent overwrite.
+registering the same address with a different DPT returns an error.
+Use `knust::protocol::RawGroupAddress` when working directly with telegrams
+or addresses whose DPT is determined at runtime.
 
 ```rust
 use std::time::Duration;
 use knust::protocol::dpt::DPTTemperature;
 
 // Register once; reuse the handle for every read/write after that.
-let temp = knx.group_address::<DPTTemperature>(GroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1))?;
+let temp = knx.group_address::<DPTTemperature>("2/1/1".parse()?)?;
 
 // Sends a GroupValueRead and decodes the response as DPT 9.001 directly.
 let value = temp.read(Duration::from_secs(5)).await?;
@@ -224,7 +223,7 @@ for (address, dpt) in knx.registered_group_addresses() {
 ```
 
 `Knx::unregister_group_address(address)` removes a binding and frees the
-address to be registered under a different DPT; any `TypedGroupAddress<T>`
+address to be registered under a different DPT; any `GroupAddress<T>`
 handles obtained before the unregister re-check the registry on their next
 `write`/`read`/`decode` and error rather than keep using their now-stale
 `T`.
@@ -323,10 +322,11 @@ let mut keyring = KeyRing::new();
 
 // Add group keys
 let group_key = SecurityKey::from_hex("0123456789ABCDEF0123456789ABCDEF")?;
-keyring.add_group_key(GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1), group_key);
+let address = "1/2/1".parse()?;
+keyring.add_group_key(address, group_key);
 
 // Check if group is secured
-if keyring.is_group_secured(&GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1)) {
+if keyring.is_group_secured(&address) {
     println!("Group 1/2/1 is secured");
 }
 ```
@@ -402,7 +402,7 @@ match knx.connect().await {
 The repository includes examples covering common tasks (`cargo run --example <name>`,
 some require the `secure`/`ets` features):
 
-- **custom_devices**: building device structs on typed `TypedGroupAddress<T>` handles
+- **custom_devices**: building device structs on typed `GroupAddress<T>` handles
 - **send_telegrams**: typed writes, plus the raw `Telegram`/`send_telegram` escape hatch
 - **value_reader**: typed reads across a few different DPTs
 - **read_responder**: answering a `GroupValueRead` with a `GroupValueResponse`

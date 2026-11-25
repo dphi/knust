@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     DPTScalingSpeed, DPTScalingStepTime, DptPayload, DptRegistry, DptType, DptValue, ScalingTime,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn scaling_times_validate_writes_but_decode_zero_wire_values() {
@@ -64,7 +64,7 @@ fn scaling_times_validate_writes_but_decode_zero_wire_values() {
     );
     assert_eq!(
         Telegram::group_write_value::<DPTScalingSpeed>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

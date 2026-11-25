@@ -1,6 +1,6 @@
 //! KNX telegram representation and handling.
 
-use crate::protocol::address::{Address, GroupAddress, IndividualAddress};
+use crate::protocol::address::{Address, IndividualAddress, RawGroupAddress};
 use std::time::Duration;
 
 /// APCI service type — what kind of group message this is
@@ -71,7 +71,7 @@ impl Telegram {
     /// it in with the bus's own configured individual address, so callers
     /// never need to know or pass it themselves.
     #[must_use]
-    pub fn group_read(destination: GroupAddress) -> Self {
+    pub fn group_read(destination: RawGroupAddress) -> Self {
         Self {
             source: IndividualAddress::default(),
             destination: Address::Group(destination),
@@ -92,7 +92,7 @@ impl Telegram {
     /// [`Self::compact_payload`] to false for an octet DPT, or use
     /// [`Self::group_write_value`] with the `dpt` feature for automatic selection.
     #[must_use]
-    pub fn group_write(destination: GroupAddress, payload: Vec<u8>) -> Self {
+    pub fn group_write(destination: RawGroupAddress, payload: Vec<u8>) -> Self {
         Self {
             source: IndividualAddress::default(),
             destination: Address::Group(destination),
@@ -218,7 +218,7 @@ impl Telegram {
     #[must_use]
     pub fn received(
         source: IndividualAddress,
-        destination: GroupAddress,
+        destination: RawGroupAddress,
         telegram_type: TelegramType,
         payload: Vec<u8>,
     ) -> Self {
@@ -297,7 +297,7 @@ impl Telegram {
     /// to a valid `T` (e.g. an unparseable string), or `T::validate` rejects
     /// it.
     pub fn group_write_value<T: crate::protocol::dpt::DptValue>(
-        destination: GroupAddress,
+        destination: RawGroupAddress,
         value: impl crate::protocol::dpt::WriteValue<T>,
     ) -> crate::error::Result<Self> {
         let dpt = T::dpt_type()?;
@@ -322,7 +322,7 @@ impl Telegram {
     ///
     /// Same as [`Self::group_write_value`].
     pub fn group_response_value<T: crate::protocol::dpt::DptValue>(
-        destination: GroupAddress,
+        destination: RawGroupAddress,
         value: impl crate::protocol::dpt::WriteValue<T>,
     ) -> crate::error::Result<Self> {
         let mut telegram = Self::group_write_value(destination, value)?;
@@ -417,10 +417,10 @@ impl std::fmt::Display for Direction {
 #[cfg(test)]
 mod staleness_tests {
     use super::*;
-    use crate::protocol::address::{GroupAddress, MainGroup, MiddleGroup};
+    use crate::protocol::address::{MainGroup, MiddleGroup, RawGroupAddress};
 
-    fn ga() -> GroupAddress {
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3)
+    fn ga() -> RawGroupAddress {
+        RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3)
     }
 
     #[test]
@@ -450,11 +450,11 @@ mod staleness_tests {
 #[cfg(all(test, feature = "dpt"))]
 mod value_tests {
     use super::*;
-    use crate::protocol::address::{GroupAddress, MainGroup, MiddleGroup};
+    use crate::protocol::address::{MainGroup, MiddleGroup, RawGroupAddress};
     use crate::protocol::dpt::DPTSwitch;
 
-    fn ga() -> GroupAddress {
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3)
+    fn ga() -> RawGroupAddress {
+        RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3)
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! with proper authentication, encryption, and key management.
 
 use knust::protocol::dpt::DPTSwitch;
-use knust::protocol::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::{IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
 use knust::security::{KeyRing, SecurityCredentials, SecurityKey};
 use knust::transport::{BackoffConfig, SecurityConfig};
 use knust::{Component, ConnectionType, Knx, LogLevel, LoggingConfig};
@@ -71,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Send a value over the secure tunnel via a typed group
             // address — same DPT-checked `write` as an unsecured tunnel,
             // just routed over the encrypted connection.
-            let switch = secure_knx.group_address::<DPTSwitch>(GroupAddress::new(
+            let switch = secure_knx.group_address::<DPTSwitch>(RawGroupAddress::new(
                 MainGroup::new(1),
                 MiddleGroup::new(2),
                 1,
@@ -108,11 +108,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let group_key_2 = SecurityKey::from_hex("FEDCBA9876543210FEDCBA9876543210")?;
 
     keyring.add_group_key(
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1),
+        RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1),
         group_key_1,
     );
     keyring.add_group_key(
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 2),
+        RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 2),
         group_key_2,
     );
 
@@ -123,8 +123,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Secured groups: 1/2/1, 1/2/2");
 
     // Check which groups are secured
-    let test_addr_1 = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1);
-    let test_addr_2 = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(3), 1);
+    let test_addr_1 = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1);
+    let test_addr_2 = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(3), 1);
 
     println!(
         "   Group 1/2/1 secured: {}",

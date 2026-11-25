@@ -10,7 +10,7 @@ use tokio::time::sleep;
 
 use crate::application::callbacks::{ConnectionState, EventHandler, TelegramFilter};
 use crate::protocol::{
-    address::{Address, GroupAddress, IndividualAddress, MainGroup, MiddleGroup},
+    address::{Address, IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress},
     telegram::{Direction, Priority, Telegram, TelegramType},
 };
 
@@ -159,7 +159,11 @@ async fn test_concurrent_mixed_operations() {
     // Create test data
     let telegram = Telegram {
         source: IndividualAddress::from_raw(0x1234),
-        destination: Address::Group(GroupAddress::new(MainGroup::new(0), MiddleGroup::new(1), 1)),
+        destination: Address::Group(RawGroupAddress::new(
+            MainGroup::new(0),
+            MiddleGroup::new(1),
+            1,
+        )),
         payload: vec![0x01],
         priority: Priority::Normal,
         direction: Direction::Incoming,
@@ -271,7 +275,7 @@ async fn test_concurrent_filter_operations() {
                         move |_| {
                             matching_clone.fetch_add(1, Ordering::SeqCst);
                         },
-                        TelegramFilter::GroupAddresses(vec![GroupAddress::new(
+                        TelegramFilter::GroupAddresses(vec![RawGroupAddress::new(
                             MainGroup::new(0),
                             MiddleGroup::new(1),
                             1,
@@ -286,7 +290,7 @@ async fn test_concurrent_filter_operations() {
                         move |_| {
                             non_matching_clone.fetch_add(1, Ordering::SeqCst);
                         },
-                        TelegramFilter::GroupAddresses(vec![GroupAddress::new(
+                        TelegramFilter::GroupAddresses(vec![RawGroupAddress::new(
                             MainGroup::new(0),
                             MiddleGroup::new(2),
                             2,
@@ -308,7 +312,11 @@ async fn test_concurrent_filter_operations() {
     // Create telegram that matches 0x0101
     let telegram = Telegram {
         source: IndividualAddress::from_raw(0x1234),
-        destination: Address::Group(GroupAddress::new(MainGroup::new(0), MiddleGroup::new(1), 1)),
+        destination: Address::Group(RawGroupAddress::new(
+            MainGroup::new(0),
+            MiddleGroup::new(1),
+            1,
+        )),
         payload: vec![0x01],
         priority: Priority::Normal,
         direction: Direction::Incoming,

@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::log_transport;
 use crate::logging::LogLevel;
-use crate::protocol::address::{Address, GroupAddress};
+use crate::protocol::address::{Address, RawGroupAddress};
 use crate::protocol::telegram::Telegram;
 
 /// Configuration for receive rate limiting.
@@ -32,14 +32,14 @@ impl Default for ReceiveLimitConfig {
 pub enum ReceiveResult {
     Sent,
     DroppedQueueFull,
-    DroppedThrottled(GroupAddress),
+    DroppedThrottled(RawGroupAddress),
 }
 
 /// Receive-path rate limiter.
 pub struct ReceiveRateLimiter {
     config: ReceiveLimitConfig,
     tx: mpsc::Sender<Telegram>,
-    per_address: std::sync::Mutex<HashMap<GroupAddress, AddressState>>,
+    per_address: std::sync::Mutex<HashMap<RawGroupAddress, AddressState>>,
     stats: std::sync::Mutex<ReceiveStats>,
 }
 
@@ -127,7 +127,7 @@ impl ReceiveRateLimiter {
         self.stats.lock().unwrap().clone()
     }
 
-    fn is_throttled(&self, ga: GroupAddress) -> bool {
+    fn is_throttled(&self, ga: RawGroupAddress) -> bool {
         let mut map = self.per_address.lock().unwrap();
         let now = Instant::now();
 
@@ -161,7 +161,7 @@ mod tests {
             per_address_max_per_sec: 100,
         };
         let (limiter, _rx) = ReceiveRateLimiter::new(config);
-        let ga = GroupAddress::from_parts(1, 2, 3).unwrap();
+        let ga = RawGroupAddress::from_parts(1, 2, 3).unwrap();
         let t = || {
             Telegram::received(
                 IndividualAddress::new(1, 1, 5),
@@ -183,7 +183,7 @@ mod tests {
             per_address_max_per_sec: 2,
         };
         let (limiter, _rx) = ReceiveRateLimiter::new(config);
-        let ga = GroupAddress::from_parts(1, 2, 3).unwrap();
+        let ga = RawGroupAddress::from_parts(1, 2, 3).unwrap();
         let t = || {
             Telegram::received(
                 IndividualAddress::new(1, 1, 5),

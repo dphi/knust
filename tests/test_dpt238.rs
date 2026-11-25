@@ -3,7 +3,7 @@ use knust::protocol::dpt::{
     DALIDiagnostics, DPTDALIDiagnostics, DPTSceneConfig, DptPayload, DptRegistry, DptType,
     DptValue, SceneConfig,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn scene_configuration_and_dali_diagnostics_round_trip_all_octets() {
@@ -42,7 +42,7 @@ fn scene_configuration_and_dali_diagnostics_round_trip_all_octets() {
             assert_eq!(dpt.parse(&payload.formatted(None)).unwrap(), raw);
             assert!(registry.decode(number, &raw).is_ok());
         }
-        let address = GroupAddress::try_from_raw(1).unwrap();
+        let address = RawGroupAddress::try_from_raw(1).unwrap();
         assert_eq!(
             Telegram::group_write_value::<DPTSceneConfig>(address, scene)
                 .unwrap()

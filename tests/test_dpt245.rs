@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     ConverterTestResult, DPTConverterTestResult, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn converter_results_validate_fields_and_preserve_unknown_charge() {
@@ -65,7 +65,7 @@ fn converter_results_validate_fields_and_preserve_unknown_charge() {
     assert_eq!(DPTConverterTestResult::new(value).unwrap().as_bytes(), raw);
     assert_eq!(
         Telegram::group_write_value::<DPTConverterTestResult>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

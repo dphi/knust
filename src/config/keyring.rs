@@ -18,7 +18,7 @@ use sha2::Sha256;
 
 use crate::config::{escape_xml, unescape_xml};
 use crate::error::{ConfigurationError, Result};
-use crate::protocol::address::{GroupAddress, IndividualAddress};
+use crate::protocol::address::{IndividualAddress, RawGroupAddress};
 use crate::security::{KeyRing, SecurityKey, sha256_hash};
 
 /// Parsed keyring configuration data.
@@ -112,7 +112,7 @@ pub struct KeyringInterface {
 #[derive(Debug, Clone)]
 pub struct KeyringGroupAssignment {
     /// Assigned group address
-    pub address: GroupAddress,
+    pub address: RawGroupAddress,
     /// Individual addresses permitted to send Data Secure group telegrams
     pub senders: Vec<IndividualAddress>,
 }
@@ -138,7 +138,7 @@ pub struct KeyringDevice {
 #[derive(Debug, Clone)]
 pub struct KeyringGroupAddress {
     /// Group address
-    pub address: GroupAddress,
+    pub address: RawGroupAddress,
     /// Security key for Data Secure communication
     pub key: SecurityKey,
     /// Key description/name
@@ -426,11 +426,11 @@ impl KeyringParser {
             .filter_map(|group| group.split('>').next())
             .filter_map(|group| {
                 let address = Self::extract_xml_attribute(group, "Address").and_then(|value| {
-                    value.parse::<GroupAddress>().ok().or_else(|| {
+                    value.parse::<RawGroupAddress>().ok().or_else(|| {
                         value
                             .parse::<u16>()
                             .ok()
-                            .and_then(|raw| GroupAddress::try_from_raw(raw).ok())
+                            .and_then(|raw| RawGroupAddress::try_from_raw(raw).ok())
                     })
                 })?;
                 let senders = Self::extract_xml_attribute(group, "Senders")
@@ -698,11 +698,11 @@ impl KeyringParser {
             let tag = &section[start..=end];
             let address = Self::extract_xml_attribute(tag, "Address")
                 .and_then(|value| {
-                    value.parse::<GroupAddress>().ok().or_else(|| {
+                    value.parse::<RawGroupAddress>().ok().or_else(|| {
                         value
                             .parse::<u16>()
                             .ok()
-                            .and_then(|raw| GroupAddress::try_from_raw(raw).ok())
+                            .and_then(|raw| RawGroupAddress::try_from_raw(raw).ok())
                     })
                 })
                 .ok_or_else(|| Self::xml_error("Missing or invalid group address"))?;
@@ -798,11 +798,11 @@ impl KeyringParser {
     fn parse_single_group_address(xml: &str) -> Result<KeyringGroupAddress> {
         let address = Self::extract_xml_attribute(xml, "Address")
             .and_then(|value| {
-                value.parse::<GroupAddress>().ok().or_else(|| {
+                value.parse::<RawGroupAddress>().ok().or_else(|| {
                     value
                         .parse::<u16>()
                         .ok()
-                        .and_then(|raw| GroupAddress::try_from_raw(raw).ok())
+                        .and_then(|raw| RawGroupAddress::try_from_raw(raw).ok())
                 })
             })
             .ok_or_else(|| ConfigurationError::ParseError {

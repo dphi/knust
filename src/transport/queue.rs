@@ -448,7 +448,7 @@ impl Default for TelegramQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::address::{Address, GroupAddress, IndividualAddress};
+    use crate::protocol::address::{Address, IndividualAddress, RawGroupAddress};
     use crate::protocol::telegram::{Direction, Priority, TelegramType};
     use proptest::prelude::*;
 
@@ -456,7 +456,7 @@ mod tests {
         Telegram {
             source: IndividualAddress::new(1, 1, 1),
             destination: Address::Group(
-                GroupAddress::try_from_raw(0x0101).expect("Valid test address"),
+                RawGroupAddress::try_from_raw(0x0101).expect("Valid test address"),
             ),
             payload: vec![0x01, 0x02, 0x03],
             priority,
@@ -481,14 +481,14 @@ mod tests {
             source_area in 0u8..16,
             source_line in 0u8..16,
             source_device in 0u8..255,
-            dest_addr in 0u16..=GroupAddress::MAX_RAW,
+            dest_addr in 0u16..=RawGroupAddress::MAX_RAW,
             payload_len in 0usize..20,
             payload_byte in 0u8..255,
         ) -> Telegram {
             let payload = vec![payload_byte; payload_len];
             Telegram {
                 source: IndividualAddress::new(source_area, source_line, source_device),
-                destination: Address::Group(GroupAddress::try_from_raw(dest_addr).expect("Valid test address")),
+                destination: Address::Group(RawGroupAddress::try_from_raw(dest_addr).expect("Valid test address")),
                 payload,
                 priority,
                 direction: Direction::Outgoing,

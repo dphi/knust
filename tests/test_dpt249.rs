@@ -3,7 +3,7 @@ use knust::protocol::dpt::{
     ColorTemperatureTransition, DPTColorTemperatureTransition, DptPayload, DptRegistry, DptType,
     DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn color_temperature_transition_tracks_validity_and_rounding() {
@@ -57,7 +57,7 @@ fn color_temperature_transition_tracks_validity_and_rounding() {
     );
     assert_eq!(
         Telegram::group_write_value::<DPTColorTemperatureTransition>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

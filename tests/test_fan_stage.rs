@@ -1,7 +1,7 @@
 #![cfg(feature = "dpt")]
 
 use knust::protocol::Telegram;
-use knust::protocol::address::GroupAddress;
+use knust::protocol::address::RawGroupAddress;
 use knust::protocol::dpt::{DPTFanStage, DptPayload, DptRegistry, DptType, DptValue};
 
 #[test]
@@ -23,7 +23,7 @@ fn fan_stage_preserves_every_octet() {
             payload
         );
         let telegram = Telegram::group_write_value::<DPTFanStage>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value,
         )
         .unwrap();

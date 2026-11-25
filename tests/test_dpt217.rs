@@ -1,6 +1,6 @@
 #![cfg(feature = "dpt")]
 
-use knust::protocol::address::GroupAddress;
+use knust::protocol::address::RawGroupAddress;
 use knust::protocol::dpt::{DPTVersion, DptPayload, DptRegistry, DptType, DptValue, KnxVersion};
 use knust::protocol::{GroupValueService, Telegram};
 
@@ -95,7 +95,7 @@ fn version_rejects_malformed_values_and_registers_typed_writes() {
         );
         assert!(
             Telegram::group_write_value::<DPTVersion>(
-                GroupAddress::try_from_raw(1).unwrap(),
+                RawGroupAddress::try_from_raw(1).unwrap(),
                 value
             )
             .is_err()
@@ -127,7 +127,7 @@ fn version_rejects_malformed_values_and_registers_typed_writes() {
     let decoded = registry.decode("217.001", &[0x08, 0x83]).unwrap();
     let typed = decoded.downcast_ref::<DPTVersion>().unwrap();
     assert_eq!(registry.encode("217.001", typed).unwrap(), [0x08, 0x83]);
-    let address = GroupAddress::try_from_raw(1).unwrap();
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
     let telegram = Telegram::group_write_value::<DPTVersion>(address, "1.2.3").unwrap();
     assert_eq!(telegram.payload, [0x08, 0x83]);
     assert!(!telegram.compact_payload);

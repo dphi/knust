@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     ConverterTestInfo, DPTConverterTestInfo, DateTime, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn converter_test_info_reuses_date_time_flags_and_encodes_updated_fields() {
@@ -48,7 +48,7 @@ fn converter_test_info_reuses_date_time_flags_and_encodes_updated_fields() {
     assert!(reg.decode("247.600", typed.as_bytes()).is_ok());
     assert_eq!(
         Telegram::group_write_value::<DPTConverterTestInfo>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value.clone()
         )
         .unwrap()

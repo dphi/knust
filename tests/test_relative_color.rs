@@ -3,7 +3,7 @@ use knust::protocol::dpt::{
     ColorTemperatureControl, ControlDimming, DPTColorTemperatureControl, DptPayload, DptRegistry,
     DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn relative_color_components_apply_validity_and_ignore_reserved_bits() {
@@ -52,7 +52,7 @@ fn relative_color_components_apply_validity_and_ignore_reserved_bits() {
     );
     assert_eq!(
         Telegram::group_write_value::<DPTColorTemperatureControl>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

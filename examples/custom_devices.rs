@@ -7,8 +7,8 @@
 //! thin wrapper that names and composes a handful of those handles into one
 //! domain object:
 //!
-//! - `Switch`: a write-only actuator, one `TypedGroupAddress<DPTSwitch>`.
-//! - `TemperatureSensor`: read + subscribe, one `TypedGroupAddress<DPTTemperature>`,
+//! - `Switch`: a write-only actuator, one `GroupAddress<DPTSwitch>`.
+//! - `TemperatureSensor`: read + subscribe, one `GroupAddress<DPTTemperature>`,
 //!   decoded through the DPT 9.001 value type itself instead of hand-rolled
 //!   byte math.
 
@@ -17,21 +17,18 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use knust::application::callbacks::{TelegramCallbackFn, TelegramFilter};
-use knust::protocol::address::{MainGroup, MiddleGroup};
+use knust::protocol::RawGroupAddress;
 use knust::protocol::dpt::{DPTSwitch, DPTTemperature};
 use knust::protocol::telegram::Telegram;
-use knust::{
-    ConnectionConfig, ConnectionType, GroupAddress, IndividualAddress, Knx, KnxError,
-    TypedGroupAddress,
-};
+use knust::{ConnectionConfig, ConnectionType, GroupAddress, IndividualAddress, Knx, KnxError};
 
 /// A minimal on/off actuator: one group address, one write.
 struct Switch {
-    handle: TypedGroupAddress<DPTSwitch>,
+    handle: GroupAddress<DPTSwitch>,
 }
 
 impl Switch {
-    fn new(knx: &Knx, address: GroupAddress) -> Result<Self, KnxError> {
+    fn new(knx: &Knx, address: RawGroupAddress) -> Result<Self, KnxError> {
         Ok(Self {
             handle: knx.group_address::<DPTSwitch>(address)?,
         })
@@ -54,13 +51,13 @@ impl Switch {
 /// rather than parsing the 2-byte float by hand.
 struct TemperatureSensor {
     knx: Knx,
-    handle: TypedGroupAddress<DPTTemperature>,
+    handle: GroupAddress<DPTTemperature>,
 }
 
 /// `Knx::register_telegram_callback_filtered` takes an (async) `TelegramCallbackFn`,
 /// not a plain closure — this is the standard wrapper shape for a sync one.
 struct OnTemperatureUpdate<F: Fn(f32) + Send + Sync> {
-    handle: TypedGroupAddress<DPTTemperature>,
+    handle: GroupAddress<DPTTemperature>,
     callback: F,
 }
 
@@ -77,7 +74,7 @@ impl<F: Fn(f32) + Send + Sync> TelegramCallbackFn for OnTemperatureUpdate<F> {
 }
 
 impl TemperatureSensor {
-    fn new(knx: &Knx, address: GroupAddress) -> Result<Self, KnxError> {
+    fn new(knx: &Knx, address: RawGroupAddress) -> Result<Self, KnxError> {
         Ok(Self {
             knx: knx.clone(),
             handle: knx.group_address::<DPTTemperature>(address)?,
@@ -121,10 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `Switch::new`/`TemperatureSensor::new` are fallible now: registering
     // the same address under a *different* DPT elsewhere would be a
     // conflict, caught here instead of silently corrupting reads/writes.
-    let living_room_light = Switch::new(
-        &knx,
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1),
-    )?;
+    let living_room_light = Switch::new(&knx, "1/2/1".parse()?)?;
     match living_room_light.turn_on().await {
         Ok(()) => println!("✓ Living room light switched on"),
         Err(e) => println!("⚠ Switch write failed (expected without a real bus): {e}"),
@@ -135,10 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => println!("⚠ Switch write failed (expected without a real bus): {e}"),
     }
 
-    let temperature = TemperatureSensor::new(
-        &knx,
-        GroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1),
-    )?;
+    let temperature = TemperatureSensor::new(&knx, "2/1/1".parse()?)?;
     temperature
         .on_update(|celsius| println!("← temperature update: {celsius:.1}°C"))
         .await;

@@ -4,7 +4,7 @@ use super::*;
 #[cfg(feature = "secure")]
 use crate::config::keyring::{KeyringGroupAddress, KeyringMetadata};
 #[cfg(feature = "secure")]
-use crate::protocol::address::{GroupAddress, IndividualAddress};
+use crate::protocol::address::{IndividualAddress, RawGroupAddress};
 #[cfg(feature = "secure")]
 use crate::security::SecurityKey;
 #[cfg(feature = "secure")]
@@ -61,7 +61,7 @@ mod unit_tests {
             interfaces: vec![],
             devices: vec![],
             group_addresses: vec![KeyringGroupAddress {
-                address: GroupAddress::try_from_raw(1).unwrap(),
+                address: RawGroupAddress::try_from_raw(1).unwrap(),
                 key: SecurityKey::new(vec![0u8; 16]),
                 description: Some(name.to_string()),
             }],
@@ -86,7 +86,7 @@ mod unit_tests {
         </Keyring>"#;
         let config = KeyringParser::parse_bytes(xml).unwrap();
         let keyring = config.into_data_secure_keyring();
-        let group = GroupAddress::try_from_raw(1).unwrap();
+        let group = RawGroupAddress::try_from_raw(1).unwrap();
         let sender_default: IndividualAddress = "1.1.2".parse().unwrap();
         let sender_override: IndividualAddress = "1.1.3".parse().unwrap();
 
@@ -110,8 +110,8 @@ mod unit_tests {
             description: None,
         });
         let keyring = config.into_data_secure_keyring();
-        let group = GroupAddress::try_from_raw(1024).unwrap();
-        let unassigned_group: GroupAddress = "0/4/5".parse().unwrap();
+        let group = RawGroupAddress::try_from_raw(1024).unwrap();
+        let unassigned_group: RawGroupAddress = "0/4/5".parse().unwrap();
         let sender: IndividualAddress = "4.0.9".parse().unwrap();
         let restricted = config.into_data_secure_keyring_for("4.0.1".parse().unwrap());
 
@@ -265,7 +265,7 @@ mod property_tests {
             // Add group addresses
             for i in 0..ga_count {
                 let ga = KeyringGroupAddress {
-                    address: GroupAddress::try_from_raw(i as u16 + 1).unwrap(),
+                    address: RawGroupAddress::try_from_raw(i as u16 + 1).unwrap(),
                     key: SecurityKey::new(vec![i as u8; 16]),
                     description: Some(format!("Group {i}")),
                 };

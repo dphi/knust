@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     DPTForecastTemperature, DptPayload, DptRegistry, DptType, DptValue, Forecast,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn forecast_validity_sentinels_and_subtype_ranges() {
@@ -89,7 +89,7 @@ fn forecast_validity_sentinels_and_subtype_ranges() {
     );
     assert_eq!(
         Telegram::group_write_value::<DPTForecastTemperature>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

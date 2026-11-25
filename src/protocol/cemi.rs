@@ -7,7 +7,7 @@
 use crate::error::{ProtocolError, Result};
 use crate::log_protocol;
 use crate::logging::{Component, LogLevel, Timer};
-use crate::protocol::address::{Address, GroupAddress, IndividualAddress};
+use crate::protocol::address::{Address, IndividualAddress, RawGroupAddress};
 #[cfg(test)]
 use crate::protocol::address::{MainGroup, MiddleGroup};
 
@@ -234,7 +234,7 @@ impl CemiFrame {
 
         // Use the address type from the control field flags
         let dest_addr = if control_field.destination_address_type == AddressType::Group {
-            let group_addr = GroupAddress::try_from_raw(dest_raw).map_err(|e| {
+            let group_addr = RawGroupAddress::try_from_raw(dest_raw).map_err(|e| {
                 ProtocolError::InvalidAddress {
                     address: format!("0x{dest_raw:04X}"),
                     reason: e.to_string(),
@@ -1230,15 +1230,15 @@ mod tests {
         any::<u16>().prop_map(IndividualAddress::from_raw)
     }
 
-    /// Generate a valid `GroupAddress` for property testing
-    fn arb_group_address() -> impl Strategy<Value = GroupAddress> {
+    /// Generate a valid `RawGroupAddress` for property testing
+    fn arb_group_address() -> impl Strategy<Value = RawGroupAddress> {
         (
-            0u8..=GroupAddress::MAX_MAIN,
-            0u8..=GroupAddress::MAX_MIDDLE,
-            0u8..=GroupAddress::MAX_SUB,
+            0u8..=RawGroupAddress::MAX_MAIN,
+            0u8..=RawGroupAddress::MAX_MIDDLE,
+            0u8..=RawGroupAddress::MAX_SUB,
         )
             .prop_map(|(main, middle, sub)| {
-                GroupAddress::new(MainGroup::new(main), MiddleGroup::new(middle), sub)
+                RawGroupAddress::new(MainGroup::new(main), MiddleGroup::new(middle), sub)
             })
     }
 
@@ -1541,7 +1541,8 @@ mod tests {
     #[test]
     fn test_cemi_frame_creation() {
         let source = IndividualAddress::new(1, 2, 3);
-        let dest = Address::Group(GroupAddress::try_from_raw(0x1234).expect("Valid test address"));
+        let dest =
+            Address::Group(RawGroupAddress::try_from_raw(0x1234).expect("Valid test address"));
         let data = vec![0x01, 0x02, 0x03];
 
         let frame = CemiFrame::new(MessageCode::LDataReq, source, dest, data.clone());
@@ -1635,7 +1636,7 @@ mod tests {
     #[test]
     fn rejects_apdu_length_mismatch_and_u8_overflow() {
         let source = IndividualAddress::new(1, 1, 1);
-        let destination = Address::Group(GroupAddress::try_from_raw(1).unwrap());
+        let destination = Address::Group(RawGroupAddress::try_from_raw(1).unwrap());
         let mut mismatched = CemiFrame::new(MessageCode::LDataReq, source, destination, vec![0x00]);
         mismatched.data_length = 2;
         assert!(mismatched.serialize().is_err());
@@ -1664,7 +1665,7 @@ mod tests {
             assert_eq!(frame.source_addr.raw(), 0x1234);
             assert_eq!(
                 frame.dest_addr,
-                Address::Group(GroupAddress::try_from_raw(0x5678).unwrap())
+                Address::Group(RawGroupAddress::try_from_raw(0x5678).unwrap())
             );
             assert_eq!(frame.apci_data.len(), usize::from(length));
             assert_eq!(frame.serialize().unwrap(), wire);

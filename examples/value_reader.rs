@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::address::{IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
 use knust::protocol::dpt::{DPTOccupancy, DPTSwitch, DPTTemperature};
 use knust::{ConnectionConfig, ConnectionType, Knx};
 
@@ -38,17 +38,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Register each address once, with its DPT. `group_address` fails if
     // the address was already bound to a *different* DPT elsewhere.
-    let light_switch = knx.group_address::<DPTSwitch>(GroupAddress::new(
+    let light_switch = knx.group_address::<DPTSwitch>(RawGroupAddress::new(
         MainGroup::new(1),
         MiddleGroup::new(2),
         3,
     ))?;
-    let temperature = knx.group_address::<DPTTemperature>(GroupAddress::new(
+    let temperature = knx.group_address::<DPTTemperature>(RawGroupAddress::new(
         MainGroup::new(2),
         MiddleGroup::new(1),
         1,
     ))?;
-    let motion = knx.group_address::<DPTOccupancy>(GroupAddress::new(
+    let motion = knx.group_address::<DPTOccupancy>(RawGroupAddress::new(
         MainGroup::new(3),
         MiddleGroup::new(0),
         5,

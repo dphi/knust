@@ -3,7 +3,7 @@ use knust::protocol::dpt::{
     DPTLanguageCodeAlpha2ASCII, DPTRegionCodeAlpha2ASCII, DptPayload, DptRegistry, DptType,
     DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn language_and_region_codes_validate_and_normalize() {
@@ -45,7 +45,7 @@ fn language_and_region_codes_validate_and_normalize() {
         DPTRegionCodeAlpha2ASCII::decode(b"de").unwrap().value(),
         "DE"
     );
-    let address = GroupAddress::try_from_raw(1).unwrap();
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
     assert_eq!(
         Telegram::group_write_value::<DPTRegionCodeAlpha2ASCII>(address, "de")
             .unwrap()

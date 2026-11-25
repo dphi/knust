@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     ConverterStatus, DPTConverterStatus, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn converter_status_validates_enums_and_ignores_reserved_bits() {
@@ -60,7 +60,7 @@ fn converter_status_validates_enums_and_ignores_reserved_bits() {
     );
     assert_eq!(
         Telegram::group_write_value::<DPTConverterStatus>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

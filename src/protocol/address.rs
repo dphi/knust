@@ -11,7 +11,7 @@ use std::str::FromStr;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Address {
     /// Group address for logical communication
-    Group(GroupAddress),
+    Group(RawGroupAddress),
 
     /// Individual address for physical devices
     Individual(IndividualAddress),
@@ -26,8 +26,8 @@ impl fmt::Display for Address {
     }
 }
 
-impl From<GroupAddress> for Address {
-    fn from(addr: GroupAddress) -> Self {
+impl From<RawGroupAddress> for Address {
+    fn from(addr: RawGroupAddress) -> Self {
         Address::Group(addr)
     }
 }
@@ -44,7 +44,7 @@ impl TryFrom<&str> for Address {
     fn try_from(s: &str) -> Result<Self> {
         // Try parsing as group address first (contains '/')
         if s.contains('/') {
-            Ok(Address::Group(GroupAddress::from_str(s)?))
+            Ok(Address::Group(RawGroupAddress::from_str(s)?))
         } else if s.contains('.') {
             Ok(Address::Individual(IndividualAddress::from_str(s)?))
         } else {
@@ -57,14 +57,14 @@ impl TryFrom<&str> for Address {
     }
 }
 
-/// The main-group component of a [`GroupAddress`] (4 bits: 0-15).
+/// The main-group component of a [`RawGroupAddress`] (4 bits: 0-15).
 ///
 /// Holding a `MainGroup` at all is proof the value is in range — there's no
 /// way to construct one otherwise. Use [`Self::new`] for a value you
 /// already trust (a literal, e.g. — invalid input there is a bug and
 /// panics, or fails to compile if used in a `const`). For a genuinely
 /// dynamic value where you want a recoverable [`AddressError`] instead of a
-/// panic, build the whole [`GroupAddress`] via [`GroupAddress::try_new`]
+/// panic, build the whole [`RawGroupAddress`] via [`RawGroupAddress::try_new`]
 /// (which takes raw `u8`s) rather than constructing a `MainGroup` directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MainGroup(u8);
@@ -105,7 +105,7 @@ impl fmt::Display for MainGroup {
     }
 }
 
-/// The middle-group component of a [`GroupAddress`] (3 bits: 0-7). See
+/// The middle-group component of a [`RawGroupAddress`] (3 bits: 0-7). See
 /// [`MainGroup`] — same guarantee, same two ways to construct one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MiddleGroup(u8);
@@ -154,9 +154,9 @@ impl fmt::Display for MiddleGroup {
 /// - middle: 0-7 (3 bits)
 /// - sub: 0-255 (8 bits)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct GroupAddress(u16);
+pub struct RawGroupAddress(u16);
 
-impl GroupAddress {
+impl RawGroupAddress {
     /// Maximum valid main group value (4 bits)
     pub const MAX_MAIN: u8 = 15;
 
@@ -292,13 +292,13 @@ impl GroupAddress {
     }
 }
 
-impl fmt::Display for GroupAddress {
+impl fmt::Display for RawGroupAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}/{}", self.main(), self.middle(), self.sub())
     }
 }
 
-impl FromStr for GroupAddress {
+impl FromStr for RawGroupAddress {
     type Err = crate::error::KnxError;
 
     fn from_str(s: &str) -> Result<Self> {
@@ -342,7 +342,7 @@ impl FromStr for GroupAddress {
     }
 }
 
-impl TryFrom<u16> for GroupAddress {
+impl TryFrom<u16> for RawGroupAddress {
     type Error = AddressError;
 
     fn try_from(raw: u16) -> std::result::Result<Self, Self::Error> {
@@ -350,13 +350,13 @@ impl TryFrom<u16> for GroupAddress {
     }
 }
 
-impl From<GroupAddress> for u16 {
-    fn from(addr: GroupAddress) -> Self {
+impl From<RawGroupAddress> for u16 {
+    fn from(addr: RawGroupAddress) -> Self {
         addr.raw()
     }
 }
 
-impl TryFrom<(u8, u8, u8)> for GroupAddress {
+impl TryFrom<(u8, u8, u8)> for RawGroupAddress {
     type Error = AddressError;
 
     fn try_from((main, middle, sub): (u8, u8, u8)) -> std::result::Result<Self, Self::Error> {
@@ -364,8 +364,8 @@ impl TryFrom<(u8, u8, u8)> for GroupAddress {
     }
 }
 
-impl From<GroupAddress> for (u8, u8, u8) {
-    fn from(addr: GroupAddress) -> Self {
+impl From<RawGroupAddress> for (u8, u8, u8) {
+    fn from(addr: RawGroupAddress) -> Self {
         addr.parts()
     }
 }
@@ -634,9 +634,9 @@ mod tests {
     fn property_address_validation_completeness() {
         proptest!(|(
             // Generate valid group address components
-            main in 0u8..=GroupAddress::MAX_MAIN,
-            middle in 0u8..=GroupAddress::MAX_MIDDLE,
-            sub in 0u8..=GroupAddress::MAX_SUB,
+            main in 0u8..=RawGroupAddress::MAX_MAIN,
+            middle in 0u8..=RawGroupAddress::MAX_MIDDLE,
+            sub in 0u8..=RawGroupAddress::MAX_SUB,
 
             // Generate valid individual address components
             area in 0u8..=IndividualAddress::MAX_AREA,
@@ -644,20 +644,20 @@ mod tests {
             device in 0u8..=IndividualAddress::MAX_DEVICE,
 
             // Generate invalid components for testing validation
-            invalid_main in (GroupAddress::MAX_MAIN + 1)..=255u8,
-            invalid_middle in (GroupAddress::MAX_MIDDLE + 1)..=255u8,
+            invalid_main in (RawGroupAddress::MAX_MAIN + 1)..=255u8,
+            invalid_middle in (RawGroupAddress::MAX_MIDDLE + 1)..=255u8,
             invalid_area in (IndividualAddress::MAX_AREA + 1)..=255u8,
             invalid_line in (IndividualAddress::MAX_LINE + 1)..=255u8,
         )| {
-            // Test valid GroupAddress creation and parsing
-            let group_addr = GroupAddress::new(MainGroup::new(main), MiddleGroup::new(middle), sub);
+            // Test valid RawGroupAddress creation and parsing
+            let group_addr = RawGroupAddress::new(MainGroup::new(main), MiddleGroup::new(middle), sub);
             prop_assert_eq!(group_addr.main(), main);
             prop_assert_eq!(group_addr.middle(), middle);
             prop_assert_eq!(group_addr.sub(), sub);
 
-            // Test GroupAddress string round trip
+            // Test RawGroupAddress string round trip
             let group_str = group_addr.to_string();
-            let parsed_group = GroupAddress::from_str(&group_str)?;
+            let parsed_group = RawGroupAddress::from_str(&group_str)?;
             prop_assert_eq!(group_addr, parsed_group);
 
             // Test valid IndividualAddress creation and parsing
@@ -677,9 +677,9 @@ mod tests {
             prop_assert_eq!(group_enum.to_string(), group_str);
             prop_assert_eq!(individual_enum.to_string(), individual_str);
 
-            // Test invalid GroupAddress components are rejected
-            prop_assert!(GroupAddress::try_new(invalid_main, middle, sub).is_err());
-            prop_assert!(GroupAddress::try_new(main, invalid_middle, sub).is_err());
+            // Test invalid RawGroupAddress components are rejected
+            prop_assert!(RawGroupAddress::try_new(invalid_main, middle, sub).is_err());
+            prop_assert!(RawGroupAddress::try_new(main, invalid_middle, sub).is_err());
 
             // Test invalid IndividualAddress components are rejected
             prop_assert!(IndividualAddress::try_new(invalid_area, line, device).is_err());
@@ -694,7 +694,7 @@ mod tests {
 
             let group_raw: u16 = group_addr.into();
             let individual_raw: u16 = individual_addr.into();
-            prop_assert_eq!(GroupAddress::try_from(group_raw)?, group_addr);
+            prop_assert_eq!(RawGroupAddress::try_from(group_raw)?, group_addr);
             prop_assert_eq!(IndividualAddress::try_from(individual_raw)?, individual_addr);
         });
     }
@@ -702,37 +702,37 @@ mod tests {
     #[test]
     fn test_group_address_validation() {
         // Test valid group addresses
-        let addr = GroupAddress::new(MainGroup::new(15), MiddleGroup::new(7), 255);
+        let addr = RawGroupAddress::new(MainGroup::new(15), MiddleGroup::new(7), 255);
         assert_eq!(addr.main(), 15);
         assert_eq!(addr.middle(), 7);
         assert_eq!(addr.sub(), 255);
 
         // Test invalid main group (> 15)
-        let result = GroupAddress::try_new(16, 0, 0);
+        let result = RawGroupAddress::try_new(16, 0, 0);
         assert!(result.is_err());
         if let Err(e) = result {
             assert!(e.to_string().contains("main"));
         }
 
         // Test invalid middle group (> 7)
-        let result = GroupAddress::try_new(0, 8, 0);
+        let result = RawGroupAddress::try_new(0, 8, 0);
         assert!(result.is_err());
         if let Err(e) = result {
             assert!(e.to_string().contains("middle"));
         }
 
         // Test parsing valid string
-        let addr = GroupAddress::from_str("1/2/3").unwrap();
+        let addr = RawGroupAddress::from_str("1/2/3").unwrap();
         assert_eq!(addr.main(), 1);
         assert_eq!(addr.middle(), 2);
         assert_eq!(addr.sub(), 3);
 
         // Test parsing invalid strings
-        assert!(GroupAddress::from_str("1/2").is_err());
-        assert!(GroupAddress::from_str("1/2/3/4").is_err());
-        assert!(GroupAddress::from_str("16/0/0").is_err());
-        assert!(GroupAddress::from_str("0/8/0").is_err());
-        assert!(GroupAddress::from_str("a/b/c").is_err());
+        assert!(RawGroupAddress::from_str("1/2").is_err());
+        assert!(RawGroupAddress::from_str("1/2/3/4").is_err());
+        assert!(RawGroupAddress::from_str("16/0/0").is_err());
+        assert!(RawGroupAddress::from_str("0/8/0").is_err());
+        assert!(RawGroupAddress::from_str("a/b/c").is_err());
     }
 
     #[test]
@@ -773,7 +773,7 @@ mod tests {
 
     #[test]
     fn test_address_display() {
-        let group_addr = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let group_addr = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         assert_eq!(group_addr.to_string(), "1/2/3");
 
         let individual_addr = IndividualAddress::new(1, 2, 3);
@@ -788,12 +788,12 @@ mod tests {
 
     #[test]
     fn test_address_raw_values() {
-        // Test GroupAddress raw value calculation
-        let addr = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        // Test RawGroupAddress raw value calculation
+        let addr = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         let expected_raw = (1u16 << 11) | (2u16 << 8) | 3u16;
         assert_eq!(addr.raw(), expected_raw);
 
-        let addr_from_raw = GroupAddress::try_from_raw(expected_raw).unwrap();
+        let addr_from_raw = RawGroupAddress::try_from_raw(expected_raw).unwrap();
         assert_eq!(addr, addr_from_raw);
 
         // Test IndividualAddress raw value calculation
@@ -808,7 +808,7 @@ mod tests {
     #[test]
     fn test_broadcast_addresses() {
         // Test group broadcast
-        let group_broadcast = GroupAddress::broadcast();
+        let group_broadcast = RawGroupAddress::broadcast();
         assert!(group_broadcast.is_broadcast());
         assert_eq!(group_broadcast.parts(), (0, 0, 0));
 
@@ -820,9 +820,9 @@ mod tests {
 
     #[test]
     fn test_address_ordering() {
-        let addr1 = GroupAddress::from_parts(1, 0, 0).unwrap();
-        let addr2 = GroupAddress::from_parts(1, 0, 1).unwrap();
-        let addr3 = GroupAddress::from_parts(1, 1, 0).unwrap();
+        let addr1 = RawGroupAddress::from_parts(1, 0, 0).unwrap();
+        let addr2 = RawGroupAddress::from_parts(1, 0, 1).unwrap();
+        let addr3 = RawGroupAddress::from_parts(1, 1, 0).unwrap();
 
         assert!(addr1 < addr2);
         assert!(addr2 < addr3);
@@ -839,18 +839,18 @@ mod tests {
 
     #[test]
     fn test_conversion_traits() {
-        let group_addr = GroupAddress::new(MainGroup::new(5), MiddleGroup::new(3), 100);
+        let group_addr = RawGroupAddress::new(MainGroup::new(5), MiddleGroup::new(3), 100);
 
         // Test tuple conversion
         let tuple: (u8, u8, u8) = group_addr.into();
         assert_eq!(tuple, (5, 3, 100));
 
-        let from_tuple = GroupAddress::try_from(tuple).unwrap();
+        let from_tuple = RawGroupAddress::try_from(tuple).unwrap();
         assert_eq!(from_tuple, group_addr);
 
         // Test raw conversion
         let raw: u16 = group_addr.into();
-        let from_raw = GroupAddress::try_from(raw).unwrap();
+        let from_raw = RawGroupAddress::try_from(raw).unwrap();
         assert_eq!(from_raw, group_addr);
 
         let individual_addr = IndividualAddress::new(2, 5, 50);
@@ -895,17 +895,17 @@ mod tests {
     #[test]
     fn test_const_functions() {
         // Test const functions work at compile time
-        const GROUP_ADDR: GroupAddress =
-            GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        const GROUP_ADDR: RawGroupAddress =
+            RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         const INDIVIDUAL_ADDR: IndividualAddress = IndividualAddress::new(1, 2, 3);
         // Test const validation with try_new
-        const VALID_GROUP: std::result::Result<GroupAddress, AddressError> =
-            GroupAddress::try_new(1, 2, 3);
+        const VALID_GROUP: std::result::Result<RawGroupAddress, AddressError> =
+            RawGroupAddress::try_new(1, 2, 3);
         const VALID_INDIVIDUAL: std::result::Result<IndividualAddress, AddressError> =
             IndividualAddress::try_new(1, 2, 3);
         // Test const validation
-        const INVALID_GROUP: std::result::Result<GroupAddress, AddressError> =
-            GroupAddress::try_new(32, 0, 0);
+        const INVALID_GROUP: std::result::Result<RawGroupAddress, AddressError> =
+            RawGroupAddress::try_new(32, 0, 0);
         const INVALID_INDIVIDUAL: std::result::Result<IndividualAddress, AddressError> =
             IndividualAddress::try_new(16, 0, 0);
 

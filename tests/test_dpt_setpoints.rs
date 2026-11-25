@@ -4,7 +4,7 @@ use knust::protocol::dpt::{
     DPTRoomTemperatureSetpoints3, DPTRoomTemperatureSetpoints4, DptPayload, DptRegistry, DptType,
     DptValue, RoomTemperatureSetpoints3, RoomTemperatureSetpoints4,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn optional_temperature_fields_and_subtype_bounds() {
@@ -92,7 +92,7 @@ fn optional_temperature_fields_and_subtype_bounds() {
             assert_eq!(field == [0x7f, 0xff], fields[bit].is_none());
         }
     }
-    let address = GroupAddress::try_from_raw(1).unwrap();
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
     let telegram = Telegram::group_write_value::<DPTRoomTemperatureSetpoints4>(address, b).unwrap();
     assert_eq!(
         telegram.payload,

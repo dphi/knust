@@ -3,11 +3,11 @@ use knust::protocol::dpt::{
     DPTPartsPerMillion, DPTTemperature, DPTTemperatureDifference2Byte, DptPayload, DptType,
     DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn subtype_ranges_and_failed_writes_are_never_silently_zeroed() {
-    let address = GroupAddress::try_from_raw(1).unwrap();
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
     for value in [f32::NAN, f32::INFINITY, -300.0] {
         assert!(DPTTemperature::new(value).is_err());
         assert!(Telegram::group_write_value::<DPTTemperature>(address, value).is_err());

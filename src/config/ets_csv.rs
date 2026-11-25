@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::error::{ConfigurationError, Result};
-use crate::protocol::address::GroupAddress;
+use crate::protocol::address::RawGroupAddress;
 use crate::protocol::dpt::DptType;
 
 use crate::log_config;
@@ -33,7 +33,7 @@ pub struct GroupAddressConfig {
 /// Returns [`ConfigurationError::ParseError`] if `data` is empty or its
 /// header row has no recognizable Address column. Rows with an unparseable
 /// address or DPT are skipped rather than treated as an error.
-pub fn parse_ets_csv(data: &str) -> Result<HashMap<GroupAddress, GroupAddressConfig>> {
+pub fn parse_ets_csv(data: &str) -> Result<HashMap<RawGroupAddress, GroupAddressConfig>> {
     let data = data.strip_prefix('\u{FEFF}').unwrap_or(data);
     let mut lines = data.lines();
 
@@ -135,13 +135,13 @@ fn find_column(columns: &[&str], names: &[&str]) -> Option<usize> {
     None
 }
 
-fn parse_group_address(s: &str) -> Option<GroupAddress> {
+fn parse_group_address(s: &str) -> Option<RawGroupAddress> {
     let parts: Vec<&str> = s.split('/').collect();
     if parts.len() == 3 {
         let main: u8 = parts[0].parse().ok()?;
         let middle: u8 = parts[1].parse().ok()?;
         let sub: u8 = parts[2].parse().ok()?;
-        GroupAddress::from_parts(main, middle, sub).ok()
+        RawGroupAddress::from_parts(main, middle, sub).ok()
     } else {
         None
     }
@@ -183,7 +183,7 @@ mod tests {
         let map = parse_ets_csv(csv).unwrap();
         assert_eq!(map.len(), 2);
         let temp = map
-            .get(&GroupAddress::from_parts(1, 2, 3).unwrap())
+            .get(&RawGroupAddress::from_parts(1, 2, 3).unwrap())
             .unwrap();
         assert_eq!(temp.dpt, DptType::Temperature);
         assert_eq!(temp.name, "Living Room Temp");
@@ -195,7 +195,7 @@ mod tests {
                    \"Living Room Temp\";\"1/2/3\";\"Temperature sensor\";\"DPST-9-1\"\n";
         let map = parse_ets_csv(csv).unwrap();
         let temp = map
-            .get(&GroupAddress::from_parts(1, 2, 3).unwrap())
+            .get(&RawGroupAddress::from_parts(1, 2, 3).unwrap())
             .unwrap();
         assert_eq!(temp.description.as_deref(), Some("Temperature sensor"));
     }

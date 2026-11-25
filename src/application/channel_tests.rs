@@ -65,7 +65,7 @@ async fn assert_no_reply(peer: &UdpSocket) {
 #[tokio::test]
 async fn tunnel_send_waits_for_cemi_confirmation_and_consumes_it() {
     use crate::protocol::cemi::{CemiFrame, MessageCode};
-    use crate::protocol::{GroupAddress, MainGroup, MiddleGroup, Telegram};
+    use crate::protocol::{MainGroup, MiddleGroup, RawGroupAddress, Telegram};
 
     let (connection, peer) = connected_tunnel().await;
     let destination = connection
@@ -83,7 +83,7 @@ async fn tunnel_send_waits_for_cemi_confirmation_and_consumes_it() {
     knx.start_telegram_receiving_task().await.unwrap();
     *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
 
-    let address = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+    let address = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
     for value in 1..=3 {
         knx.send_telegram(&Telegram::group_write(address, vec![value]))
             .await
@@ -169,7 +169,7 @@ async fn tunnel_send_waits_for_cemi_confirmation_and_consumes_it() {
 async fn foreign_requests_do_not_ack_advance_sequence_or_deliver() {
     use crate::protocol::{
         CemiFrame, GroupValueService,
-        address::{Address, GroupAddress, IndividualAddress},
+        address::{Address, IndividualAddress, RawGroupAddress},
         cemi::MessageCode,
     };
     let (connection, peer) = connected_tunnel().await;
@@ -179,7 +179,7 @@ async fn foreign_requests_do_not_ack_advance_sequence_or_deliver() {
     let cemi = CemiFrame::new(
         MessageCode::LDataInd,
         IndividualAddress::new(1, 1, 1),
-        Address::Group(GroupAddress::try_from_raw(1).unwrap()),
+        Address::Group(RawGroupAddress::try_from_raw(1).unwrap()),
         GroupValueService::Write(vec![1]).encode(),
     )
     .serialize()
@@ -441,7 +441,7 @@ async fn udp_retry_reuses_identical_sequence_and_cancellation_releases_sender() 
 async fn read_response_can_arrive_before_tunnelling_ack() {
     use crate::protocol::{
         CemiFrame, GroupValueService, TelegramType,
-        address::{Address, GroupAddress, IndividualAddress},
+        address::{Address, IndividualAddress, RawGroupAddress},
         cemi::MessageCode,
     };
     let (connection, peer) = connected_tunnel().await;
@@ -459,7 +459,7 @@ async fn read_response_can_arrive_before_tunnelling_ack() {
     knx.connection.send_replace(Some(connection.clone()));
     knx.start_telegram_receiving_task().await.unwrap();
     *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
-    let address = GroupAddress::try_from_raw(1).unwrap();
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
     let reading = tokio::spawn({
         let knx = knx.clone();
         async move {
@@ -531,7 +531,7 @@ async fn shutdown_keeps_receiver_alive_until_queued_send_is_acknowledged() {
     knx.start_telegram_receiving_task().await.unwrap();
     *knx.sending_task.write().await = Some(knx.start_telegram_sending_task());
     knx.send_telegram(&Telegram::group_write(
-        GroupAddress::try_from_raw(1).unwrap(),
+        RawGroupAddress::try_from_raw(1).unwrap(),
         vec![1],
     ))
     .await

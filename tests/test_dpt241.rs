@@ -1,6 +1,6 @@
 #![cfg(feature = "dpt")]
 use knust::protocol::dpt::{DPTStatusSAB, DptPayload, DptRegistry, DptType, DptValue};
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn shutter_status_bits_and_position_validity_round_trip() {
@@ -46,9 +46,12 @@ fn shutter_status_bits_and_position_validity_round_trip() {
     assert!(registry.decode("241.800", &raw).is_ok());
     let value = DPTStatusSAB::decode(&raw).unwrap().value();
     assert_eq!(
-        Telegram::group_write_value::<DPTStatusSAB>(GroupAddress::try_from_raw(1).unwrap(), value)
-            .unwrap()
-            .payload,
+        Telegram::group_write_value::<DPTStatusSAB>(
+            RawGroupAddress::try_from_raw(1).unwrap(),
+            value
+        )
+        .unwrap()
+        .payload,
         raw
     );
     assert!(DPTStatusSAB::decode(&[0; 3]).is_err());

@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     DPTMBusAddress, DptPayload, DptRegistry, DptType, DptValue, MBusAddress,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn mbus_address_fields_round_trip_and_preserve_unknown_media() {
@@ -31,7 +31,7 @@ fn mbus_address_fields_round_trip_and_preserve_unknown_media() {
         assert_eq!(DptType::MBusAddress.parse(&value.to_string()).unwrap(), raw);
         assert!(registry.decode("230.1000", &raw).is_ok());
         let telegram = Telegram::group_write_value::<DPTMBusAddress>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value,
         )
         .unwrap();

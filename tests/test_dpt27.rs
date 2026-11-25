@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     CombinedInfoOnOff, DPTCombinedInfoOnOff, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn output_masks_and_states_round_trip() {
@@ -48,7 +48,7 @@ fn output_masks_and_states_round_trip() {
             );
             assert!(registry.decode("27.001", typed.as_bytes()).is_ok());
             let telegram = Telegram::group_write_value::<DPTCombinedInfoOnOff>(
-                GroupAddress::try_from_raw(1).unwrap(),
+                RawGroupAddress::try_from_raw(1).unwrap(),
                 value,
             )
             .unwrap();

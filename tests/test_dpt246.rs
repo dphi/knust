@@ -3,7 +3,7 @@ use knust::protocol::dpt::{
     BatteryInfo, DPTBatteryInfo, DptPayload, DptRegistry, DptType, DptValue, DptView,
     dpt246::BatteryInfoView,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn battery_info_view_borrows_the_input() {
@@ -56,7 +56,7 @@ fn battery_info_decodes_unknown_levels_and_reserved_flags() {
     };
     assert_eq!(
         Telegram::group_write_value::<DPTBatteryInfo>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

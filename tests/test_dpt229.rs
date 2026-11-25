@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     DPTMeteringValue, DptPayload, DptRegistry, DptType, DptValue, MeteringValue, MeteringValueUnit,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn metering_values_validate_unit_codes_and_status_flags() {
@@ -59,7 +59,7 @@ fn metering_values_validate_unit_codes_and_status_flags() {
     );
     assert_eq!(
         Telegram::group_write_value::<DPTMeteringValue>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

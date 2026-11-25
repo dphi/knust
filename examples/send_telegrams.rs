@@ -13,7 +13,7 @@
 use std::time::Duration;
 use tokio::time::sleep;
 
-use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::address::{IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
 use knust::protocol::dpt::{DPTScaling, DPTSwitch};
 use knust::protocol::telegram::Telegram;
 use knust::{ConnectionConfig, ConnectionType, Knx};
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Register once; `write` is then checked against DPT 1.001 (Switch) —
     // passing e.g. a percentage here wouldn't compile.
-    let switch = knx.group_address::<DPTSwitch>(GroupAddress::new(
+    let switch = knx.group_address::<DPTSwitch>(RawGroupAddress::new(
         MainGroup::new(1),
         MiddleGroup::new(2),
         3,
@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Same story for DPT 5.001 (Scaling) — `write` also accepts a parsed
     // string (`switch.write("on")`) for config/CLI-driven callers.
-    let brightness = knx.group_address::<DPTScaling>(GroupAddress::new(
+    let brightness = knx.group_address::<DPTScaling>(RawGroupAddress::new(
         MainGroup::new(1),
         MiddleGroup::new(2),
         4,
@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // exactly like `switch.write(true)` above, but builds the `Telegram`
     // directly — no `Knx::group_address` call needed first.
     let raw_typed_telegram = Telegram::group_write_value::<DPTSwitch>(
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3),
+        RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3),
         true,
     )?;
 
@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `source`: `send_telegram` stamps it with this bus's own configured
     // individual address before sending.
     let raw_telegram = Telegram::group_write(
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3),
+        RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3),
         vec![0x01],
     );
 

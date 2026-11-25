@@ -3,7 +3,7 @@
 //! This example demonstrates various ways to configure Knx for different
 //! use cases, including connection types, device setup, and advanced options.
 
-use knust::protocol::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::{IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
 use knust::transport::{BackoffConfig, SecurityConfig, TcpConfig};
 use knust::{Component, ConnectionConfig, ConnectionType, Knx, LogLevel, LoggingConfig};
 
@@ -175,33 +175,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("💡 Living Room Main Light:");
     println!(
         "   Switch: {}",
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1)
+        RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 1)
     );
     println!(
         "   Brightness: {}",
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 2)
+        RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 2)
     );
     println!(
         "   Color: {}",
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3)
+        RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3)
     );
 
     println!("💡 Hallway Light (switch only):");
     println!(
         "   Switch: {}",
-        GroupAddress::new(MainGroup::new(1), MiddleGroup::new(3), 1)
+        RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(3), 1)
     );
 
     println!("🌡️  Living Room Temperature (DPT 9.001):");
     println!(
         "   Address: {}",
-        GroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1)
+        RawGroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1)
     );
 
     println!("💧 Living Room Humidity (DPT 9.007):");
     println!(
         "   Address: {}",
-        GroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 2)
+        RawGroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 2)
     );
 
     // Example 6: Logging Configuration

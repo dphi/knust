@@ -1,6 +1,6 @@
 #![cfg(feature = "dpt")]
 use knust::protocol::dpt::{AccessData, DPTAccessData, DptPayload, DptRegistry, DptType, DptValue};
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn access_data_encodes_decimal_digits_and_validates() {
@@ -55,7 +55,7 @@ fn access_data_encodes_decimal_digits_and_validates() {
     );
     assert!(
         Telegram::group_write_value::<DPTAccessData>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             AccessData { index: 16, ..value }
         )
         .is_err()

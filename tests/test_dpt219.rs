@@ -1,6 +1,6 @@
 #![cfg(feature = "dpt")]
 use knust::protocol::dpt::{AlarmInfo, DPTAlarmInfo, DptPayload, DptRegistry, DptType, DptValue};
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn alarm_info_checks_priority_area_and_ignores_reserved_bits() {
@@ -57,9 +57,12 @@ fn alarm_info_checks_priority_area_and_ignores_reserved_bits() {
         [1, 3, 10, 255, 1, 5]
     );
     assert_eq!(
-        Telegram::group_write_value::<DPTAlarmInfo>(GroupAddress::try_from_raw(1).unwrap(), value)
-            .unwrap()
-            .payload,
+        Telegram::group_write_value::<DPTAlarmInfo>(
+            RawGroupAddress::try_from_raw(1).unwrap(),
+            value
+        )
+        .unwrap()
+        .payload,
         [1, 3, 10, 255, 1, 5]
     );
     assert!(reg.decode("219.001", &[1, 3, 10, 255, 1, 5]).is_ok());

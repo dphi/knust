@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::{Result, SecurityError};
-use crate::protocol::address::{GroupAddress, IndividualAddress};
+use crate::protocol::address::{IndividualAddress, RawGroupAddress};
 
 /// A security key with automatic zeroization on drop.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
@@ -111,7 +111,7 @@ impl SecurityCredentials {
 #[derive(Debug, Default)]
 pub struct KeyRing {
     /// Group address to key mapping for Data Secure
-    group_keys: HashMap<GroupAddress, SecurityKey>,
+    group_keys: HashMap<RawGroupAddress, SecurityKey>,
     /// Individual address to last sequence number mapping
     sequence_numbers: HashMap<IndividualAddress, u64>,
     /// Tunnel credentials by host address
@@ -126,24 +126,24 @@ impl KeyRing {
     }
 
     /// Add a group key for Data Secure communication.
-    pub fn add_group_key(&mut self, address: GroupAddress, key: SecurityKey) {
+    pub fn add_group_key(&mut self, address: RawGroupAddress, key: SecurityKey) {
         self.group_keys.insert(address, key);
     }
 
     /// Get the key for a group address.
     #[must_use]
-    pub fn get_group_key(&self, address: &GroupAddress) -> Option<&SecurityKey> {
+    pub fn get_group_key(&self, address: &RawGroupAddress) -> Option<&SecurityKey> {
         self.group_keys.get(address)
     }
 
     /// Check if a group address has a key (is secured).
     #[must_use]
-    pub fn is_group_secured(&self, address: &GroupAddress) -> bool {
+    pub fn is_group_secured(&self, address: &RawGroupAddress) -> bool {
         self.group_keys.contains_key(address)
     }
 
     /// Get all secured group addresses.
-    pub fn secured_groups(&self) -> impl Iterator<Item = &GroupAddress> {
+    pub fn secured_groups(&self) -> impl Iterator<Item = &RawGroupAddress> {
         self.group_keys.keys()
     }
 

@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     DPTDoubleNibble, DoubleNibble, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn repetitions_validate_all_octets_and_round_trip() {
@@ -44,7 +44,7 @@ fn repetitions_validate_all_octets_and_round_trip() {
             );
             assert!(registry.decode("25.1000", &raw).is_ok());
             let telegram = Telegram::group_write_value::<DPTDoubleNibble>(
-                GroupAddress::try_from_raw(1).unwrap(),
+                RawGroupAddress::try_from_raw(1).unwrap(),
                 value,
             )
             .unwrap();

@@ -48,7 +48,7 @@ pub enum ValidationCategory {
     /// Security key issues
     Security,
     /// Group address issues
-    GroupAddress,
+    RawGroupAddress,
 }
 
 /// Configuration validator.
@@ -136,7 +136,7 @@ impl ConfigValidator {
         for ga in &keyring.group_addresses {
             if !group_addresses.insert(ga.address) {
                 result.warnings.push(ValidationWarning {
-                    category: ValidationCategory::GroupAddress,
+                    category: ValidationCategory::RawGroupAddress,
                     message: format!("Duplicate group address {}", ga.address),
                     context: ga.description.clone(),
                 });

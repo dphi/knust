@@ -331,7 +331,7 @@ pub async fn auto_select_address(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::address::{Address, GroupAddress};
+    use crate::protocol::address::{Address, RawGroupAddress};
     use crate::protocol::cemi::MessageCode;
 
     fn src() -> IndividualAddress {
@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn address_probe_classify_group_value_is_other() {
         // An unrelated group-value write (TPCI 0x00) must not be occupied.
-        let group = Address::Group(GroupAddress::try_from_raw(0x0801).unwrap());
+        let group = Address::Group(RawGroupAddress::try_from_raw(0x0801).unwrap());
         let frame = CemiFrame::new(MessageCode::LDataInd, src(), group, vec![0x00, 0x81]);
         assert_eq!(frame.tpci, 0x00);
         assert_eq!(classify_cemi(&frame), ProbeSignal::Other);

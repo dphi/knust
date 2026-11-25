@@ -513,7 +513,7 @@ mod health_tests {
     async fn routing_send_preserves_frames_and_wraps_cemi_only_once() {
         use crate::protocol::{
             CemiFrame, GroupValueService,
-            address::{Address, GroupAddress, IndividualAddress},
+            address::{Address, IndividualAddress, RawGroupAddress},
             cemi::MessageCode,
         };
         let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -521,7 +521,7 @@ mod health_tests {
         let cemi = CemiFrame::new(
             MessageCode::LDataReq,
             IndividualAddress::new(1, 1, 1),
-            Address::Group(GroupAddress::try_from_raw(1).unwrap()),
+            Address::Group(RawGroupAddress::try_from_raw(1).unwrap()),
             GroupValueService::Write(vec![1]).encode(),
         )
         .serialize()

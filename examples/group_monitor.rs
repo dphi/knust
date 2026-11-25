@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use knust::application::callbacks::{TelegramCallbackFn, TelegramFilter};
-use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::address::{IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
 use knust::protocol::dpt::{DPTOccupancy, DPTSwitch, DPTTemperature};
 use knust::protocol::telegram::{Telegram, TelegramType};
 use knust::{ConnectionConfig, ConnectionType, Knx};
@@ -20,7 +20,7 @@ use knust::{ConnectionConfig, ConnectionType, Knx};
 /// `address` — pairs with polling `Knx::group_address_state` for a push
 /// notification instead of pulling on a schedule.
 struct ValueLogger {
-    address: GroupAddress,
+    address: RawGroupAddress,
 }
 
 #[async_trait::async_trait]
@@ -51,17 +51,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     knx.connect().await?;
 
     // Register the addresses we care about, each with its DPT.
-    let temperature = knx.group_address::<DPTTemperature>(GroupAddress::new(
+    let temperature = knx.group_address::<DPTTemperature>(RawGroupAddress::new(
         MainGroup::new(2),
         MiddleGroup::new(1),
         1,
     ))?;
-    let motion = knx.group_address::<DPTOccupancy>(GroupAddress::new(
+    let motion = knx.group_address::<DPTOccupancy>(RawGroupAddress::new(
         MainGroup::new(3),
         MiddleGroup::new(0),
         5,
     ))?;
-    knx.group_address::<DPTSwitch>(GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3))?;
+    knx.group_address::<DPTSwitch>(RawGroupAddress::new(
+        MainGroup::new(1),
+        MiddleGroup::new(2),
+        3,
+    ))?;
 
     // If no real value shows up for the temperature sensor within 5
     // minutes, the background refresh task sends it a GroupValueRead.

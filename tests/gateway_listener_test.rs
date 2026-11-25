@@ -304,7 +304,7 @@ async fn test_gateway_packet_listener_mock() -> Result<(), Box<dyn std::error::E
     // Create a mock telegram to test the callback
     let mock_telegram = Telegram::received(
         IndividualAddress::new(1, 1, 1),
-        knust::protocol::GroupAddress::new(
+        knust::protocol::RawGroupAddress::new(
             knust::protocol::MainGroup::new(1),
             knust::protocol::MiddleGroup::new(1),
             1,

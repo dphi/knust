@@ -1,11 +1,12 @@
 #![cfg(feature = "dpt")]
+use knust::IndividualAddress;
+use knust::protocol::RawGroupAddress;
 use knust::protocol::dpt::DptType;
-use knust::{GroupAddress, IndividualAddress};
 
 #[test]
 fn address_and_dpt_parsers_reject_non_ascii_digits_and_trailing_newlines() {
-    assert!("²/2/3".parse::<GroupAddress>().is_err());
-    assert!("1/2/3\n".parse::<GroupAddress>().is_err());
+    assert!("²/2/3".parse::<RawGroupAddress>().is_err());
+    assert!("1/2/3\n".parse::<RawGroupAddress>().is_err());
     assert!("1.².3".parse::<IndividualAddress>().is_err());
     assert!("1.2.3\n".parse::<IndividualAddress>().is_err());
     assert!("9.001\n".parse::<DptType>().is_err());

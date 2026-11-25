@@ -3,7 +3,7 @@
 use knust::protocol::dpt::{
     DPTChangeoverMode, DPTEnableHCStage, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn modes_validate_and_round_trip_all_wire_values() {
@@ -41,7 +41,7 @@ fn modes_validate_and_round_trip_all_wire_values() {
         }
         assert!(dpt.decode_ref(&[]).is_err());
     }
-    let address = GroupAddress::try_from_raw(1).unwrap();
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
     assert_eq!(
         Telegram::group_write_value::<DPTChangeoverMode>(address, 2u8)
             .unwrap()

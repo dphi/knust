@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     ConverterInfo, DPTConverterInfo, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn converter_info_validates_enums_addresses_and_unknown_levels() {
@@ -53,7 +53,7 @@ fn converter_info_validates_enums_addresses_and_unknown_levels() {
     assert_eq!(DPTConverterInfo::new(value).unwrap().as_bytes(), raw);
     assert_eq!(
         Telegram::group_write_value::<DPTConverterInfo>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

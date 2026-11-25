@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use knust::application::callbacks::{TelegramCallbackFn, TelegramFilter};
-use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::address::{IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
 use knust::protocol::dpt::DPTTemperature;
 use knust::protocol::telegram::{Telegram, TelegramType};
 use knust::{ConnectionConfig, ConnectionType, Knx};
@@ -23,7 +23,7 @@ use knust::{ConnectionConfig, ConnectionType, Knx};
 /// Answers every `GroupValueRead` for `address` with whatever `current`
 /// holds at the time.
 struct Responder {
-    address: GroupAddress,
+    address: RawGroupAddress,
     knx: Knx,
     current: Arc<RwLock<f32>>,
 }
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     knx.connect().await?;
     knx.start().await?;
 
-    let address = GroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1);
+    let address = RawGroupAddress::new(MainGroup::new(2), MiddleGroup::new(1), 1);
     // Shared with the registered callback — a real sensor driver would
     // write to this on every new reading.
     let current = Arc::new(RwLock::new(21.5));

@@ -383,7 +383,7 @@ mod unit_tests {
     #[cfg(feature = "dpt")]
     #[tokio::test]
     async fn test_group_address_typed_write_and_decode() {
-        use crate::protocol::address::{GroupAddress, MainGroup, MiddleGroup};
+        use crate::protocol::address::{MainGroup, MiddleGroup, RawGroupAddress};
         use crate::protocol::dpt::{DPTScaling, DPTSwitch, DptType};
         use crate::protocol::telegram::Telegram;
 
@@ -401,7 +401,7 @@ mod unit_tests {
         };
         let knx = Knx::new(config).await.unwrap();
 
-        let ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
         let switch = knx.group_address::<DPTSwitch>(ga).unwrap();
         assert_eq!(knx.group_address_dpt(ga), Some(DptType::Switch));
         assert_eq!(switch.dpt(), DptType::Switch);
@@ -438,7 +438,7 @@ mod unit_tests {
         );
 
         // An unregistered address has no binding.
-        let other = GroupAddress::new(MainGroup::new(4), MiddleGroup::new(5), 6);
+        let other = RawGroupAddress::new(MainGroup::new(4), MiddleGroup::new(5), 6);
         assert!(knx.group_address_dpt(other).is_none());
         let unbound = Telegram::group_write(other, vec![0x01]);
         assert!(knx.decode_group_value(&unbound).is_none());
@@ -447,7 +447,7 @@ mod unit_tests {
     #[cfg(feature = "dpt")]
     #[tokio::test]
     async fn test_group_address_inspect_and_unregister() {
-        use crate::protocol::address::{GroupAddress, MainGroup, MiddleGroup};
+        use crate::protocol::address::{MainGroup, MiddleGroup, RawGroupAddress};
         use crate::protocol::dpt::{DPTScaling, DPTSwitch, DptType};
         use crate::protocol::telegram::Telegram;
 
@@ -465,8 +465,8 @@ mod unit_tests {
         };
         let knx = Knx::new(config).await.unwrap();
 
-        let switch_ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
-        let scaling_ga = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 4);
+        let switch_ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 3);
+        let scaling_ga = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(2), 4);
         let switch = knx.group_address::<DPTSwitch>(switch_ga).unwrap();
         knx.group_address::<DPTScaling>(scaling_ga).unwrap();
 
@@ -514,7 +514,7 @@ mod unit_tests {
     #[tokio::test]
     async fn test_register_group_addresses_from_ets() {
         use crate::config::parse_ets_csv;
-        use crate::protocol::address::GroupAddress;
+        use crate::protocol::address::RawGroupAddress;
         use crate::protocol::dpt::DptType;
 
         let config = ConnectionConfig {
@@ -539,11 +539,11 @@ mod unit_tests {
         knx.register_group_addresses_from_ets(&parsed).unwrap();
 
         assert_eq!(
-            knx.group_address_dpt(GroupAddress::from_parts(1, 2, 3).unwrap()),
+            knx.group_address_dpt(RawGroupAddress::from_parts(1, 2, 3).unwrap()),
             Some(DptType::Temperature)
         );
         assert_eq!(
-            knx.group_address_dpt(GroupAddress::from_parts(1, 2, 4).unwrap()),
+            knx.group_address_dpt(RawGroupAddress::from_parts(1, 2, 4).unwrap()),
             Some(DptType::Switch)
         );
         assert_eq!(knx.registered_group_addresses().len(), 2);

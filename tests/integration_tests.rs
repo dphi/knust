@@ -7,7 +7,7 @@
 //! `send_telegram`/`read_group_value`.
 
 use knust::protocol::telegram::Telegram;
-use knust::protocol::{GroupAddress, IndividualAddress};
+use knust::protocol::{IndividualAddress, RawGroupAddress};
 #[cfg(feature = "secure")]
 use knust::security::SessionConfig;
 #[cfg(feature = "secure")]
@@ -19,7 +19,7 @@ use tokio::time::timeout;
 
 /// `Knx::send_telegram` fills in `source` itself, so callers only need to
 /// say where a write is going and what it carries.
-fn write_telegram(destination: GroupAddress, payload: Vec<u8>) -> Telegram {
+fn write_telegram(destination: RawGroupAddress, payload: Vec<u8>) -> Telegram {
     Telegram::group_write(destination, payload)
 }
 
@@ -45,7 +45,7 @@ async fn test_end_to_end_group_communication() -> Result<(), KnxError> {
     let result = timeout(
         Duration::from_secs(5),
         knx.send_telegram(&write_telegram(
-            GroupAddress::from_parts(1, 2, 1)?,
+            RawGroupAddress::from_parts(1, 2, 1)?,
             vec![0x01],
         )),
     )
@@ -60,7 +60,7 @@ async fn test_end_to_end_group_communication() -> Result<(), KnxError> {
     let result = timeout(
         Duration::from_secs(5),
         knx.send_telegram(&write_telegram(
-            GroupAddress::from_parts(1, 2, 2)?,
+            RawGroupAddress::from_parts(1, 2, 2)?,
             vec![128],
         )),
     )
@@ -77,7 +77,7 @@ async fn test_end_to_end_group_communication() -> Result<(), KnxError> {
     let result = timeout(
         Duration::from_secs(5),
         knx.send_telegram(&write_telegram(
-            GroupAddress::from_parts(1, 3, 1)?,
+            RawGroupAddress::from_parts(1, 3, 1)?,
             vec![0x01],
         )),
     )
@@ -90,7 +90,10 @@ async fn test_end_to_end_group_communication() -> Result<(), KnxError> {
 
     // 4. Read a sensor value
     let result = knx
-        .read_group_value(GroupAddress::from_parts(2, 1, 1)?, Duration::from_secs(5))
+        .read_group_value(
+            RawGroupAddress::from_parts(2, 1, 1)?,
+            Duration::from_secs(5),
+        )
         .await;
     match result {
         Ok(_) => println!("✓ Temperature sensor read successfully"),
@@ -116,9 +119,9 @@ async fn test_multi_target_coordination() -> Result<(), KnxError> {
     let knx = Knx::new(config).await?;
 
     let addresses = vec![
-        GroupAddress::from_parts(1, 1, 1)?,
-        GroupAddress::from_parts(1, 1, 2)?,
-        GroupAddress::from_parts(1, 1, 3)?,
+        RawGroupAddress::from_parts(1, 1, 1)?,
+        RawGroupAddress::from_parts(1, 1, 2)?,
+        RawGroupAddress::from_parts(1, 1, 3)?,
     ];
 
     // Coordinated control - switch all three group addresses on simultaneously
@@ -213,7 +216,7 @@ async fn test_secure_communication_workflow() -> Result<(), KnxError> {
 
     // Create Knx instance with security
     let knx = Knx::new(config).await?;
-    let secure_addr = GroupAddress::from_parts(1, 5, 1)?;
+    let secure_addr = RawGroupAddress::from_parts(1, 5, 1)?;
 
     // Test secure operations
     let result = timeout(Duration::from_secs(10), async {
@@ -278,7 +281,7 @@ async fn test_error_handling_and_recovery() -> Result<(), KnxError> {
         ..Default::default()
     };
     let knx = Knx::new(config).await?;
-    let addr = GroupAddress::from_parts(1, 1, 1)?;
+    let addr = RawGroupAddress::from_parts(1, 1, 1)?;
 
     let result = timeout(
         Duration::from_secs(2),
@@ -299,11 +302,11 @@ async fn test_error_handling_and_recovery() -> Result<(), KnxError> {
 #[tokio::test]
 async fn test_configuration_validation() {
     // Test invalid group address
-    let result = GroupAddress::from_parts(32, 8, 255); // Invalid values (max values)
+    let result = RawGroupAddress::from_parts(32, 8, 255); // Invalid values (max values)
     assert!(result.is_err(), "Should reject invalid group address");
 
     // Test valid group address
-    let result = GroupAddress::from_parts(1, 2, 3);
+    let result = RawGroupAddress::from_parts(1, 2, 3);
     assert!(result.is_ok(), "Should accept valid group address");
 
     // Test connection config validation
@@ -343,7 +346,7 @@ async fn test_resource_cleanup() -> Result<(), KnxError> {
     // Create and destroy multiple Knx instances
     for i in 0u8..5 {
         let knx = Knx::new(config.clone()).await?;
-        let addr = GroupAddress::from_parts(1, 1, i + 1)?;
+        let addr = RawGroupAddress::from_parts(1, 1, i + 1)?;
 
         // Simulate some operations
         let _ = timeout(

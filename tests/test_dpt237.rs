@@ -3,7 +3,7 @@ use knust::protocol::dpt::{
     DALIControlGearDiagnostic, DPTDALIControlGearDiagnostic, DptPayload, DptRegistry, DptType,
     DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn dali_gear_validates_group_addresses_and_ignores_reserved_bits() {
@@ -59,7 +59,7 @@ fn dali_gear_validates_group_addresses_and_ignores_reserved_bits() {
     assert!(DPTDALIControlGearDiagnostic::new(invalid).is_err());
     assert!(
         Telegram::group_write_value::<DPTDALIControlGearDiagnostic>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             invalid
         )
         .is_err()

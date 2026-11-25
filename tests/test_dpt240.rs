@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     CombinedPosition, DPTCombinedPosition, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn blind_positions_use_independent_validity_bits() {
@@ -64,7 +64,7 @@ fn blind_positions_use_independent_validity_bits() {
     assert!(DPTCombinedPosition::new(invalid).is_err());
     assert!(
         Telegram::group_write_value::<DPTCombinedPosition>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             invalid
         )
         .is_err()

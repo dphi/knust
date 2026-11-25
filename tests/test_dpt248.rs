@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     ConverterInfoFix, DPTConverterInfoFix, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn fixed_converter_info_validity_levels_and_feature_bits() {
@@ -45,7 +45,7 @@ fn fixed_converter_info_validity_levels_and_feature_bits() {
     assert!(value.integral_emergency_control_gear && value.relight_in_rest_mode_supported);
     assert_eq!(
         Telegram::group_write_value::<DPTConverterInfoFix>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value
         )
         .unwrap()

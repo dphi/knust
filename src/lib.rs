@@ -80,7 +80,7 @@ pub mod test_config;
 
 // Re-export commonly used types
 #[cfg(feature = "dpt")]
-pub use application::TypedGroupAddress;
+pub use application::GroupAddress;
 pub use application::{
     Knx, KnxBuilder, KnxState, P2pConnection, P2pConnectionless, ScannedInterfaceObject,
 };
@@ -90,7 +90,7 @@ pub use config::{ConfigFormat, Configuration};
 pub use error::{KnxError, Result};
 pub use logging::{Component, LogLevel, LoggingConfig, Timer};
 pub use memory::{ConnectionPool, MemoryError, MemoryMonitor, MemoryStats, PerformanceOptimizer};
-pub use protocol::{GroupAddress, IndividualAddress};
+pub use protocol::IndividualAddress;
 #[cfg(feature = "secure")]
 pub use security::{KeyRing, SecureSession, SecureSessionState, SecurityKey, SessionConfig};
 pub use transport::{ConnectionConfig, ConnectionType};

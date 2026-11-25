@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     ChannelActivation24, DPTChannelActivation24, DptPayload, DptRegistry, DptType, DptValue,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn all_channel_bits_use_knx_wire_order() {
@@ -44,7 +44,7 @@ fn all_channel_bits_use_knx_wire_order() {
         );
         assert!(registry.decode("30.1010", typed.as_bytes()).is_ok());
         let telegram = Telegram::group_write_value::<DPTChannelActivation24>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value,
         )
         .unwrap();

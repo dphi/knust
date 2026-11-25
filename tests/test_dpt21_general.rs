@@ -3,7 +3,7 @@ use knust::protocol::dpt::{
     DPTDeviceControl, DPTStatusGen, DeviceControl, DptPayload, DptRegistry, DptType, DptValue,
     GeneralStatus,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn general_and_device_status_preserve_known_bits() {
@@ -33,9 +33,12 @@ fn general_and_device_status_preserve_known_bits() {
     assert_eq!(DPTStatusGen::new(status).as_bytes(), [21]);
     assert_eq!(DPTStatusGen::decode(&[0xf5]).unwrap().value(), status);
     assert_eq!(
-        Telegram::group_write_value::<DPTStatusGen>(GroupAddress::try_from_raw(1).unwrap(), status)
-            .unwrap()
-            .payload,
+        Telegram::group_write_value::<DPTStatusGen>(
+            RawGroupAddress::try_from_raw(1).unwrap(),
+            status
+        )
+        .unwrap()
+        .payload,
         [21]
     );
     let control = DeviceControl {

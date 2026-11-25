@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::signal;
 use tokio::time::sleep;
 
-use knust::protocol::address::{GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+use knust::protocol::address::{IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
 use knust::protocol::dpt::DPTSwitch;
 use knust::{ConnectionConfig, ConnectionType, Knx};
 
@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Perform some operations - toggle a switch's group address directly
-    let switch_address = GroupAddress::new(MainGroup::new(1), MiddleGroup::new(0), 9);
+    let switch_address = RawGroupAddress::new(MainGroup::new(1), MiddleGroup::new(0), 9);
     let switch = knx.group_address::<DPTSwitch>(switch_address)?;
 
     println!("Performing operations...");

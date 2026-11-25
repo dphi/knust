@@ -287,20 +287,20 @@ pub fn decrypt_group_frame(keyring: &KeyRing, frame: &CemiFrame) -> Result<CemiF
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::address::{Address, GroupAddress, IndividualAddress};
+    use crate::protocol::address::{Address, IndividualAddress, RawGroupAddress};
     use crate::protocol::cemi::{CemiFrame, MessageCode};
 
     fn reference_frame() -> CemiFrame {
         CemiFrame::new(
             MessageCode::LDataReq,
             "5.0.1".parse::<IndividualAddress>().unwrap(),
-            Address::Group("0/4/0".parse::<GroupAddress>().unwrap()),
+            Address::Group("0/4/0".parse::<RawGroupAddress>().unwrap()),
             vec![0x00, 0x00],
         )
     }
 
     fn reference_keyring() -> KeyRing {
-        let destination = "0/4/0".parse::<GroupAddress>().unwrap();
+        let destination = "0/4/0".parse::<RawGroupAddress>().unwrap();
         let mut keyring = KeyRing::default();
         keyring.add_group_key(
             destination,
@@ -329,7 +329,7 @@ mod tests {
         let plain = CemiFrame::new(
             MessageCode::LDataReq,
             "5.0.1".parse::<IndividualAddress>().unwrap(),
-            Address::Group("0/4/0".parse::<GroupAddress>().unwrap()),
+            Address::Group("0/4/0".parse::<RawGroupAddress>().unwrap()),
             vec![0x00],
         );
         let keyring = reference_keyring();

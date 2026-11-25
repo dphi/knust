@@ -2,7 +2,7 @@
 use knust::protocol::dpt::{
     DPTPrioritisedModeControl, DptPayload, DptRegistry, DptType, DptValue, PrioritisedModeControl,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 #[test]
 fn prioritised_mode_round_trips_every_octet() {
@@ -45,7 +45,7 @@ fn prioritised_mode_round_trips_every_octet() {
         );
         assert!(registry.decode("236.001", &raw).is_ok());
         let telegram = Telegram::group_write_value::<DPTPrioritisedModeControl>(
-            GroupAddress::try_from_raw(1).unwrap(),
+            RawGroupAddress::try_from_raw(1).unwrap(),
             value,
         )
         .unwrap();

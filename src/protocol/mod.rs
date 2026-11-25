@@ -14,7 +14,7 @@ pub mod profile;
 pub mod telegram;
 pub mod tpci;
 
-pub use address::{Address, GroupAddress, IndividualAddress, MainGroup, MiddleGroup};
+pub use address::{Address, IndividualAddress, MainGroup, MiddleGroup, RawGroupAddress};
 pub use apci::GroupValueService;
 pub use cemi::{
     AdditionalInfo, AddressType, CemiFrame, ControlField, ExtendedControlField, FrameType,

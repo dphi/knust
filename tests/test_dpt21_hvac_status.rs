@@ -5,7 +5,7 @@ use knust::protocol::dpt::{
     DPTSecurityReport, DPTStatusAHU, DPTStatusDHWC, DPTStatusRCC, DPTStatusRHC, DPTStatusRHCC,
     DPTStatusSDHWC, DPTVirtualDryContact, DptPayload, DptRegistry, DptType, DptValue, RFModeInfo,
 };
-use knust::protocol::{Telegram, address::GroupAddress};
+use knust::protocol::{Telegram, address::RawGroupAddress};
 
 macro_rules! check_typed_status {
     ($wrapper:ty, $number:literal, $mask:expr) => {{
@@ -23,7 +23,7 @@ macro_rules! check_typed_status {
             let value = <$wrapper>::decode(&[raw]).unwrap();
             assert_eq!(<$wrapper>::new(value.value()).as_bytes(), &[raw & $mask]);
             let telegram = Telegram::group_write_value::<$wrapper>(
-                GroupAddress::try_from_raw(1).unwrap(),
+                RawGroupAddress::try_from_raw(1).unwrap(),
                 value.value(),
             )
             .unwrap();
@@ -54,7 +54,7 @@ macro_rules! check_typed_status16 {
             assert_eq!(<$wrapper>::new(value).as_bytes(), canonical);
             assert_eq!(
                 Telegram::group_write_value::<$wrapper>(
-                    GroupAddress::try_from_raw(1).unwrap(),
+                    RawGroupAddress::try_from_raw(1).unwrap(),
                     value
                 )
                 .unwrap()
@@ -138,7 +138,7 @@ fn rf_mode_info_decodes_invalid_received_flag_but_rejects_writes() {
             assert!(dpt.parse(&view.formatted(dpt)).is_err());
             assert!(
                 Telegram::group_write_value::<DPTRFModeInfo>(
-                    GroupAddress::try_from_raw(1).unwrap(),
+                    RawGroupAddress::try_from_raw(1).unwrap(),
                     value
                 )
                 .is_err()
@@ -151,7 +151,7 @@ fn rf_mode_info_decodes_invalid_received_flag_but_rejects_writes() {
             assert_eq!(dpt.parse(&view.formatted(dpt)).unwrap(), canonical);
             assert_eq!(
                 Telegram::group_write_value::<DPTRFModeInfo>(
-                    GroupAddress::try_from_raw(1).unwrap(),
+                    RawGroupAddress::try_from_raw(1).unwrap(),
                     value
                 )
                 .unwrap()

@@ -5,13 +5,13 @@ use super::view::DptView;
 use crate::error::Result;
 use crate::log_protocol;
 use crate::logging::LogLevel;
-use crate::protocol::address::{GroupAddress, IndividualAddress};
+use crate::protocol::address::{IndividualAddress, RawGroupAddress};
 use crate::protocol::telegram::{Telegram, TelegramType};
 
 /// A fully decoded telegram with type-safe access to all fields.
 pub struct DecodedTelegram<'a> {
     pub source: IndividualAddress,
-    pub destination: GroupAddress,
+    pub destination: RawGroupAddress,
     pub telegram_type: TelegramType,
     pub dpt: DptType,
     pub view: DptView<'a>,
