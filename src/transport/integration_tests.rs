@@ -6,7 +6,7 @@
 #[cfg(test)]
 mod tests {
     use crate::test_config::{TestConfig, assert_no_timeout_if_reachable, skip_if_no_gateway};
-    use crate::transport::{Connection, ConnectionState, Tunnel};
+    use crate::transport::{Connection, TransportState, Tunnel};
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -28,7 +28,7 @@ mod tests {
         let mut conn = Tunnel::new_udp_with_timeout(gateway_addr, config.test_timeout());
 
         // Initial state should be disconnected
-        assert_eq!(conn.state(), ConnectionState::Disconnected);
+        assert_eq!(conn.state(), TransportState::Disconnected);
 
         // Attempt to connect
         let connect_result = timeout(config.test_timeout(), conn.connect()).await;
@@ -39,7 +39,7 @@ mod tests {
         match connect_result {
             Ok(Ok(())) => {
                 println!("✓ Successfully connected to KNX gateway via UDP");
-                assert_eq!(conn.state(), ConnectionState::Connected);
+                assert_eq!(conn.state(), TransportState::Connected);
 
                 // The completed handshake sent ConnectRequest and received ConnectResponse.
                 let stats = conn.stats();
@@ -48,7 +48,7 @@ mod tests {
 
                 // Test disconnection
                 conn.disconnect().await;
-                assert_eq!(conn.state(), ConnectionState::Disconnected);
+                assert_eq!(conn.state(), TransportState::Disconnected);
 
                 println!("✓ Successfully disconnected from KNX gateway");
             }
@@ -82,7 +82,7 @@ mod tests {
         let mut conn = Tunnel::new_tcp_with_timeout(gateway_addr, config.test_timeout());
 
         // Initial state should be disconnected
-        assert_eq!(conn.state(), ConnectionState::Disconnected);
+        assert_eq!(conn.state(), TransportState::Disconnected);
 
         // Attempt to connect
         let connect_result = timeout(config.test_timeout(), conn.connect()).await;

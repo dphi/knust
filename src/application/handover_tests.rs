@@ -2,7 +2,7 @@ use super::*;
 use crate::protocol::{
     CemiFrame, GroupValueService, address::IndividualAddress, cemi::MessageCode,
 };
-use crate::transport::{ConnectionState, ConnectionStats};
+use crate::transport::{ConnectionStats, TransportState};
 use std::sync::atomic::AtomicUsize;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, timeout};
@@ -31,8 +31,8 @@ impl Connection for Peer {
         self.closes.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-    fn state(&self) -> ConnectionState {
-        ConnectionState::Connected
+    fn state(&self) -> TransportState {
+        TransportState::Connected
     }
     fn stats(&self) -> ConnectionStats {
         ConnectionStats::default()

@@ -1,6 +1,6 @@
 //! KNX/IP routing connection implementation.
 
-use super::connection::{Connection, ConnectionState, ConnectionStats};
+use super::connection::{Connection, ConnectionStats, TransportState};
 use crate::error::{Result, TransportError};
 use crate::log_transport;
 use crate::logging::LogLevel;
@@ -45,7 +45,7 @@ pub struct RoutingConnection {
     multicast_addr: SocketAddr,
     local_addr: SocketAddr,
     interface: Ipv4Addr,
-    state: Arc<std::sync::RwLock<ConnectionState>>,
+    state: Arc<std::sync::RwLock<TransportState>>,
     stats: Arc<std::sync::RwLock<ConnectionStats>>,
     established_at: Option<Instant>,
     routing_busy_count: Arc<std::sync::RwLock<u32>>,
@@ -122,7 +122,7 @@ impl RoutingConnection {
             multicast_addr,
             local_addr,
             interface,
-            state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
+            state: Arc::new(std::sync::RwLock::new(TransportState::Connected)),
             stats: Arc::new(std::sync::RwLock::new(ConnectionStats::default())),
             established_at: Some(Instant::now()),
             routing_busy_count: Arc::new(std::sync::RwLock::new(0)),
@@ -260,7 +260,7 @@ impl RoutingConnection {
     /// Check if connection is active
     #[must_use]
     pub fn is_connected(&self) -> bool {
-        matches!(self.state(), ConnectionState::Connected)
+        matches!(self.state(), TransportState::Connected)
     }
 
     /// Get the local address and ephemeral port used for outgoing datagrams.
@@ -377,7 +377,7 @@ impl Connection for RoutingConnection {
 
     async fn close(&self) -> Result<()> {
         if let Ok(mut state) = self.state.write() {
-            *state = ConnectionState::Disconnecting;
+            *state = TransportState::Disconnecting;
         }
 
         self.flow_changed.notify_waiters();
@@ -388,7 +388,7 @@ impl Connection for RoutingConnection {
             .leave_multicast_v4(Self::MULTICAST_ADDR, self.interface);
 
         if let Ok(mut state) = self.state.write() {
-            *state = ConnectionState::Disconnected;
+            *state = TransportState::Disconnected;
         }
 
         result.map_err(|e| TransportError::SocketError {
@@ -399,7 +399,7 @@ impl Connection for RoutingConnection {
         Ok(())
     }
 
-    fn state(&self) -> ConnectionState {
+    fn state(&self) -> TransportState {
         *self.state.read().unwrap()
     }
 
@@ -445,7 +445,7 @@ mod health_tests {
             multicast_addr: destination,
             local_addr,
             interface: Ipv4Addr::LOCALHOST,
-            state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
+            state: Arc::new(std::sync::RwLock::new(TransportState::Connected)),
             stats: Arc::new(std::sync::RwLock::new(ConnectionStats::default())),
             established_at: Some(Instant::now()),
             routing_busy_count: Arc::new(std::sync::RwLock::new(0)),
@@ -505,7 +505,7 @@ mod health_tests {
         );
 
         first.close().await.unwrap();
-        assert_eq!(first.state(), ConnectionState::Disconnected);
+        assert_eq!(first.state(), TransportState::Disconnected);
         second.close().await.unwrap();
     }
 
@@ -545,7 +545,7 @@ mod health_tests {
         assert_eq!(&bytes[..len], expected);
         assert_eq!(connection.stats().frames_sent, 2);
 
-        *connection.state.write().unwrap() = ConnectionState::Disconnected;
+        *connection.state.write().unwrap() = TransportState::Disconnected;
         assert!(Connection::send(&connection, &expected).await.is_err());
         assert!(connection.send_routing_indication(&cemi).await.is_err());
         assert_eq!(connection.stats().frames_sent, 2);
@@ -695,7 +695,7 @@ mod health_tests {
         let connection = test_connection(outbound_receiver.local_addr().unwrap()).await;
 
         let initial = connection.health();
-        assert_eq!(initial.state, ConnectionState::Connected);
+        assert_eq!(initial.state, TransportState::Connected);
         assert_eq!(initial.score(), 1.0);
         assert_eq!(initial.total_errors(), 0);
         assert!(initial.connected_since.is_some());
@@ -747,7 +747,7 @@ mod health_tests {
 
         let _ = Connection::close(&connection).await;
         let stopped = connection.health();
-        assert_eq!(stopped.state, ConnectionState::Disconnected);
+        assert_eq!(stopped.state, TransportState::Disconnected);
         assert_eq!(stopped.score(), 0.0);
         assert!(stopped.connected_since.is_none());
         assert_eq!(stopped.frames_sent, 1);

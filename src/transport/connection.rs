@@ -20,7 +20,7 @@ pub trait Connection: Send + Sync {
     async fn close(&self) -> Result<()>;
 
     /// Get current connection state
-    fn state(&self) -> ConnectionState;
+    fn state(&self) -> TransportState;
 
     /// Get connection statistics
     fn stats(&self) -> ConnectionStats;
@@ -41,7 +41,7 @@ pub trait Connection: Send + Sync {
 
 /// Connection state enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionState {
+pub enum TransportState {
     /// Connection is being established
     Connecting,
 
@@ -58,14 +58,14 @@ pub enum ConnectionState {
     Failed,
 }
 
-impl fmt::Display for ConnectionState {
+impl fmt::Display for TransportState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConnectionState::Connecting => write!(f, "connecting"),
-            ConnectionState::Connected => write!(f, "connected"),
-            ConnectionState::Disconnecting => write!(f, "disconnecting"),
-            ConnectionState::Disconnected => write!(f, "disconnected"),
-            ConnectionState::Failed => write!(f, "failed"),
+            TransportState::Connecting => write!(f, "connecting"),
+            TransportState::Connected => write!(f, "connected"),
+            TransportState::Disconnecting => write!(f, "disconnecting"),
+            TransportState::Disconnected => write!(f, "disconnected"),
+            TransportState::Failed => write!(f, "failed"),
         }
     }
 }

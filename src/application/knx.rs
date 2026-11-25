@@ -1,7 +1,8 @@
 //! Main Knx library interface.
 
 use crate::application::callbacks::{
-    CallbackHandle, ConnectionCallbackFn, EventHandler, TelegramCallbackFn, TelegramFilter,
+    CallbackHandle, ConnectionCallbackFn, ConnectionState, EventHandler, TelegramCallbackFn,
+    TelegramFilter,
 };
 #[cfg(feature = "secure")]
 use crate::error::SecurityError;
@@ -130,7 +131,7 @@ pub struct Knx {
     connection: ActiveConnection,
 
     /// Library state
-    state: Arc<RwLock<KnxState>>,
+    state: Arc<RwLock<ConnectionState>>,
 
     /// Shutdown flag for graceful termination
     shutdown_flag: Arc<AtomicBool>,
@@ -780,7 +781,7 @@ impl Knx {
             #[cfg(feature = "secure")]
             data_secure_sequence: Arc::new(AtomicU64::new(data_secure_sequence)),
             connection: tokio::sync::watch::channel(None).0,
-            state: Arc::new(RwLock::new(KnxState::Disconnected)),
+            state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
             shutdown_started: Arc::new(Notify::new()),
@@ -990,12 +991,12 @@ impl Knx {
                                 // Update state to disconnected
                                 {
                                     let mut s = state.write().await;
-                                    *s = KnxState::Disconnected;
+                                    *s = ConnectionState::Disconnected;
                                 }
 
                                 // Notify callbacks
                                 event_handler.notify_connection_state_changed(
-                                    crate::application::callbacks::ConnectionState::Disconnected
+                                    ConnectionState::Disconnected
                                 ).await;
 
                                 *channel_id_arc.write().await = None;
@@ -1055,7 +1056,7 @@ impl Knx {
     fn start_reconnection_task(
         config: ConnectionConfig,
         connection_arc: ActiveConnection,
-        state: Arc<RwLock<KnxState>>,
+        state: Arc<RwLock<ConnectionState>>,
         event_handler: Arc<EventHandler>,
         channel_id_arc: Arc<RwLock<Option<u8>>>,
         shutdown_flag: Arc<AtomicBool>,
@@ -1074,12 +1075,10 @@ impl Knx {
                         }
                         *channel_id_arc.write().await =
                             Self::establish_connection(&connection, &config);
-                        *state.write().await = KnxState::Connected;
+                        *state.write().await = ConnectionState::Connected;
                         connection_arc.send_replace(Some(connection));
                         event_handler
-                            .notify_connection_state_changed(
-                                crate::application::callbacks::ConnectionState::Connected,
-                            )
+                            .notify_connection_state_changed(ConnectionState::Connected)
                             .await;
                         return;
                     }
@@ -1231,22 +1230,22 @@ impl Knx {
     ///
     /// Returns configuration, handshake or transport errors for the selected connection.
     pub async fn connect(&self) -> Result<()> {
-        *self.state.write().await = KnxState::Connecting;
-        self.notify_connection_state_changed(KnxState::Connecting.into())
+        *self.state.write().await = ConnectionState::Connecting;
+        self.notify_connection_state_changed(ConnectionState::Connecting)
             .await;
         match Self::create_connection(&self.config).await {
             Ok(connection) => {
                 *self.channel_id.write().await =
                     Self::establish_connection(&connection, &self.config);
-                *self.state.write().await = KnxState::Connected;
+                *self.state.write().await = ConnectionState::Connected;
                 self.connection.send_replace(Some(connection));
-                self.notify_connection_state_changed(KnxState::Connected.into())
+                self.notify_connection_state_changed(ConnectionState::Connected)
                     .await;
                 Ok(())
             }
             Err(error) => {
-                *self.state.write().await = KnxState::Error;
-                self.notify_connection_state_changed(KnxState::Error.into())
+                *self.state.write().await = ConnectionState::Error;
+                self.notify_connection_state_changed(ConnectionState::Error)
                     .await;
                 Err(error)
             }
@@ -1261,11 +1260,11 @@ impl Knx {
     pub async fn disconnect(&self) -> Result<()> {
         {
             let mut state = self.state.write().await;
-            *state = KnxState::Disconnecting;
+            *state = ConnectionState::Disconnecting;
         }
 
         // Notify connection state change callbacks
-        self.notify_connection_state_changed(KnxState::Disconnecting.into())
+        self.notify_connection_state_changed(ConnectionState::Disconnecting)
             .await;
 
         if let Some(connection) = self.connection.send_replace(None) {
@@ -1274,11 +1273,11 @@ impl Knx {
 
         {
             let mut state = self.state.write().await;
-            *state = KnxState::Disconnected;
+            *state = ConnectionState::Disconnected;
         }
 
         // Notify connection state change callbacks
-        self.notify_connection_state_changed(KnxState::Disconnected.into())
+        self.notify_connection_state_changed(ConnectionState::Disconnected)
             .await;
 
         Ok(())
@@ -2423,13 +2422,13 @@ impl Knx {
     }
 
     /// Get the current library state
-    pub async fn state(&self) -> KnxState {
+    pub async fn state(&self) -> ConnectionState {
         *self.state.read().await
     }
 
     /// Check if connected to the KNX network
     pub async fn is_connected(&self) -> bool {
-        matches!(self.state().await, KnxState::Connected)
+        matches!(self.state().await, ConnectionState::Connected)
     }
 
     /// Get connection statistics
@@ -2566,10 +2565,7 @@ impl Knx {
     }
 
     /// Notify connection state changed (internal use)
-    pub(crate) async fn notify_connection_state_changed(
-        &self,
-        state: crate::application::callbacks::ConnectionState,
-    ) {
+    pub(crate) async fn notify_connection_state_changed(&self, state: ConnectionState) {
         self.event_handler
             .notify_connection_state_changed(state)
             .await;
@@ -2583,10 +2579,7 @@ impl Knx {
 
     /// Notify connection state changed (for testing)
     #[cfg(test)]
-    pub async fn test_notify_connection_state_changed(
-        &self,
-        state: crate::application::callbacks::ConnectionState,
-    ) {
+    pub async fn test_notify_connection_state_changed(&self, state: ConnectionState) {
         self.notify_connection_state_changed(state).await;
     }
 
@@ -3293,25 +3286,6 @@ impl Knx {
             connection,
         )
     }
-}
-
-/// Knx library state
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KnxState {
-    /// Library is disconnected
-    Disconnected,
-
-    /// Library is connecting
-    Connecting,
-
-    /// Library is connected and operational
-    Connected,
-
-    /// Library is disconnecting
-    Disconnecting,
-
-    /// Library is in error state
-    Error,
 }
 
 impl P2pConnection {
@@ -4406,18 +4380,6 @@ impl Drop for P2pConnection {
     }
 }
 
-impl std::fmt::Display for KnxState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            KnxState::Disconnected => write!(f, "disconnected"),
-            KnxState::Connecting => write!(f, "connecting"),
-            KnxState::Connected => write!(f, "connected"),
-            KnxState::Disconnecting => write!(f, "disconnecting"),
-            KnxState::Error => write!(f, "error"),
-        }
-    }
-}
-
 #[cfg(test)]
 #[path = "handover_tests.rs"]
 mod handover_tests;
@@ -4429,18 +4391,6 @@ mod shutdown_tests;
 #[cfg(test)]
 #[path = "channel_tests.rs"]
 mod channel_tests;
-
-impl From<KnxState> for crate::application::callbacks::ConnectionState {
-    fn from(s: KnxState) -> Self {
-        match s {
-            KnxState::Disconnected => Self::Disconnected,
-            KnxState::Connecting => Self::Connecting,
-            KnxState::Connected => Self::Connected,
-            KnxState::Disconnecting => Self::Disconnecting,
-            KnxState::Error => Self::Error,
-        }
-    }
-}
 
 #[cfg(test)]
 mod integration_tests {

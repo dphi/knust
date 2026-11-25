@@ -1,5 +1,5 @@
 use super::*;
-use crate::transport::{ConnectionState, ConnectionStats};
+use crate::transport::{ConnectionStats, TransportState};
 use std::sync::atomic::AtomicUsize;
 use tokio::sync::Semaphore;
 use tokio::time::{Duration, timeout};
@@ -34,8 +34,8 @@ impl Connection for BlockingConnection {
     async fn close(&self) -> Result<()> {
         Ok(())
     }
-    fn state(&self) -> ConnectionState {
-        ConnectionState::Connected
+    fn state(&self) -> TransportState {
+        TransportState::Connected
     }
     fn stats(&self) -> ConnectionStats {
         ConnectionStats::default()

@@ -17,6 +17,6 @@ pub use callbacks::{CallbackHandle, ConnectionState, EventHandler};
 #[cfg(feature = "dpt")]
 pub use knx::group_address::GroupAddress;
 pub use knx::{
-    ConnectionControlEvent, Knx, KnxBuilder, KnxState, P2pConnection, P2pConnectionless,
+    ConnectionControlEvent, Knx, KnxBuilder, P2pConnection, P2pConnectionless,
     ScannedInterfaceObject,
 };

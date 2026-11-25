@@ -1,7 +1,7 @@
 //! Read-only smoke test for the unified `Tunnel`.
 //!
 //! Connects to a KNX/IP gateway over UDP, validates the handshake, probes the
-//! `ConnectionState` heartbeat (via the frame router, exactly as the bus does),
+//! `TransportState` heartbeat (via the frame router, exactly as the bus does),
 //! listens briefly for incoming telegrams (acknowledging them as a good client),
 //! then disconnects gracefully. It NEVER sends a `GroupValueWrite`, so it cannot
 //! change any device state.

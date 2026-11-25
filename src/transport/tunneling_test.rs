@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::connection::{Connection, ConnectionState};
+    use crate::transport::connection::{Connection, TransportState};
     use crate::transport::tunnel::Tunnel;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -14,7 +14,7 @@ mod tests {
     async fn test_tunnel_creation() {
         let conn = Tunnel::new_udp(gateway());
 
-        assert_eq!(Connection::state(&conn), ConnectionState::Disconnected);
+        assert_eq!(Connection::state(&conn), TransportState::Disconnected);
         assert_eq!(conn.channel_id(), 0);
         assert_eq!(conn.current_sequence(), 0);
         assert!(!conn.is_connected());
@@ -36,14 +36,14 @@ mod tests {
     #[tokio::test]
     async fn test_tunnel_state_management() {
         let mut conn = Tunnel::new_udp(gateway());
-        assert_eq!(Connection::state(&conn), ConnectionState::Disconnected);
+        assert_eq!(Connection::state(&conn), TransportState::Disconnected);
         assert!(!conn.is_connected());
 
         // Will fail/timeout in the test environment; state must end Failed/Disconnected.
         if conn.connect().await.is_err() {
             let state = Connection::state(&conn);
             assert!(
-                state == ConnectionState::Failed || state == ConnectionState::Disconnected,
+                state == TransportState::Failed || state == TransportState::Disconnected,
                 "unexpected state after failed connect: {state:?}"
             );
         }
@@ -78,7 +78,7 @@ mod tests {
         assert!(conn.connect().await.is_err());
 
         let health = Connection::health(&conn);
-        assert_eq!(health.state, ConnectionState::Failed);
+        assert_eq!(health.state, TransportState::Failed);
         assert_eq!(health.connection_errors, 1);
         assert!(health.last_error.is_some());
         assert!(

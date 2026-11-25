@@ -10,7 +10,7 @@ use tokio::time::timeout;
 
 use crate::protocol::address::IndividualAddress;
 use crate::transport::{BackoffConfig, ConnectionConfig, ConnectionType, TcpConfig};
-use crate::{Knx, KnxState};
+use crate::{ConnectionState, Knx};
 
 /// Generate arbitrary connection configurations for property testing
 fn arb_connection_config() -> impl Strategy<Value = ConnectionConfig> {
@@ -100,7 +100,7 @@ proptest! {
             let initial_state = knx.state().await;
             prop_assert_eq!(
                 initial_state,
-                KnxState::Disconnected,
+                ConnectionState::Disconnected,
                 "Knx should start in Disconnected state"
             );
 
@@ -116,24 +116,24 @@ proptest! {
             // Whether it completed or timed out, state should be consistent
             let state_after_connect = knx.state().await;
             prop_assert!(
-                state_after_connect == KnxState::Connected ||
-                state_after_connect == KnxState::Disconnected ||
-                state_after_connect == KnxState::Connecting ||
-                state_after_connect == KnxState::Error,
+                state_after_connect == ConnectionState::Connected ||
+                state_after_connect == ConnectionState::Disconnected ||
+                state_after_connect == ConnectionState::Connecting ||
+                state_after_connect == ConnectionState::Error,
                 "State should be valid after connect attempt/cancellation, got: {:?}",
                 state_after_connect
             );
 
             // Test 2: Cancel during disconnect operation
-            if state_after_connect == KnxState::Connected {
+            if state_after_connect == ConnectionState::Connected {
                 let _disconnect_result = timeout(cancel_duration, knx.disconnect()).await;
 
                 // State should be consistent after disconnect attempt
                 let state_after_disconnect = knx.state().await;
                 prop_assert!(
-                    state_after_disconnect == KnxState::Disconnected ||
-                    state_after_disconnect == KnxState::Disconnecting ||
-                    state_after_disconnect == KnxState::Connected,
+                    state_after_disconnect == ConnectionState::Disconnected ||
+                    state_after_disconnect == ConnectionState::Disconnecting ||
+                    state_after_disconnect == ConnectionState::Connected,
                     "State should be valid after disconnect attempt/cancellation, got: {:?}",
                     state_after_disconnect
                 );
@@ -210,11 +210,11 @@ proptest! {
             // Verify Knx is still in a valid state
             let final_state = knx.state().await;
             prop_assert!(
-                final_state == KnxState::Disconnected ||
-                final_state == KnxState::Connected ||
-                final_state == KnxState::Connecting ||
-                final_state == KnxState::Disconnecting ||
-                final_state == KnxState::Error,
+                final_state == ConnectionState::Disconnected ||
+                final_state == ConnectionState::Connected ||
+                final_state == ConnectionState::Connecting ||
+                final_state == ConnectionState::Disconnecting ||
+                final_state == ConnectionState::Error,
                 "Knx should be in a valid state after concurrent operations, got: {:?}",
                 final_state
             );
@@ -245,7 +245,7 @@ mod unit_tests {
         };
 
         let knx = Knx::new(config).await.unwrap();
-        assert_eq!(knx.state().await, KnxState::Disconnected);
+        assert_eq!(knx.state().await, ConnectionState::Disconnected);
     }
 
     #[tokio::test]
@@ -266,7 +266,7 @@ mod unit_tests {
         let knx = Knx::new(config).await.unwrap();
 
         // Initial state should be Disconnected
-        assert_eq!(knx.state().await, KnxState::Disconnected);
+        assert_eq!(knx.state().await, ConnectionState::Disconnected);
         assert!(!knx.is_connected().await);
 
         // Try to connect (may fail in test environment, but state should be consistent)
@@ -275,10 +275,10 @@ mod unit_tests {
         // State should be either Connected, Connecting, Disconnected, or Error
         let state = knx.state().await;
         assert!(
-            state == KnxState::Connected
-                || state == KnxState::Connecting
-                || state == KnxState::Disconnected
-                || state == KnxState::Error,
+            state == ConnectionState::Connected
+                || state == ConnectionState::Connecting
+                || state == ConnectionState::Disconnected
+                || state == ConnectionState::Error,
             "State should be valid after connect attempt, got: {state:?}"
         );
     }
@@ -306,10 +306,10 @@ mod unit_tests {
         // Whether it completed or timed out, Knx should be in a valid state
         let state = knx.state().await;
         assert!(
-            state == KnxState::Disconnected
-                || state == KnxState::Connecting
-                || state == KnxState::Connected
-                || state == KnxState::Error,
+            state == ConnectionState::Disconnected
+                || state == ConnectionState::Connecting
+                || state == ConnectionState::Connected
+                || state == ConnectionState::Error,
             "State should be valid after cancellation, got: {state:?}"
         );
     }
@@ -325,7 +325,7 @@ mod unit_tests {
             .await
             .unwrap();
 
-        assert_eq!(knx.state().await, KnxState::Disconnected);
+        assert_eq!(knx.state().await, ConnectionState::Disconnected);
         assert_eq!(knx.config().connection_type, ConnectionType::Routing);
         assert_eq!(knx.config().timeout_ms, 3000);
         assert!(!knx.config().auto_reconnect);

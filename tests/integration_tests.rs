@@ -17,6 +17,56 @@ use knust::{ConnectionConfig, ConnectionType, Knx, KnxError};
 use std::time::Duration;
 use tokio::time::timeout;
 
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), KnxError> {
+    use knust::ConnectionState;
+    use knust::application::callbacks::ConnectionCallbackFn;
+    use knust::transport::TunnelServer;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct States(Arc<Mutex<Vec<ConnectionState>>>);
+
+    #[async_trait::async_trait]
+    impl ConnectionCallbackFn for States {
+        async fn call(&self, state: ConnectionState) {
+            self.0.lock().unwrap().push(state);
+        }
+    }
+
+    let server = TunnelServer::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        IndividualAddress::new(1, 1, 240),
+    )
+    .await?;
+    let gateway = server.local_addr();
+    let states = States::default();
+    let knx = Knx::builder()
+        .connection_type(ConnectionType::Tunneling)
+        .gateway_ip(gateway.ip())
+        .gateway_port(gateway.port())
+        .connection_callback(states.clone())?
+        .build()
+        .await?;
+
+    knx.connect().await?;
+    assert_eq!(knx.state().await, ConnectionState::Connected);
+    knx.disconnect().await?;
+    assert_eq!(knx.state().await, ConnectionState::Disconnected);
+    assert_eq!(
+        states.0.lock().unwrap().as_slice(),
+        [
+            ConnectionState::Connecting,
+            ConnectionState::Connected,
+            ConnectionState::Disconnecting,
+            ConnectionState::Disconnected,
+        ]
+    );
+    server.shutdown();
+    Ok(())
+}
+
 /// `Knx::send_telegram` fills in `source` itself, so callers only need to
 /// say where a write is going and what it carries.
 fn write_telegram(destination: RawGroupAddress, payload: Vec<u8>) -> Telegram {

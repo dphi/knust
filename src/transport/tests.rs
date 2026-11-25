@@ -6,7 +6,7 @@ use proptest::test_runner::Config as ProptestConfig;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use crate::protocol::address::IndividualAddress;
-use crate::transport::connection::{Connection, ConnectionState};
+use crate::transport::connection::{Connection, TransportState};
 use crate::transport::{BackoffConfig, ConnectionConfig, ConnectionType, TcpConfig};
 use crate::transport::{GatewayScanner, RoutingConnection, ServiceType, Tunnel};
 
@@ -128,7 +128,7 @@ proptest! {
                         let initial_state = conn.state();
                         prop_assert_eq!(
                             initial_state,
-                            ConnectionState::Disconnected,
+                            TransportState::Disconnected,
                             "Tunneling connection should start in Disconnected state, got: {:?}",
                             initial_state
                         );
@@ -143,9 +143,9 @@ proptest! {
                         // After connect attempt, state should be either Connected or Failed
                         let post_connect_state = conn.state();
                         prop_assert!(
-                            post_connect_state == ConnectionState::Connected ||
-                            post_connect_state == ConnectionState::Failed ||
-                            post_connect_state == ConnectionState::Connecting,
+                            post_connect_state == TransportState::Connected ||
+                            post_connect_state == TransportState::Failed ||
+                            post_connect_state == TransportState::Connecting,
                             "After connect attempt, state should be Connected, Failed, or Connecting, got: {:?}",
                             post_connect_state
                         );
@@ -166,7 +166,7 @@ proptest! {
                         let initial_state = conn.state();
                         prop_assert_eq!(
                             initial_state,
-                            ConnectionState::Disconnected,
+                            TransportState::Disconnected,
                             "TCP tunneling connection should start in Disconnected state, got: {:?}",
                             initial_state
                         );
@@ -181,9 +181,9 @@ proptest! {
                         // After connect attempt, state should be either Connected or Failed
                         let post_connect_state = conn.state();
                         prop_assert!(
-                            post_connect_state == ConnectionState::Connected ||
-                            post_connect_state == ConnectionState::Failed ||
-                            post_connect_state == ConnectionState::Connecting,
+                            post_connect_state == TransportState::Connected ||
+                            post_connect_state == TransportState::Failed ||
+                            post_connect_state == TransportState::Connecting,
                             "After connect attempt, state should be Connected, Failed, or Connecting, got: {:?}",
                             post_connect_state
                         );
@@ -197,7 +197,7 @@ proptest! {
                             let state = conn.state();
                             prop_assert_eq!(
                                 state,
-                                ConnectionState::Connected,
+                                TransportState::Connected,
                                 "Routing connection should be in Connected state, got: {:?}",
                                 state
                             );
@@ -212,7 +212,7 @@ proptest! {
                             let final_state = conn.state();
                             prop_assert_eq!(
                                 final_state,
-                                ConnectionState::Disconnected,
+                                TransportState::Disconnected,
                                 "Connection should be Disconnected after close, got: {:?}",
                                 final_state
                             );
@@ -335,7 +335,7 @@ mod unit_tests {
         let mut conn = Tunnel::new_tcp_with_timeout(gateway_addr, test_config.test_timeout());
 
         // Test initial state
-        assert_eq!(conn.state(), ConnectionState::Disconnected);
+        assert_eq!(conn.state(), TransportState::Disconnected);
         assert!(!conn.is_connected());
 
         // Test statistics initialization
@@ -390,7 +390,7 @@ mod unit_tests {
         let mut conn = Tunnel::new_udp_with_timeout(gateway_addr, test_config.test_timeout());
 
         // Test initial state
-        assert_eq!(conn.state(), ConnectionState::Disconnected);
+        assert_eq!(conn.state(), TransportState::Disconnected);
 
         // Test statistics initialization
         let stats = conn.stats();
@@ -403,11 +403,11 @@ mod unit_tests {
             match conn.connect().await {
                 Ok(()) => {
                     println!("✓ Successfully connected to real KNX gateway via UDP");
-                    assert_eq!(conn.state(), ConnectionState::Connected);
+                    assert_eq!(conn.state(), TransportState::Connected);
 
                     // Test disconnection
                     conn.disconnect().await;
-                    assert_eq!(conn.state(), ConnectionState::Disconnected);
+                    assert_eq!(conn.state(), TransportState::Disconnected);
                     println!("✓ Successfully disconnected");
                 }
                 Err(e) => {

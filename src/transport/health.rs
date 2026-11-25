@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::connection::{ConnectionState, ConnectionStats};
+use super::connection::{ConnectionStats, TransportState};
 
 /// Current health of one concrete transport connection.
 ///
@@ -12,7 +12,7 @@ use super::connection::{ConnectionState, ConnectionStats};
 #[derive(Debug, Clone)]
 pub struct ConnectionHealth {
     /// Lifecycle state observed for the connection.
-    pub state: ConnectionState,
+    pub state: TransportState,
     /// Number of frames sent successfully by the connection.
     pub frames_sent: u64,
     /// Number of frames received successfully by the connection.
@@ -36,9 +36,9 @@ pub struct ConnectionHealth {
 impl ConnectionHealth {
     /// Build a health snapshot from one connection's state and statistics.
     #[must_use]
-    pub fn from_state_and_stats(state: ConnectionState, connection_stats: ConnectionStats) -> Self {
+    pub fn from_state_and_stats(state: TransportState, connection_stats: ConnectionStats) -> Self {
         let observed_at = Instant::now();
-        let connected_since = matches!(state, ConnectionState::Connected)
+        let connected_since = matches!(state, TransportState::Connected)
             .then(|| observed_at.checked_sub(Duration::from_secs(connection_stats.uptime_seconds)))
             .flatten();
 
@@ -79,11 +79,11 @@ impl ConnectionHealth {
     #[must_use]
     pub fn score(&self) -> f64 {
         match self.state {
-            ConnectionState::Failed
-            | ConnectionState::Disconnecting
-            | ConnectionState::Disconnected => 0.0,
-            ConnectionState::Connecting => 0.1,
-            ConnectionState::Connected => {
+            TransportState::Failed
+            | TransportState::Disconnecting
+            | TransportState::Disconnected => 0.0,
+            TransportState::Connecting => 0.1,
+            TransportState::Connected => {
                 let errors = self.total_errors();
                 let operations = self
                     .frames_sent
@@ -110,14 +110,14 @@ mod tests {
     #[allow(clippy::float_cmp)]
     fn score_reflects_lifecycle_and_connection_local_errors() {
         let disconnected = ConnectionHealth::from_state_and_stats(
-            ConnectionState::Disconnected,
+            TransportState::Disconnected,
             ConnectionStats::default(),
         );
         assert_eq!(disconnected.score(), 0.0);
         assert!(disconnected.uptime().is_none());
 
         let connected = ConnectionHealth::from_state_and_stats(
-            ConnectionState::Connected,
+            TransportState::Connected,
             ConnectionStats {
                 frames_sent: 8,
                 frames_received: 1,

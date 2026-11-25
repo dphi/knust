@@ -37,7 +37,7 @@ use std::net::IpAddr;
 pub use address_probe::{auto_select_address, probe_address};
 pub use address_registry::AddressRegistry;
 pub use backoff::JitteredBackoff;
-pub use connection::{Connection, ConnectionState, ConnectionStats};
+pub use connection::{Connection, ConnectionStats, TransportState};
 pub use device_management::DeviceManagementConnection;
 pub use discovery::{
     GatewayCapabilities, GatewayInfo, GatewayScanner, GatewayTunnelingInfo, ServiceType,

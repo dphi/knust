@@ -82,7 +82,7 @@ pub mod test_config;
 #[cfg(feature = "dpt")]
 pub use application::GroupAddress;
 pub use application::{
-    Knx, KnxBuilder, KnxState, P2pConnection, P2pConnectionless, ScannedInterfaceObject,
+    ConnectionState, Knx, KnxBuilder, P2pConnection, P2pConnectionless, ScannedInterfaceObject,
 };
 #[cfg(feature = "secure")]
 pub use config::KeyringConfig;

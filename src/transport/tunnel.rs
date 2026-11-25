@@ -1,11 +1,11 @@
 //! Unified KNX/IP tunnel over a [`FrameTransport`] (UDP or TCP).
 //!
 //! The KNX-layer state machine — ConnectRequest/Response handshake, channel id,
-//! sequence numbers, TunnellingRequest/Ack, `ConnectionState` heartbeat and
+//! sequence numbers, TunnellingRequest/Ack, `TransportState` heartbeat and
 //! `DisconnectRequest` — is identical for both transports. Only framing and
 //! liveness differ, handled by the transport plus a couple of flags:
 //!
-//! * `use_heartbeat` — UDP needs the `ConnectionState` heartbeat for liveness;
+//! * `use_heartbeat` — UDP needs the `TransportState` heartbeat for liveness;
 //!   TCP uses it only as a NAT/idle keepalive (on by default).
 //! * `send_acks` — UDP acknowledges incoming `TunnellingRequests`; TCP relies on
 //!   the stream and does not.
@@ -26,7 +26,7 @@ use tokio::time::{timeout, timeout_at};
 use super::SecurityConfig;
 use super::address_probe::auto_select_address;
 use super::address_registry::AddressRegistry;
-use super::connection::{Connection, ConnectionState, ConnectionStats};
+use super::connection::{Connection, ConnectionStats, TransportState};
 use super::frame_transport::{FrameTransport, TcpFrameTransport, TransportKind, UdpFrameTransport};
 use super::heartbeat::{HeartbeatConfig, HeartbeatEvent, HeartbeatMonitor};
 use super::router::FrameRouter;
@@ -85,7 +85,7 @@ pub struct Tunnel {
     channel_id: u8,
     sequence_counter: AtomicU8,
     expected_sequence_number: AtomicU8,
-    state: std::sync::RwLock<ConnectionState>,
+    state: std::sync::RwLock<TransportState>,
     stats: std::sync::RwLock<ConnectionStats>,
     connection_timeout: Duration,
     established_at: Option<Instant>,
@@ -104,7 +104,7 @@ pub struct Tunnel {
     secure_keepalive_cancel: Option<tokio::sync::oneshot::Sender<()>>,
     #[cfg(feature = "secure")]
     secure_send_lock: Arc<tokio::sync::Mutex<()>>,
-    /// Whether the `ConnectionState` heartbeat should run for this tunnel.
+    /// Whether the `TransportState` heartbeat should run for this tunnel.
     pub(crate) use_heartbeat: bool,
     /// Whether incoming `TunnellingRequests` must be acknowledged (UDP only).
     pub(crate) send_acks: bool,
@@ -174,7 +174,7 @@ impl Tunnel {
             channel_id: 0,
             sequence_counter: AtomicU8::new(0),
             expected_sequence_number: AtomicU8::new(0),
-            state: std::sync::RwLock::new(ConnectionState::Disconnected),
+            state: std::sync::RwLock::new(TransportState::Disconnected),
             stats: std::sync::RwLock::new(ConnectionStats::default()),
             connection_timeout,
             established_at: None,
@@ -303,7 +303,7 @@ impl Tunnel {
             self.gateway_addr
         );
         if let Ok(mut s) = self.state.write() {
-            *s = ConnectionState::Connecting;
+            *s = TransportState::Connecting;
         }
 
         let result = async {
@@ -318,7 +318,7 @@ impl Tunnel {
             }
             Err(e) => {
                 if let Ok(mut s) = self.state.write() {
-                    *s = ConnectionState::Failed;
+                    *s = TransportState::Failed;
                 }
                 if let Ok(mut stats) = self.stats.write() {
                     stats.record_connection_error(&e);
@@ -417,7 +417,7 @@ impl Tunnel {
         self.channel_id = channel_id;
         self.established_at = Some(Instant::now());
         if let Ok(mut s) = self.state.write() {
-            *s = ConnectionState::Connected;
+            *s = TransportState::Connected;
         }
 
         // Address management (opt-in): only runs when a registry is
@@ -547,7 +547,7 @@ impl Tunnel {
         // ConnectRequest/Response, now riding inside it (send_frame/recv_frame
         // encrypt/decrypt transparently once self.secure_session is set).
         if let Ok(mut s) = self.state.write() {
-            *s = ConnectionState::Connecting;
+            *s = TransportState::Connecting;
         }
         match self.send_connect_request().await {
             Ok((channel_id, assigned_address)) => {
@@ -558,7 +558,7 @@ impl Tunnel {
                     let _ = cancel.send(());
                 }
                 if let Ok(mut s) = self.state.write() {
-                    *s = ConnectionState::Failed;
+                    *s = TransportState::Failed;
                 }
                 if let Ok(mut stats) = self.stats.write() {
                     stats.record_connection_error(&e);
@@ -621,7 +621,7 @@ impl Tunnel {
     /// Panics if an internal lock is poisoned.
     pub async fn disconnect(&mut self) {
         if let Ok(mut s) = self.state.write() {
-            *s = ConnectionState::Disconnecting;
+            *s = TransportState::Disconnecting;
         }
         if self.channel_id != 0
             && let Err(e) = self.send_disconnect_request().await
@@ -633,7 +633,7 @@ impl Tunnel {
             let _ = cancel.send(());
         }
         if let Ok(mut s) = self.state.write() {
-            *s = ConnectionState::Disconnected;
+            *s = TransportState::Disconnected;
         }
         self.established_at = None;
         self.channel_id = 0;
@@ -897,7 +897,7 @@ impl Tunnel {
 
     // --- Heartbeat / router ---
 
-    /// Start the `ConnectionState` heartbeat loop and return its lifecycle handle.
+    /// Start the `TransportState` heartbeat loop and return its lifecycle handle.
     ///
     /// The loop reports outcomes through the handle and declares this tunnel lost
     /// after the configured consecutive failures. It is inert when this tunnel
@@ -1061,13 +1061,13 @@ impl Tunnel {
     }
 
     pub fn is_connected(&self) -> bool {
-        matches!(self.state(), ConnectionState::Connected)
+        matches!(self.state(), TransportState::Connected)
     }
 
     /// # Panics
     ///
     /// Panics if the internal lock is poisoned.
-    pub fn state(&self) -> ConnectionState {
+    pub fn state(&self) -> TransportState {
         *self.state.read().unwrap()
     }
 
@@ -1163,7 +1163,7 @@ impl Connection for Tunnel {
         Some(Tunnel::start_heartbeat(self, label))
     }
 
-    fn state(&self) -> ConnectionState {
+    fn state(&self) -> TransportState {
         Tunnel::state(self)
     }
 
