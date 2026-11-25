@@ -2966,6 +2966,99 @@ fn octet_telegrams_preserve_full_octets_and_service_on_wire() {
 
 #[cfg(feature = "secure")]
 #[tokio::test]
+async fn data_secure_routing_drops_replayed_group_writes() {
+    use crate::protocol::dpt::DPTSwitch;
+    use crate::protocol::knxip::KnxIpFrame;
+    use crate::security::{KeyRing, SecurityKey};
+    use std::net::Ipv4Addr;
+    use tokio::time::timeout;
+
+    let local = Ipv4Addr::LOCALHOST;
+    let address: RawGroupAddress = "13/7/226".parse().unwrap();
+    let source: IndividualAddress = "14.15.226".parse().unwrap();
+    let keys = || {
+        let mut keys = KeyRing::new();
+        keys.add_group_key(
+            address,
+            SecurityKey::from_hex("00112233445566778899aabbccddeeff").unwrap(),
+        );
+        keys.set_sequence_number(source, 0);
+        keys
+    };
+
+    let sender = Knx::builder()
+        .connection_type(ConnectionType::Routing)
+        .local_ip(local.into())
+        .individual_address(source)
+        .build()
+        .await
+        .unwrap();
+    let receiver = Knx::builder()
+        .connection_type(ConnectionType::Routing)
+        .local_ip(local.into())
+        .individual_address("14.15.227".parse().unwrap())
+        .build()
+        .await
+        .unwrap();
+    sender.set_data_secure_keyring(keys()).await;
+    receiver.set_data_secure_keyring(keys()).await;
+    let observer = RoutingConnection::new_with_interface(local).await.unwrap();
+    let (events, mut received) = mpsc::channel(4);
+    receiver
+        .register_telegram_callback_filtered(
+            LoopbackCallback(events),
+            TelegramFilter::GroupAddresses(vec![address]),
+            false,
+        )
+        .await;
+    for knx in [&sender, &receiver] {
+        knx.connect().await.unwrap();
+        knx.start().await.unwrap();
+    }
+
+    let switch = sender.group_address::<DPTSwitch>(address).unwrap();
+    switch.write(true).await.unwrap();
+    let secured = timeout(Duration::from_secs(2), async {
+        loop {
+            let datagram = observer.recv().await.unwrap();
+            let frame = KnxIpFrame::parse(&datagram).unwrap();
+            let cemi = CemiFrame::parse(&frame.body).unwrap();
+            if cemi.source_addr == source && cemi.dest_addr == Address::Group(address) {
+                assert_eq!(&cemi.apci_data[..2], &[0xF1, 0x10]);
+                break datagram;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let first = timeout(Duration::from_secs(2), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.source, source);
+    assert_eq!(first.payload, [1]);
+
+    observer.send(&secured).await.unwrap();
+    assert!(
+        timeout(Duration::from_millis(100), received.recv())
+            .await
+            .is_err()
+    );
+
+    switch.write(false).await.unwrap();
+    let next = timeout(Duration::from_secs(2), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.payload, [0]);
+
+    sender.shutdown().await.unwrap();
+    receiver.shutdown().await.unwrap();
+    observer.close().await.unwrap();
+}
+
+#[cfg(feature = "secure")]
+#[tokio::test]
 async fn data_secure_group_telegrams_are_wrapped_and_replay_checked() {
     use crate::protocol::knxip::{KnxIpFrame, TunnellingRequest};
     use crate::security::{KeyRing, SecurityKey};
