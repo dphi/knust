@@ -127,7 +127,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let security_config = SecurityConfig {
         device_auth_password: "DeviceAuthPassword123!".to_string(),
         user_password: Some("SecurePassword123!".to_string()),
-        keyring_path: Some("/path/to/keyring.knxkeys".to_string()),
         session_timeout: 600, // 10 minutes
     };
 
@@ -155,10 +154,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "   Session timeout: {}s",
         secure_config.security.as_ref().unwrap().session_timeout
-    );
-    println!(
-        "   Keyring path: {:?}",
-        secure_config.security.as_ref().unwrap().keyring_path
     );
     println!("   Extended timeout: {}ms", secure_config.timeout_ms);
 
@@ -252,62 +247,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   ✅ Default values for optional parameters");
     println!("   ✅ Compile-time configuration validation");
 
-    // Example 8: Configuration File Formats
-    println!("\n📄 Example 8: Configuration File Formats");
-    println!("-----------------------------------------");
-
-    println!("TOML Configuration Example:");
-    println!("```toml");
-    println!("[connection]");
-    println!("type = \"Tunneling\"");
-    println!("gateway_ip = \"192.168.1.100\"");
-    println!("gateway_port = 3671");
-    println!("individual_address = \"1.1.240\"");
-    println!("timeout_ms = 5000");
-    println!("auto_reconnect = true");
-    println!();
-    println!("[reconnect]");
-    println!("initial_delay_ms = 1000");
-    println!("max_delay_ms = 30000");
-    println!("multiplier = 2.0");
-    println!("max_attempts = 10");
-    println!();
-    println!("[[devices]]");
-    println!("type = \"Light\"");
-    println!("name = \"Living Room Light\"");
-    println!("switch_address = \"1/2/1\"");
-    println!("brightness_address = \"1/2/2\"");
-    println!("color_address = \"1/2/3\"");
-    println!();
-    println!("[[devices]]");
-    println!("type = \"Sensor\"");
-    println!("name = \"Temperature Sensor\"");
-    println!("address = \"2/1/1\"");
-    println!("dpt = \"9.001\"");
-    println!("```");
-
-    println!("\nJSON Configuration Example:");
-    println!("```json");
-    println!("{{");
-    println!("  \"connection\": {{");
-    println!("    \"type\": \"Tunneling\",");
-    println!("    \"gateway_ip\": \"192.168.1.100\",");
-    println!("    \"gateway_port\": 3671,");
-    println!("    \"individual_address\": \"1.1.240\",");
-    println!("    \"timeout_ms\": 5000,");
-    println!("    \"auto_reconnect\": true");
-    println!("  }},");
-    println!("  \"devices\": [");
-    println!("    {{");
-    println!("      \"type\": \"Light\",");
-    println!("      \"name\": \"Living Room Light\",");
-    println!("      \"switch_address\": \"1/2/1\",");
-    println!("      \"brightness_address\": \"1/2/2\"");
-    println!("    }}");
-    println!("  ]");
-    println!("}}");
-    println!("```");
-
     println!("\n✅ Configuration examples completed!");
     println!("\n📚 Configuration Summary:");
     println!("   • Basic tunneling for point-to-point connections");
@@ -317,7 +256,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   • Device configuration for lights and sensors");
     println!("   • Comprehensive logging setup");
     println!("   • Builder pattern for fluent configuration");
-    println!("   • Multiple configuration file formats");
     println!();
     println!("💡 Best Practices:");
     println!("   • Use tunneling for reliable point-to-point connections");

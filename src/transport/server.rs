@@ -1467,7 +1467,6 @@ mod tests {
         let client_security = SecurityConfig {
             device_auth_password,
             user_password: Some(user_password),
-            keyring_path: None,
             session_timeout: 60,
         };
         (server_config, client_security)

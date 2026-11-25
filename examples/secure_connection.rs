@@ -36,7 +36,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let security_config = SecurityConfig {
         device_auth_password: "DeviceAuthPassword123!".to_string(),
         user_password: Some("MySecurePassword123".to_string()),
-        keyring_path: None,
         session_timeout: 300, // 5 minutes
     };
 
@@ -161,36 +160,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🔐 Added tunnel credentials for gateway 192.168.1.100");
 
-    // Example 4: Configuration file example
-    println!("\n📄 Example 4: Configuration File Format");
-    println!("----------------------------------------");
-
-    println!("Example secure connection configuration (TOML format):");
-    println!();
-    println!("[connection]");
-    println!("type = \"SecureTunneling\"");
-    println!("gateway_ip = \"192.168.1.100\"");
-    println!("gateway_port = 3671");
-    println!("individual_address = \"1.1.240\"");
-    println!("timeout_ms = 10000");
-    println!("auto_reconnect = true");
-    println!();
-    println!("[security]");
-    println!("user_password = \"MySecurePassword123\"");
-    println!("session_timeout = 300");
-    println!("device_auth = [");
-    println!("    0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,");
-    println!("    0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88");
-    println!("]");
-    println!();
-    println!("[[security.group_keys]]");
-    println!("address = \"1/2/1\"");
-    println!("key = \"0123456789ABCDEF0123456789ABCDEF\"");
-    println!();
-    println!("[[security.group_keys]]");
-    println!("address = \"1/2/2\"");
-    println!("key = \"FEDCBA9876543210FEDCBA9876543210\"");
-
     println!("\n✅ Secure connection examples completed!");
     println!("\n🔒 Security Features Demonstrated:");
     println!("   • KNX IP Secure tunneling with authentication");
@@ -198,7 +167,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   • Security credential management");
     println!("   • Keyring-based key storage");
     println!("   • Sequence number validation for replay protection");
-    println!("   • Configuration file format for security settings");
     println!();
     println!("💡 Security Best Practices:");
     println!("   • Use strong, unique passwords for each installation");

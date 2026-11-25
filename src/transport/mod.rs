@@ -137,9 +137,6 @@ pub struct SecurityConfig {
     /// User password (plaintext).
     pub user_password: Option<String>,
 
-    /// Keyring file path
-    pub keyring_path: Option<String>,
-
     /// Security session timeout in seconds
     pub session_timeout: u32,
 }
@@ -185,32 +182,12 @@ impl Default for BackoffConfig {
 pub struct TcpConfig {
     /// TCP connection timeout in milliseconds
     pub connect_timeout_ms: u64,
-
-    /// TCP read timeout in milliseconds
-    pub read_timeout_ms: u64,
-
-    /// TCP write timeout in milliseconds
-    pub write_timeout_ms: u64,
-
-    /// Enable TCP keep-alive
-    pub keep_alive_enabled: bool,
-
-    /// TCP keep-alive interval in milliseconds
-    pub keep_alive_interval_ms: u64,
-
-    /// Enable `TCP_NODELAY` (disable Nagle's algorithm)
-    pub tcp_nodelay: bool,
 }
 
 impl Default for TcpConfig {
     fn default() -> Self {
         Self {
             connect_timeout_ms: 5000,
-            read_timeout_ms: 10000,
-            write_timeout_ms: 5000,
-            keep_alive_enabled: true,
-            keep_alive_interval_ms: 30000,
-            tcp_nodelay: true, // Disable Nagle for low-latency KNX communication
         }
     }
 }

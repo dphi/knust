@@ -42,7 +42,6 @@ async fn main() -> anyhow::Result<()> {
     let security = SecurityConfig {
         device_auth_password,
         user_password: Some(user_password),
-        keyring_path: None,
         session_timeout: 60,
     };
     tunnel.connect_secure(&security).await?;

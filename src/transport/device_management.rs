@@ -1580,7 +1580,6 @@ mod tests {
         let security = SecurityConfig {
             device_auth_password: "device password".into(),
             user_password: Some("user password".into()),
-            keyring_path: None,
             session_timeout: 1,
         };
         for tcp in [false, true] {

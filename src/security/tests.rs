@@ -438,7 +438,6 @@ fn public_connection_configuration_debug_omits_passwords() {
         security: Some(crate::transport::SecurityConfig {
             device_auth_password: device_password.to_string(),
             user_password: Some(user_password.to_string()),
-            keyring_path: None,
             session_timeout: 60,
         }),
         ..Default::default()

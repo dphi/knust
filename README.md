@@ -135,7 +135,6 @@ let security_config = SecurityConfig {
     device_auth_password: "DeviceAuthPassword123!".to_string(),
     user_password: Some("MySecurePassword".to_string()),
     session_timeout: 300,
-    keyring_path: Some("/path/to/keyring.knxkeys".to_string()),
 };
 
 let config = ConnectionConfig {

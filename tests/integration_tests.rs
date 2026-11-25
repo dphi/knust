@@ -276,7 +276,6 @@ async fn test_secure_communication_workflow() -> Result<(), KnxError> {
     let security_config = SecurityConfig {
         device_auth_password: "device_auth".to_string(),
         user_password: Some("test_password".to_string()),
-        keyring_path: None,
         session_timeout: 300,
     };
 
