@@ -154,3 +154,16 @@ impl WriteValue<DPTAlarmInfo> for AlarmInfo {
         DPTAlarmInfo::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct AlarmInfoView<'a>(pub(super) &'a [u8]);
+impl<'a> AlarmInfoView<'a> {
+    #[must_use]
+    pub fn value(&self) -> AlarmInfo {
+        AlarmInfo::decode(self.0.try_into().expect("validated length")).expect("validated alarm")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

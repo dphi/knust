@@ -1,7 +1,7 @@
 use super::dpt246::BatteryInfoView;
 use super::payload::DptPayload;
 use super::unit::Unit;
-use super::view::{
+use super::{
     AccessDataView, ActuatorView, AlarmInfoView, BoolView, ChannelActivation8View,
     ChannelActivation16View, ChannelActivation24View, CharacterView, CodeView,
     ColorTemperatureTransitionView, CombinedInfoOnOffView, CombinedPositionView, Control2View,

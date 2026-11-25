@@ -135,23 +135,9 @@ pub use group_registry::{GroupAddressRegistry, GroupAddressState};
 pub use payload::DptPayload;
 pub use unit::Unit;
 pub use view::{
-    AccessDataView, ActuatorView, AlarmInfoView, BoolView, ChannelActivation8View,
-    ChannelActivation16View, ChannelActivation24View, CharacterView, CodeView,
-    ColorTemperatureTransitionView, CombinedInfoOnOffView, CombinedPositionView, Control2View,
-    ControlView, ConverterInfoFixView, ConverterInfoView, ConverterStatusView,
-    ConverterTestInfoView, ConverterTestResultView, DALIControlGearDiagnosticView,
-    DALIDiagnosticsView, DHWControllerStatusView, DateTimeView, DateView, DeviceControlView,
-    DoubleNibbleView, DptView, EnumView, Float2ByteView, Float4ByteView, ForcingSignalCoolView,
-    ForcingSignalView, ForecastView, FuelTypeSetView, GeneralStatusView, GeographicalLocationView,
-    I8View, I16View, I32View, I64View, LightActuatorErrorInfoView, MBusAddressView,
-    MeteringValueView, ModeNextView, PhasesStatusView, PrioritisedModeControlView,
-    RFFilterInfoView, RFModeInfoView, RelativeColorView, RgbView, RgbwView,
-    RoomCoolingControllerStatusView, RoomHeatingControllerStatusView,
-    RoomHeatingCoolingControllerStatusView, ScalingTimeView, SceneConfigView, SceneInfoView,
-    SceneView, SecurityReportView, Setpoints3View, Setpoints4View, SolarDHWControllerStatusView,
-    StatusHVAView, StatusRTCView, StatusRTSMView, StatusSABView, StrView, SupportedMediaView,
-    TimeView, U8View, U16View, U32View, VentilationControllerStatusView, VersionView,
-    VirtualDryContactView, XYYColorTransitionView, XyyView,
+    BoolView, Control2View, ControlView, DateTimeView, DateView, DptView, EnumView, Float2ByteView,
+    Float4ByteView, I8View, I16View, I32View, I64View, RgbView, RgbwView, SceneView, TimeView,
+    U8View, U16View, U32View, XyyView,
 };
 
 /// Macro for creating simple DPT aliases that delegate to existing types

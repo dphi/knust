@@ -125,3 +125,17 @@ impl WriteValue<DPTConverterInfo> for ConverterInfo {
         DPTConverterInfo::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConverterInfoView<'a>(pub(super) &'a [u8]);
+impl<'a> ConverterInfoView<'a> {
+    #[must_use]
+    pub fn value(&self) -> ConverterInfo {
+        ConverterInfo::decode(self.0.try_into().expect("validated length"))
+            .expect("validated information")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

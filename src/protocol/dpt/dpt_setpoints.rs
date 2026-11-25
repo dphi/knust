@@ -165,3 +165,29 @@ datapoint!(
     "275.101",
     "room_temperature_setpoint_shifts_4"
 );
+
+#[derive(Debug, Clone, Copy)]
+pub struct Setpoints3View<'a>(pub(super) &'a [u8], pub(super) bool);
+impl<'a> Setpoints3View<'a> {
+    #[must_use]
+    pub fn value(&self) -> RoomTemperatureSetpoints3 {
+        RoomTemperatureSetpoints3::decode(self.0, self.1).expect("validated fields")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Setpoints4View<'a>(pub(super) &'a [u8], pub(super) bool);
+impl<'a> Setpoints4View<'a> {
+    #[must_use]
+    pub fn value(&self) -> RoomTemperatureSetpoints4 {
+        RoomTemperatureSetpoints4::decode(self.0, self.1).expect("validated fields")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

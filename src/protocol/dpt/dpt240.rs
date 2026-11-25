@@ -95,3 +95,16 @@ impl WriteValue<DPTCombinedPosition> for CombinedPosition {
         DPTCombinedPosition::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct CombinedPositionView<'a>(pub(super) &'a [u8]);
+impl<'a> CombinedPositionView<'a> {
+    #[must_use]
+    pub fn value(&self) -> CombinedPosition {
+        CombinedPosition::decode([self.0[0], self.0[1], self.0[2]])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

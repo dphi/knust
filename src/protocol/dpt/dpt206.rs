@@ -111,3 +111,16 @@ mode!(DPTHVACModeNext, 100, "206.100", "hvac_mode_next");
 mode!(DPTDHWModeNext, 102, "206.102", "dhw_mode_next");
 mode!(DPTOccModeNext, 104, "206.104", "occupancy_mode_next");
 mode!(DPTBuildingModeNext, 105, "206.105", "building_mode_next");
+
+#[derive(Debug, Clone, Copy)]
+pub struct ModeNextView<'a>(pub(super) &'a [u8], pub(super) u16);
+impl<'a> ModeNextView<'a> {
+    #[must_use]
+    pub fn value(&self) -> ModeNext {
+        ModeNext::decode([self.0[0], self.0[1], self.0[2]], self.1).expect("validated mode")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

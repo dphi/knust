@@ -137,3 +137,16 @@ impl WriteValue<DPTColorXYYTransition> for XYYColorTransition {
         DPTColorXYYTransition::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct XYYColorTransitionView<'a>(pub(super) &'a [u8]);
+impl<'a> XYYColorTransitionView<'a> {
+    #[must_use]
+    pub fn value(&self) -> XYYColorTransition {
+        XYYColorTransition::decode(self.0.try_into().expect("validated length"))
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

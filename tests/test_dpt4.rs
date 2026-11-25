@@ -2,7 +2,7 @@
 
 use knust::protocol::dpt::{
     CharacterAscii, CharacterLatin1, DPTCharacter, DPTCharacterLatin1, DptPayload, DptRegistry,
-    DptType, DptValue, WriteValue,
+    DptType, DptValue, DptView, WriteValue, dpt4::CharacterView,
 };
 
 #[test]
@@ -59,6 +59,11 @@ fn all_character_octets_decode_consistently() {
             ),
         ] {
             let view = dpt.decode_ref(&raw).unwrap();
+            let DptView::Character(character) = view else {
+                panic!("expected a character view");
+            };
+            let character: CharacterView<'_> = character;
+            assert_eq!(character.as_string(), expected);
             assert_eq!(view.raw().as_ptr(), raw.as_ptr());
             assert_eq!(view.formatted(dpt), expected);
             assert_eq!(DptPayload::from(view), DptPayload::String(expected.clone()));

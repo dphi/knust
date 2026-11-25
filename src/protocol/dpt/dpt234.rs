@@ -72,3 +72,16 @@ code!(
     "region_code_alpha2",
     true
 );
+
+#[derive(Debug, Clone, Copy)]
+pub struct CodeView<'a>(pub(super) &'a [u8], pub(super) bool);
+impl<'a> CodeView<'a> {
+    #[must_use]
+    pub fn value(&self) -> String {
+        decode_code(self.0, self.1).expect("validated code")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

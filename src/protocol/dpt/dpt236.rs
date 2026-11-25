@@ -100,3 +100,16 @@ impl WriteValue<DPTPrioritisedModeControl> for PrioritisedModeControl {
         DPTPrioritisedModeControl::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct PrioritisedModeControlView<'a>(pub(super) &'a [u8]);
+impl<'a> PrioritisedModeControlView<'a> {
+    #[must_use]
+    pub fn value(&self) -> PrioritisedModeControl {
+        PrioritisedModeControl::decode(self.0[0])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

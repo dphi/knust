@@ -143,3 +143,29 @@ datapoint!(
     "238.600",
     "dali_diagnostics"
 );
+
+#[derive(Debug, Clone, Copy)]
+pub struct SceneConfigView<'a>(pub(super) &'a [u8]);
+impl<'a> SceneConfigView<'a> {
+    #[must_use]
+    pub fn value(&self) -> SceneConfig {
+        SceneConfig::decode(self.0[0])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DALIDiagnosticsView<'a>(pub(super) &'a [u8]);
+impl<'a> DALIDiagnosticsView<'a> {
+    #[must_use]
+    pub fn value(&self) -> DALIDiagnostics {
+        DALIDiagnostics::decode(self.0[0])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

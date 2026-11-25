@@ -84,3 +84,17 @@ impl WriteValue<DPTGeographicalLocation> for GeographicalLocation {
         DPTGeographicalLocation::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct GeographicalLocationView<'a>(pub(super) &'a [u8]);
+impl<'a> GeographicalLocationView<'a> {
+    #[must_use]
+    pub fn value(&self) -> GeographicalLocation {
+        GeographicalLocation::decode(self.0.try_into().expect("validated length"))
+            .expect("validated coordinates")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

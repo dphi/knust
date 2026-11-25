@@ -144,3 +144,19 @@ impl WriteValue<Version> for KnxVersion {
 
 /// XKNX-compatible name for DPT 217.001.
 pub type DPTVersion = Version;
+
+/// Borrowed DPT 217.001 version payload.
+#[derive(Debug, Clone, Copy)]
+pub struct VersionView<'a>(pub(super) &'a [u8]);
+
+impl<'a> VersionView<'a> {
+    #[must_use]
+    pub fn value(&self) -> KnxVersion {
+        KnxVersion::from_raw([self.0[0], self.0[1]])
+    }
+
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

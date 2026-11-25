@@ -112,3 +112,16 @@ impl WriteValue<DPTDALIControlGearDiagnostic> for DALIControlGearDiagnostic {
         DPTDALIControlGearDiagnostic::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct DALIControlGearDiagnosticView<'a>(pub(super) &'a [u8]);
+impl<'a> DALIControlGearDiagnosticView<'a> {
+    #[must_use]
+    pub fn value(&self) -> DALIControlGearDiagnostic {
+        DALIControlGearDiagnostic::decode([self.0[0], self.0[1]]).expect("validated address")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

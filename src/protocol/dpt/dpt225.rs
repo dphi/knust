@@ -89,3 +89,16 @@ macro_rules! scaling_time {
 }
 scaling_time!(DPTScalingSpeed, 1, "225.001", "scaling_speed");
 scaling_time!(DPTScalingStepTime, 2, "225.002", "scaling_step_time");
+
+#[derive(Debug, Clone, Copy)]
+pub struct ScalingTimeView<'a>(pub(super) &'a [u8], pub(super) u16);
+impl<'a> ScalingTimeView<'a> {
+    #[must_use]
+    pub fn value(&self) -> ScalingTime {
+        ScalingTime::decode([self.0[0], self.0[1], self.0[2]], self.1)
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

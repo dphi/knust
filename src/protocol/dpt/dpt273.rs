@@ -195,3 +195,16 @@ forecast!(
     "273.007",
     "forecast_sun_intensity"
 );
+
+#[derive(Debug, Clone, Copy)]
+pub struct ForecastView<'a>(pub(super) &'a [u8], pub(super) u16);
+impl<'a> ForecastView<'a> {
+    #[must_use]
+    pub fn value(&self) -> Forecast {
+        Forecast::decode(self.0, self.1).expect("validated forecast")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

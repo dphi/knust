@@ -101,3 +101,16 @@ impl WriteValue<DPTMBusAddress> for MBusAddress {
         Ok(DPTMBusAddress::new(self))
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct MBusAddressView<'a>(pub(super) &'a [u8]);
+impl<'a> MBusAddressView<'a> {
+    #[must_use]
+    pub fn value(&self) -> MBusAddress {
+        MBusAddress::decode(self.0.try_into().expect("validated length"))
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

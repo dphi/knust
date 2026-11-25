@@ -86,3 +86,16 @@ impl WriteValue<DPTSceneInfo> for SceneInfo {
         DPTSceneInfo::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct SceneInfoView<'a>(pub(super) &'a [u8]);
+impl<'a> SceneInfoView<'a> {
+    #[must_use]
+    pub fn value(&self) -> SceneInfo {
+        SceneInfo::decode(self.0[0])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

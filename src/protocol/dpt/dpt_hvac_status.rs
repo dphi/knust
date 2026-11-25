@@ -173,3 +173,46 @@ status!(RoomHeatingCoolingControllerStatus,DPTStatusRHCC,2,"22.101","room_heatin
 status!(CombinedStatusHVA,DPTCombinedStatusHVA,2,"22.102","combined_status_hva",valve_open:0,short_circuit:1,overload:2,valve_kick:3,service_mode:4,manual_operation:5,forced_position:6,locked_position:7,calibration_mode:8);
 // In KNX heat/cool encoding, true selects heating and false selects cooling.
 status!(CombinedStatusRTC,DPTCombinedStatusRTC,2,"22.103","combined_status_rtc",fault:0,heating_mode:1,dew_point_status:2,frost_alarm:3,overheat_alarm:4,controller_inactive:5,additional_stage:6,heating_enabled:7,cooling_enabled:8);
+
+macro_rules! status_view {
+    ($view:ident,$value:ident) => {
+        #[derive(Debug, Clone, Copy)]
+        pub struct $view<'a>(pub(super) &'a [u8]);
+        impl<'a> $view<'a> {
+            #[must_use]
+            pub fn value(&self) -> $value {
+                $value::decode(self.0)
+            }
+            #[must_use]
+            pub fn raw(&self) -> &'a [u8] {
+                self.0
+            }
+        }
+    };
+}
+status_view!(LightActuatorErrorInfoView, LightActuatorErrorInfo);
+status_view!(RFFilterInfoView, RFFilterInfo);
+status_view!(SecurityReportView, SecurityReport);
+status_view!(ChannelActivation8View, ChannelActivation8);
+status_view!(VirtualDryContactView, VirtualDryContact);
+status_view!(PhasesStatusView, PhasesStatus);
+status_view!(RFModeInfoView, RFModeInfo);
+status_view!(StatusRTSMView, CombinedStatusRTSM);
+status_view!(ForcingSignalView, ForcingSignal);
+status_view!(ForcingSignalCoolView, ForcingSignalCool);
+status_view!(RoomHeatingControllerStatusView, RoomHeatingControllerStatus);
+status_view!(SolarDHWControllerStatusView, SolarDHWControllerStatus);
+status_view!(FuelTypeSetView, FuelTypeSet);
+status_view!(RoomCoolingControllerStatusView, RoomCoolingControllerStatus);
+status_view!(VentilationControllerStatusView, VentilationControllerStatus);
+status_view!(GeneralStatusView, GeneralStatus);
+status_view!(DeviceControlView, DeviceControl);
+status_view!(DHWControllerStatusView, DHWControllerStatus);
+status_view!(SupportedMediaView, SupportedMedia);
+status_view!(ChannelActivation16View, ChannelActivation16);
+status_view!(
+    RoomHeatingCoolingControllerStatusView,
+    RoomHeatingCoolingControllerStatus
+);
+status_view!(StatusHVAView, CombinedStatusHVA);
+status_view!(StatusRTCView, CombinedStatusRTC);

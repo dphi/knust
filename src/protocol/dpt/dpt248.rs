@@ -175,3 +175,17 @@ impl WriteValue<DPTConverterInfoFix> for ConverterInfoFix {
         DPTConverterInfoFix::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConverterInfoFixView<'a>(pub(super) &'a [u8]);
+impl<'a> ConverterInfoFixView<'a> {
+    #[must_use]
+    pub fn value(&self) -> ConverterInfoFix {
+        ConverterInfoFix::decode(self.0.try_into().expect("validated length"))
+            .expect("validated information")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

@@ -144,3 +144,22 @@ impl WriteValue<DPTAccessData> for AccessData {
         DPTAccessData::new(self)
     }
 }
+
+#[derive(Clone, Copy)]
+pub struct AccessDataView<'a>(pub(super) &'a [u8]);
+impl std::fmt::Debug for AccessDataView<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value().fmt(f)
+    }
+}
+impl<'a> AccessDataView<'a> {
+    #[must_use]
+    pub fn value(&self) -> AccessData {
+        AccessData::decode(self.0.try_into().expect("validated length"))
+            .expect("validated access data")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

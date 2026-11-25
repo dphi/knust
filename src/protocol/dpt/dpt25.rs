@@ -95,3 +95,19 @@ impl WriteValue<DPTDoubleNibble> for DoubleNibble {
         DPTDoubleNibble::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct DoubleNibbleView<'a>(pub(super) &'a [u8]);
+impl<'a> DoubleNibbleView<'a> {
+    #[must_use]
+    pub fn value(&self) -> DoubleNibble {
+        DoubleNibble {
+            busy: self.0[0] >> 4,
+            nak: self.0[0] & 15,
+        }
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

@@ -177,3 +177,16 @@ impl WriteValue<DPTMeteringValue> for MeteringValue {
         DPTMeteringValue::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct MeteringValueView<'a>(pub(super) &'a [u8]);
+impl<'a> MeteringValueView<'a> {
+    #[must_use]
+    pub fn value(&self) -> MeteringValue {
+        MeteringValue::decode(self.0.try_into().expect("validated length")).expect("validated unit")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

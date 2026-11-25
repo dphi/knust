@@ -39,7 +39,7 @@ macro_rules! character_dpt {
             /// Decode the character, omitting NUL and replacing invalid ASCII.
             #[must_use]
             pub fn value(&self) -> String {
-                super::view::CharacterView(&self.0, $latin1).as_string()
+                CharacterView(&self.0, $latin1).as_string()
             }
         }
 
@@ -78,3 +78,24 @@ character_dpt!(CharacterLatin1, "4.002", "character_latin_1", true);
 pub type DPTCharacter = CharacterAscii;
 /// XKNX-compatible name for DPT 4.002.
 pub type DPTCharacterLatin1 = CharacterLatin1;
+
+/// Zero-copy view of a DPT 4 ASCII or Latin-1 character.
+#[derive(Debug, Clone, Copy)]
+pub struct CharacterView<'a>(pub(super) &'a [u8], pub(super) bool);
+
+impl<'a> CharacterView<'a> {
+    /// Decode the character; NUL yields an empty string.
+    #[must_use]
+    pub fn as_string(&self) -> String {
+        match self.0[0] {
+            0 => String::new(),
+            byte if self.1 || byte.is_ascii() => char::from(byte).to_string(),
+            _ => "�".to_string(),
+        }
+    }
+
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

@@ -115,3 +115,16 @@ impl WriteValue<DPTColorTemperatureTransition> for ColorTemperatureTransition {
         DPTColorTemperatureTransition::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct ColorTemperatureTransitionView<'a>(pub(super) &'a [u8]);
+impl<'a> ColorTemperatureTransitionView<'a> {
+    #[must_use]
+    pub fn value(&self) -> ColorTemperatureTransition {
+        ColorTemperatureTransition::decode(self.0.try_into().expect("validated length"))
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

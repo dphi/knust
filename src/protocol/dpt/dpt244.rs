@@ -123,3 +123,16 @@ impl WriteValue<DPTConverterStatus> for ConverterStatus {
         DPTConverterStatus::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConverterStatusView<'a>(pub(super) &'a [u8]);
+impl<'a> ConverterStatusView<'a> {
+    #[must_use]
+    pub fn value(&self) -> ConverterStatus {
+        ConverterStatus::decode([self.0[0], self.0[1]]).expect("validated status")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

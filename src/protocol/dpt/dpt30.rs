@@ -92,3 +92,16 @@ impl WriteValue<DPTChannelActivation24> for ChannelActivation24 {
         Ok(DPTChannelActivation24::new(self))
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct ChannelActivation24View<'a>(pub(super) &'a [u8]);
+impl<'a> ChannelActivation24View<'a> {
+    #[must_use]
+    pub fn value(&self) -> ChannelActivation24 {
+        ChannelActivation24::decode([self.0[0], self.0[1], self.0[2]])
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

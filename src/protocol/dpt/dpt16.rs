@@ -196,3 +196,27 @@ impl DptValue for StringLatin1 {
         (0.0, 0.0)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct StrView<'a>(pub(super) &'a [u8], pub(super) bool);
+impl<'a> StrView<'a> {
+    #[must_use]
+    pub fn as_string(&self) -> String {
+        if self.1 {
+            decode_latin1_value(self.0)
+        } else {
+            decode_ascii_value(self.0)
+        }
+    }
+
+    /// View the bytes as UTF-8 up to the first NUL, if valid.
+    #[must_use]
+    pub fn as_str(&self) -> &'a str {
+        let end = self.0.iter().position(|&b| b == 0).unwrap_or(self.0.len());
+        std::str::from_utf8(&self.0[..end]).unwrap_or("")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

@@ -152,3 +152,16 @@ actuator!(BoilerControllerDemand,DPTValueDemBOC,102,"207.102","boiler_controller
 actuator!(ActuatorPositionDemand,DPTActPosDemAbs,104,"207.104","actuator_position_demand",position:Option<u8>,true,false,absolute_load_priority:1,shift_load_priority:2,emergency_demand:3);
 actuator!(ActuatorPositionStatus,DPTStatusAct,105,"207.105","actuator_position_status",position:u8,false,false,failure:0,manual_override:1,calibration_mode:2,valve_kick:3,synchronization_mode:4);
 actuator!(LightingActuatorStatus,DPTStatusLightingActuator,600,"207.600","lighting_actuator_status",lighting_level:Option<u8>,true,true,locked:1,forced:2,night_mode_active:3,staircase_lighting_function:4,dimming:5,local_override:6,failure:7);
+
+#[derive(Debug, Clone, Copy)]
+pub struct ActuatorView<'a>(pub(super) &'a [u8], pub(super) u16);
+impl<'a> ActuatorView<'a> {
+    #[must_use]
+    pub fn value(&self) -> super::DptPayload {
+        decode_payload([self.0[0], self.0[1]], self.1).expect("validated actuator")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}

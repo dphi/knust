@@ -149,3 +149,17 @@ impl WriteValue<DPTConverterTestResult> for ConverterTestResult {
         DPTConverterTestResult::new(self)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConverterTestResultView<'a>(pub(super) &'a [u8]);
+impl<'a> ConverterTestResultView<'a> {
+    #[must_use]
+    pub fn value(&self) -> ConverterTestResult {
+        ConverterTestResult::decode(self.0.try_into().expect("validated length"))
+            .expect("validated result")
+    }
+    #[must_use]
+    pub fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+}
