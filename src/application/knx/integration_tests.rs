@@ -3003,7 +3003,7 @@ async fn data_secure_routing_drops_replayed_group_writes() {
     sender.set_data_secure_keyring(keys()).await;
     receiver.set_data_secure_keyring(keys()).await;
     let observer = RoutingConnection::new_with_interface(local).await.unwrap();
-    let (events, mut received) = mpsc::channel(4);
+    let (events, mut callbacks) = mpsc::channel(4);
     receiver
         .register_telegram_callback_filtered(
             LoopbackCallback(events),
@@ -3031,7 +3031,7 @@ async fn data_secure_routing_drops_replayed_group_writes() {
     })
     .await
     .unwrap();
-    let first = timeout(Duration::from_secs(2), received.recv())
+    let first = timeout(Duration::from_secs(2), callbacks.recv())
         .await
         .unwrap()
         .unwrap();
@@ -3040,13 +3040,13 @@ async fn data_secure_routing_drops_replayed_group_writes() {
 
     observer.send(&secured).await.unwrap();
     assert!(
-        timeout(Duration::from_millis(100), received.recv())
+        timeout(Duration::from_millis(100), callbacks.recv())
             .await
             .is_err()
     );
 
     switch.write(false).await.unwrap();
-    let next = timeout(Duration::from_secs(2), received.recv())
+    let next = timeout(Duration::from_secs(2), callbacks.recv())
         .await
         .unwrap()
         .unwrap();

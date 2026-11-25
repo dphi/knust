@@ -90,7 +90,7 @@ impl Telegram {
     ///
     /// Raw writes retain compact encoding for single-byte payloads. Set
     /// [`Self::compact_payload`] to false for an octet DPT, or use
-    /// [`Self::group_write_value`] with the `dpt` feature for automatic selection.
+    /// `Telegram::group_write_value` with the `dpt` feature for automatic selection.
     #[must_use]
     pub fn group_write(destination: RawGroupAddress, payload: Vec<u8>) -> Self {
         Self {

@@ -11,7 +11,7 @@
 //!   the stream and does not.
 //!
 //! Constructors perform no network I/O; the transport is established lazily in
-//! [`Tunnel::connect`] (or [`Tunnel::connect_secure`]).
+//! [`Tunnel::connect`] (or `Tunnel::connect_secure` with the `secure` feature).
 
 use std::net::SocketAddr;
 use std::sync::Arc;

@@ -20,15 +20,13 @@ knust is a high-performance, memory-safe implementation of the KNX/IP protocol f
 
 ## Cargo Features
 
-- `dpt` (**on** by default) — datapoint-type encode/decode (DPT 1..251). Disable
+- `dpt` (**on** by default) — typed codecs for KNX datapoints. Disable
   for a raw-frame-only client that never interprets group values.
 - `ets` (off) — ETS CSV group-address import (`parse_ets_csv`). Implies `dpt`.
 - `server` (off) — act as a KNXnet/IP tunneling server (`TunnelServer::bind`).
   Most consumers are clients and don't need it — see [Server](#server) below.
-- `secure` (off) — KNX IP Secure (session handshake, verified against real
-  hardware) and KNX Data Security (group encryption, **experimental** and
-  unverified against a reference implementation), plus KNX keyring
-  (`.knxkeys`) parsing/validation. Implies `ets`.
+- `secure` (off) — KNX IP Secure, Data Secure group encryption and replay
+  protection, and ETS keyring (`.knxkeys`) parsing. Implies `ets`.
 
 ## Quick Start
 
@@ -54,7 +52,7 @@ use knust::{ConnectionType, Knx};
 use knust::protocol::dpt::DPTSwitch;
 
 #[tokio::main]
-async fn main() -> Result<(), knust::KnxError> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
         .gateway("192.168.1.100:3671".parse()?)

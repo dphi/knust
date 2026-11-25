@@ -14,7 +14,7 @@
 //!
 //! ## Cargo features
 //!
-//! - `dpt` (**on** by default) — datapoint-type encode/decode (DPT 1..251).
+//! - `dpt` (**on** by default) — typed codecs for KNX datapoints.
 //!   Disable for a raw-frame-only client that never interprets group values;
 //!   owns the `strum` dependency.
 //! - `ets` (off) — ETS CSV group-address import (`parse_ets_csv`). The only
@@ -25,26 +25,23 @@
 //!   group encryption, `.knxkeys` keyring parsing/validation, and the secure
 //!   server path. Pulls in the crypto stack (`aes`, `x25519-dalek`, `pbkdf2`,
 //!   `sha2`, …). Implies `ets`.
-//!   KNX IP Secure (the session handshake) is verified against real
-//!   hardware; KNX Data Security (group encryption, see
-//!   [`security::group`]) is **experimental** and unverified against a
-//!   reference implementation — see that module's docs.
+//!   KNX IP Secure handshakes have been verified against real hardware.
+//!   Data Secure group encryption and replay protection are tested locally.
 //!
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use knust::{Knx, ConnectionConfig, ConnectionType};
+//! use knust::{ConnectionType, Knx};
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), knust::KnxError> {
-//!     let config = ConnectionConfig {
-//!         connection_type: ConnectionType::Tunneling,
-//!         gateway_ip: Some("192.168.1.100".parse().unwrap()),
-//!         ..Default::default()
-//!     };
-//!
-//!     let knx = Knx::new(config).await?;
-//!     // Use the library...
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let knx = Knx::builder()
+//!         .connection_type(ConnectionType::Tunneling)
+//!         .gateway("192.168.1.100:3671".parse()?)
+//!         .individual_address("1.2.3".parse()?)
+//!         .build()
+//!         .await?;
+//!     knx.connect().await?;
 //!     Ok(())
 //! }
 //! ```
