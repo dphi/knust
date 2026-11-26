@@ -88,7 +88,7 @@ fn optional_temperature_fields_and_subtype_bounds() {
         };
         let typed = DPTRoomTemperatureSetpoints4::new(value).unwrap();
         assert_eq!(typed.value(), value);
-        for (bit, field) in typed.as_bytes().chunks_exact(2).enumerate() {
+        for (bit, &field) in typed.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             assert_eq!(field == [0x7f, 0xff], fields[bit].is_none());
         }
     }
