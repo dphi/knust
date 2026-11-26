@@ -201,7 +201,7 @@ async fn listen_for_packets(config: TestConfig) -> Result<(), Box<dyn std::error
             sleep(Duration::from_millis(100)).await;
 
             // Check if we're still connected
-            if !knx.is_connected().await {
+            if !knx.is_connected() {
                 println!("Connection lost, attempting to reconnect...");
                 if let Err(e) = knx.connect().await {
                     println!("Reconnection failed: {e}");

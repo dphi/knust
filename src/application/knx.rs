@@ -793,6 +793,9 @@ impl Knx {
     /// # Errors
     ///
     /// Returns configuration, handshake or transport errors for the selected connection.
+    ///
+    /// # Panics
+    /// Panics if the connection lifecycle lock is poisoned.
     pub async fn connect(&self) -> Result<()> {
         use crate::error::TransportError;
 
@@ -855,6 +858,9 @@ impl Knx {
     ///
     /// # Errors
     /// Returns the underlying connection's close error, if any.
+    ///
+    /// # Panics
+    /// Panics if the connection lifecycle lock is poisoned.
     pub async fn disconnect(&self) -> Result<()> {
         let (transition, connection) = {
             let mut lifecycle = self.connection_lifecycle.lock().unwrap();
@@ -1272,7 +1278,10 @@ impl Knx {
                 // Dequeue outgoing telegram for sending
                 if let Some((mut job, enqueued_at)) = telegram_queue.dequeue_outgoing_job().await {
                     let mut receipt = job.receipt.take();
-                    if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
+                    if receipt
+                        .as_ref()
+                        .is_some_and(crate::transport::queue::SendReceipt::is_closed)
+                    {
                         continue;
                     }
                     let max_age = telegram_queue.max_outgoing_age();
@@ -1283,7 +1292,7 @@ impl Knx {
                                 break Some(connection);
                             }
                             if shutdown_flag.load(Ordering::SeqCst)
-                                || receipt.as_ref().is_some_and(|receipt| receipt.is_closed())
+                                || receipt.as_ref().is_some_and(crate::transport::queue::SendReceipt::is_closed)
                             {
                                 break None;
                             }
@@ -1310,7 +1319,10 @@ impl Knx {
                             continue;
                         }
                     };
-                    if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
+                    if receipt
+                        .as_ref()
+                        .is_some_and(crate::transport::queue::SendReceipt::is_closed)
+                    {
                         continue;
                     }
                     let telegram = &mut job.telegram;
@@ -1363,7 +1375,10 @@ impl Knx {
                         && let Err(error) = &result
                         && !Self::is_cemi_confirmation_error(error)
                     {
-                        if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
+                        if receipt
+                            .as_ref()
+                            .is_some_and(crate::transport::queue::SendReceipt::is_closed)
+                        {
                             continue;
                         }
                         Self::report_connection_failure(
@@ -1633,13 +1648,18 @@ impl Knx {
     }
 
     /// Get the current library state
-    pub async fn state(&self) -> ConnectionState {
+    ///
+    /// # Panics
+    /// Panics if the connection lifecycle lock is poisoned.
+    #[must_use]
+    pub fn state(&self) -> ConnectionState {
         self.connection_lifecycle.lock().unwrap().state
     }
 
     /// Check if connected to the KNX network
-    pub async fn is_connected(&self) -> bool {
-        matches!(self.state().await, ConnectionState::Connected)
+    #[must_use]
+    pub fn is_connected(&self) -> bool {
+        matches!(self.state(), ConnectionState::Connected)
     }
 
     /// The source address the active tunnel was assigned, or the configured address.

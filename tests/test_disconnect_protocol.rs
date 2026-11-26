@@ -23,14 +23,14 @@ async fn test_disconnect_protocol_handling() {
 
     // Connect to the network
     knx.connect().await.expect("Failed to connect");
-    assert!(knx.is_connected().await);
+    assert!(knx.is_connected());
 
     // Start telegram processing
     knx.start().await.expect("Failed to start processing");
 
     // Simulate a disconnect by calling disconnect
     knx.disconnect().await.expect("Failed to disconnect");
-    assert!(!knx.is_connected().await);
+    assert!(!knx.is_connected());
 
     // Wait a bit to see if reconnection happens (it won't for routing, but tests the logic)
     sleep(Duration::from_millis(100)).await;

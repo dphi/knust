@@ -306,7 +306,7 @@ async fn run_listener(
     }
 
     // Verify connection is still active before starting telegram processing
-    if !knx.is_connected().await {
+    if !knx.is_connected() {
         println!("✗ Connection lost immediately after establishment");
         println!("  This suggests the gateway rejected the connection");
         match config.connection_type {
@@ -326,7 +326,7 @@ async fn run_listener(
     sleep(Duration::from_millis(200)).await;
 
     // Check connection again before starting processing
-    if !knx.is_connected().await {
+    if !knx.is_connected() {
         println!("✗ Connection lost before starting telegram processing");
         println!("  The gateway closed the connection immediately");
         match config.connection_type {
@@ -371,7 +371,7 @@ async fn run_listener(
             sleep(Duration::from_millis(100)).await;
 
             // Check if we're still connected
-            if !knx.is_connected().await {
+            if !knx.is_connected() {
                 reconnect_attempts += 1;
                 println!(
                     "Connection lost (attempt {reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS}), attempting to reconnect..."

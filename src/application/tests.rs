@@ -95,7 +95,7 @@ proptest! {
             };
 
             // Verify initial state
-            let initial_state = knx.state().await;
+            let initial_state = knx.state();
             prop_assert_eq!(
                 initial_state,
                 ConnectionState::Disconnected,
@@ -112,7 +112,7 @@ proptest! {
             let _connect_result = timeout(cancel_duration, knx.connect()).await;
 
             // Whether it completed or timed out, state should be consistent
-            let state_after_connect = knx.state().await;
+            let state_after_connect = knx.state();
             prop_assert!(
                 state_after_connect == ConnectionState::Connected ||
                 state_after_connect == ConnectionState::Disconnected ||
@@ -127,7 +127,7 @@ proptest! {
                 let _disconnect_result = timeout(cancel_duration, knx.disconnect()).await;
 
                 // State should be consistent after disconnect attempt
-                let state_after_disconnect = knx.state().await;
+                let state_after_disconnect = knx.state();
                 prop_assert!(
                     state_after_disconnect == ConnectionState::Disconnected ||
                     state_after_disconnect == ConnectionState::Disconnecting ||
@@ -151,72 +151,25 @@ proptest! {
         })?;
     }
 
-    /// Test that multiple concurrent operations handle cancellation correctly
     #[test]
-    fn test_concurrent_operation_cancellation(
+    fn concurrent_state_reads_preserve_connection_state(
         config in arb_connection_config(),
         num_operations in 2usize..5usize,
-        cancel_after_ms in 5u64..30u64,
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
 
         rt.block_on(async {
-            let knx = match Knx::new(config.clone()).await {
-                Ok(x) => Arc::new(x),
-                Err(_) => return Ok(()),
+            let Ok(knx) = Knx::new(config).await else {
+                return Ok(());
             };
-
-            let completed = Arc::new(AtomicUsize::new(0));
-            let cancelled = Arc::new(AtomicUsize::new(0));
-
-            let mut handles = Vec::new();
-
-            // Spawn multiple concurrent operations
-            for _ in 0..num_operations {
-                let knx_clone = knx.clone();
-                let completed_clone = completed.clone();
-                let cancelled_clone = cancelled.clone();
-                let cancel_duration = Duration::from_millis(cancel_after_ms);
-
-                let handle = tokio::spawn(async move {
-                    match timeout(cancel_duration, knx_clone.state()).await {
-                        Ok(_) => {
-                            completed_clone.fetch_add(1, Ordering::SeqCst);
-                        }
-                        Err(_) => {
-                            cancelled_clone.fetch_add(1, Ordering::SeqCst);
-                        }
-                    }
-                });
-
-                handles.push(handle);
-            }
-
-            // Wait for all operations to complete or be cancelled
+            let handles: Vec<_> = (0..num_operations).map(|_| {
+                let client = knx.clone();
+                tokio::spawn(async move { client.state() })
+            }).collect();
             for handle in handles {
-                let _ = handle.await;
+                prop_assert_eq!(handle.await.unwrap(), ConnectionState::Disconnected);
             }
-
-            // Verify all operations were accounted for
-            let total = completed.load(Ordering::SeqCst) + cancelled.load(Ordering::SeqCst);
-            prop_assert_eq!(
-                total,
-                num_operations,
-                "All operations should be either completed or cancelled"
-            );
-
-            // Verify Knx is still in a valid state
-            let final_state = knx.state().await;
-            prop_assert!(
-                final_state == ConnectionState::Disconnected ||
-                final_state == ConnectionState::Connected ||
-                final_state == ConnectionState::Connecting ||
-                final_state == ConnectionState::Disconnecting ||
-                final_state == ConnectionState::Error,
-                "Knx should be in a valid state after concurrent operations, got: {:?}",
-                final_state
-            );
-
+            prop_assert_eq!(knx.state(), ConnectionState::Disconnected);
             Ok(())
         })?;
     }
@@ -241,7 +194,7 @@ mod unit_tests {
         };
 
         let knx = Knx::new(config).await.unwrap();
-        assert_eq!(knx.state().await, ConnectionState::Disconnected);
+        assert_eq!(knx.state(), ConnectionState::Disconnected);
     }
 
     #[tokio::test]
@@ -260,14 +213,14 @@ mod unit_tests {
         let knx = Knx::new(config).await.unwrap();
 
         // Initial state should be Disconnected
-        assert_eq!(knx.state().await, ConnectionState::Disconnected);
-        assert!(!knx.is_connected().await);
+        assert_eq!(knx.state(), ConnectionState::Disconnected);
+        assert!(!knx.is_connected());
 
         // Try to connect (may fail in test environment, but state should be consistent)
         let _connect_result = knx.connect().await;
 
         // State should be either Connected, Connecting, Disconnected, or Error
-        let state = knx.state().await;
+        let state = knx.state();
         assert!(
             state == ConnectionState::Connected
                 || state == ConnectionState::Connecting
@@ -296,7 +249,7 @@ mod unit_tests {
         let _result = timeout(Duration::from_millis(1), knx.connect()).await;
 
         // Whether it completed or timed out, Knx should be in a valid state
-        let state = knx.state().await;
+        let state = knx.state();
         assert!(
             state == ConnectionState::Disconnected
                 || state == ConnectionState::Connecting
@@ -317,7 +270,7 @@ mod unit_tests {
             .await
             .unwrap();
 
-        assert_eq!(knx.state().await, ConnectionState::Disconnected);
+        assert_eq!(knx.state(), ConnectionState::Disconnected);
         assert_eq!(knx.config().connection_type, ConnectionType::Routing);
         assert_eq!(knx.config().timeout, Duration::from_secs(3));
         assert!(!knx.config().auto_reconnect);

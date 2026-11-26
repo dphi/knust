@@ -162,7 +162,7 @@ async fn disconnect_invalidates_a_handshake_that_finishes_late() {
         connecting.await.unwrap(),
         Err(KnxError::Transport(TransportError::ConnectionClosed))
     ));
-    assert_eq!(knx.state().await, ConnectionState::Disconnected);
+    assert_eq!(knx.state(), ConnectionState::Disconnected);
     assert!(knx.connection.borrow().is_none());
 }
 
@@ -180,10 +180,10 @@ async fn dropping_a_pending_connect_restores_the_disconnected_state() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(knx.state().await, ConnectionState::Connecting);
+    assert_eq!(knx.state(), ConnectionState::Connecting);
     connecting.abort();
     assert!(connecting.await.unwrap_err().is_cancelled());
-    assert_eq!(knx.state().await, ConnectionState::Disconnected);
+    assert_eq!(knx.state(), ConnectionState::Disconnected);
 }
 
 #[tokio::test(start_paused = true)]

@@ -93,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Check connection status
-    if knx.is_connected().await {
+    if knx.is_connected() {
         println!("Connection is still active");
     } else {
         println!("Connection lost, attempting to reconnect...");

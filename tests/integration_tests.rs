@@ -165,7 +165,7 @@ async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), Kn
         .connect()
         .await?;
 
-    assert_eq!(knx.state().await, ConnectionState::Connected);
+    assert_eq!(knx.state(), ConnectionState::Connected);
     assert_eq!(knx.individual_address(), IndividualAddress::new(1, 1, 240));
     knx.connect().await?;
     assert_eq!(server.client_count().await, 1);
@@ -199,7 +199,7 @@ async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), Kn
     }
     knx.start().await?;
     knx.shutdown().await?;
-    assert_eq!(knx.state().await, ConnectionState::Disconnected);
+    assert_eq!(knx.state(), ConnectionState::Disconnected);
     assert!(knx.start().await.is_err());
     assert_eq!(
         states.0.lock().unwrap().as_slice(),
