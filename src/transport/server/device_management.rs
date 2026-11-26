@@ -1,6 +1,6 @@
 //! Serving cEMI property requests on KNXnet/IP device-management channels.
 
-use super::{ACK_TIMEOUT, ClientSession, ClientSessionKind, TunnelServer};
+use super::{ACK_TIMEOUT, ClientLink, ClientSession, ClientSessionKind, TunnelServer};
 use crate::error::{ProtocolError, Result, TransportError};
 use crate::log_transport;
 use crate::logging::LogLevel;
@@ -36,20 +36,19 @@ impl TunnelServer {
     pub(super) async fn handle_device_configuration_request(
         self: &Arc<Self>,
         body: &[u8],
+        link: &ClientLink,
     ) -> Result<()> {
         let request = TunnellingRequest::parse(body)?;
         let session = self
-            .sessions
-            .read()
-            .await
-            .get(&request.communication_channel_id)
-            .cloned();
+            .data_session(
+                request.communication_channel_id,
+                link,
+                ClientSessionKind::DeviceManagement,
+            )
+            .await;
         let Some(session) = session else {
             return Ok(());
         };
-        if session.kind != ClientSessionKind::DeviceManagement {
-            return Ok(());
-        }
         session.touch();
 
         match session.validate_recv_seq(request.sequence_counter) {
@@ -156,7 +155,7 @@ impl TunnelServer {
         let request = TunnellingRequest::new(session.channel_id, sequence, cemi.to_vec());
         let frame = KnxIpFrame::new(ServiceType::DeviceConfigurationRequest, request.serialize())
             .serialize();
-        let frame = self.maybe_encrypt(frame, session.link.peer_addr()).await?;
+        let frame = self.maybe_encrypt(frame, &session.link).await?;
 
         for attempt in 0..2u8 {
             let (tx, rx) = oneshot::channel();

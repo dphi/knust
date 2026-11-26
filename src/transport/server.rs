@@ -45,6 +45,8 @@ use crate::security::SecureSession;
 #[cfg(feature = "secure")]
 use crate::security::SessionConfig;
 
+#[cfg(feature = "secure")]
+use super::frame_transport::TransportKind;
 use super::frame_transport::{FrameTransport, TcpFrameTransport};
 use super::tunnel::SequenceValidationResult;
 
@@ -101,6 +103,23 @@ impl ClientLink {
             ClientLink::Udp { peer_addr, .. } | ClientLink::Tcp { peer_addr, .. } => *peer_addr,
         }
     }
+
+    fn same_peer(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Udp { peer_addr: a, .. }, Self::Udp { peer_addr: b, .. }) => a == b,
+            (Self::Tcp { transport: a, .. }, Self::Tcp { transport: b, .. }) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+
+    #[cfg(feature = "secure")]
+    fn session_peer(&self) -> (TransportKind, SocketAddr) {
+        let kind = match self {
+            Self::Udp { .. } => TransportKind::Udp,
+            Self::Tcp { .. } => TransportKind::Tcp,
+        };
+        (kind, self.peer_addr())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +130,7 @@ enum ClientSessionKind {
 
 struct ClientSession {
     channel_id: u8,
+    control_link: ClientLink,
     link: ClientLink,
     kind: ClientSessionKind,
     send_seq: AtomicU8,
@@ -122,9 +142,15 @@ struct ClientSession {
 }
 
 impl ClientSession {
-    fn new(channel_id: u8, link: ClientLink, kind: ClientSessionKind) -> Self {
+    fn new(
+        channel_id: u8,
+        control_link: ClientLink,
+        link: ClientLink,
+        kind: ClientSessionKind,
+    ) -> Self {
         Self {
             channel_id,
+            control_link,
             link,
             kind,
             send_seq: AtomicU8::new(0),
@@ -176,7 +202,7 @@ pub struct TunnelServer {
     /// covers both in-progress handshakes (before a tunnel channel exists)
     /// and established sessions (used to decrypt/encrypt every frame after).
     #[cfg(feature = "secure")]
-    secure_sessions: RwLock<HashMap<SocketAddr, Arc<SecureSessionEntry>>>,
+    secure_sessions: RwLock<HashMap<(TransportKind, SocketAddr), Arc<SecureSessionEntry>>>,
     #[cfg(feature = "secure")]
     next_secure_session_id: AtomicU16,
     telegram_tx: broadcast::Sender<Telegram>,
@@ -339,7 +365,6 @@ impl TunnelServer {
                         transport: transport.clone(),
                         peer_addr,
                     };
-                    let mut assigned_channel: Option<u8> = None;
                     loop {
                         let received = tokio::select! {
                             biased;
@@ -351,8 +376,7 @@ impl TunnelServer {
                         };
                         match received {
                             Ok(data) => match server.handle_frame(&data, link.clone()).await {
-                                Ok(Some(id)) => assigned_channel = Some(id),
-                                Ok(None) => {}
+                                Ok(()) => {}
                                 Err(e) => log_transport!(
                                     LogLevel::Warn,
                                     "TunnelServer: tcp frame error from {}: {}",
@@ -366,17 +390,17 @@ impl TunnelServer {
                     let Some(server) = server.upgrade() else {
                         return;
                     };
-                    if let Some(id) = assigned_channel {
-                        server.sessions.write().await.remove(&id);
-                        log_transport!(
-                            LogLevel::Info,
-                            "TunnelServer: tcp client {} disconnected (channel {})",
-                            peer_addr,
-                            id
-                        );
-                    }
+                    server
+                        .sessions
+                        .write()
+                        .await
+                        .retain(|_, session| !session.control_link.same_peer(&link));
                     #[cfg(feature = "secure")]
-                    server.secure_sessions.write().await.remove(&peer_addr);
+                    server
+                        .secure_sessions
+                        .write()
+                        .await
+                        .remove(&link.session_peer());
                 });
             }
         });
@@ -417,23 +441,20 @@ impl TunnelServer {
         });
     }
 
-    /// Dispatch one received frame. Returns `Some(channel_id)` when this
-    /// frame was a `ConnectRequest` that just assigned a new channel — the
-    /// TCP accept loop uses this to know which channel to clean up when its
-    /// stream closes.
-    async fn handle_frame(self: &Arc<Self>, data: &[u8], link: ClientLink) -> Result<Option<u8>> {
+    /// Dispatch one received frame.
+    async fn handle_frame(self: &Arc<Self>, data: &[u8], link: ClientLink) -> Result<()> {
         let frame = KnxIpFrame::parse(data)?;
         match frame.header.service_type {
             ServiceType::SearchRequest
             | ServiceType::SearchRequestExtended
             | ServiceType::DescriptionRequest => {
                 self.handle_discovery_request(frame, &link).await?;
-                Ok(None)
+                Ok(())
             }
             #[cfg(feature = "secure")]
             ServiceType::SessionRequest => {
                 self.handle_session_request(&frame.body, link).await?;
-                Ok(None)
+                Ok(())
             }
             #[cfg(feature = "secure")]
             ServiceType::SecureWrapper => self.handle_secure_wrapper(data, link).await,
@@ -448,7 +469,7 @@ impl TunnelServer {
         frame: KnxIpFrame,
         link: ClientLink,
         #[cfg_attr(not(feature = "secure"), allow(unused_variables))] was_encrypted: bool,
-    ) -> Result<Option<u8>> {
+    ) -> Result<()> {
         #[cfg(feature = "secure")]
         if self.secure_config.is_some() && !was_encrypted {
             log_transport!(
@@ -457,31 +478,30 @@ impl TunnelServer {
                 frame.header.service_type,
                 link.peer_addr()
             );
-            return Ok(None);
+            return Ok(());
         }
         match frame.header.service_type {
             ServiceType::ConnectRequest => self.handle_connect_request(&frame.body, link).await,
             ServiceType::TunnellingRequest => {
-                self.handle_tunnelling_request(&frame.body, link).await?;
-                Ok(None)
+                self.handle_tunnelling_request(&frame.body, link).await
             }
             ServiceType::DeviceConfigurationRequest => {
-                self.handle_device_configuration_request(&frame.body)
-                    .await?;
-                Ok(None)
+                self.handle_device_configuration_request(&frame.body, &link)
+                    .await
             }
-            ServiceType::TunnellingAck | ServiceType::DeviceConfigurationAck => {
-                self.handle_tunnelling_ack(&frame.body).await?;
-                Ok(None)
+            ServiceType::TunnellingAck => {
+                self.handle_tunnelling_ack(&frame.body, &link, ClientSessionKind::Tunnel)
+                    .await
+            }
+            ServiceType::DeviceConfigurationAck => {
+                self.handle_tunnelling_ack(&frame.body, &link, ClientSessionKind::DeviceManagement)
+                    .await
             }
             ServiceType::ConnectionstateRequest => {
-                self.handle_connectionstate_request(&frame.body, link)
-                    .await?;
-                Ok(None)
+                self.handle_connectionstate_request(&frame.body, link).await
             }
             ServiceType::DisconnectRequest => {
-                self.handle_disconnect_request(&frame.body, link).await?;
-                Ok(None)
+                self.handle_disconnect_request(&frame.body, link).await
             }
             other => {
                 log_transport!(
@@ -490,28 +510,33 @@ impl TunnelServer {
                     other,
                     link.peer_addr()
                 );
-                Ok(None)
+                Ok(())
             }
         }
     }
 
     /// Without the `secure` feature there are no sessions to encrypt for.
     #[cfg(not(feature = "secure"))]
-    async fn maybe_encrypt(&self, frame: Vec<u8>, _peer: SocketAddr) -> Result<Vec<u8>> {
+    async fn maybe_encrypt(&self, frame: Vec<u8>, _link: &ClientLink) -> Result<Vec<u8>> {
         Ok(frame)
     }
 
     /// Route-back (`0.0.0.0:0` / port 0) means "reply to the packet's source
-    /// address"; otherwise use the address the client advertised. Only
-    /// meaningful for UDP — a TCP link always replies on the same stream
-    /// regardless of what HPAI the client declared.
-    fn resolve_link(hpai: &Hpai, link: &ClientLink) -> ClientLink {
+    /// address". Alternate ports on the same host support split UDP endpoints.
+    fn resolve_link(&self, hpai: &Hpai, link: &ClientLink) -> ClientLink {
+        #[cfg(feature = "secure")]
+        if self.secure_config.is_some() {
+            return link.clone();
+        }
         match link {
             ClientLink::Udp { socket, peer_addr } => {
-                let resolved = if hpai.port == 0 {
-                    *peer_addr
+                let resolved = if hpai.port != 0
+                    && hpai.host_protocol_code == Hpai::PROTOCOL_UDP
+                    && (hpai.ip_addr.is_unspecified() || hpai.ip_addr == peer_addr.ip())
+                {
+                    SocketAddr::new(peer_addr.ip(), hpai.port)
                 } else {
-                    hpai.socket_addr()
+                    *peer_addr
                 };
                 ClientLink::Udp {
                     socket: socket.clone(),
@@ -526,7 +551,7 @@ impl TunnelServer {
         (1u8..=255).find(|id| !sessions.contains_key(id))
     }
 
-    async fn handle_connect_request(&self, body: &[u8], link: ClientLink) -> Result<Option<u8>> {
+    async fn handle_connect_request(&self, body: &[u8], link: ClientLink) -> Result<()> {
         let request = ConnectRequest::parse(body)?;
         let kind = match request.cri.connection_type {
             ConnectionRequestInfo::TUNNEL_CONNECTION => ClientSessionKind::Tunnel,
@@ -541,7 +566,7 @@ impl TunnelServer {
                     };
                     self.send_reply(ServiceType::ConnectResponse, &response.serialize(), &link)
                         .await?;
-                    return Ok(None);
+                    return Ok(());
                 }
                 ClientSessionKind::DeviceManagement
             }
@@ -555,15 +580,24 @@ impl TunnelServer {
                 };
                 self.send_reply(ServiceType::ConnectResponse, &response.serialize(), &link)
                     .await?;
-                return Ok(None);
+                return Ok(());
             }
         };
-        let link = Self::resolve_link(&request.data_endpoint, &link);
+        let control_link = self.resolve_link(&request.control_endpoint, &link);
+        let data_link = self.resolve_link(&request.data_endpoint, &link);
 
         let channel_id = {
             let mut sessions = self.sessions.write().await;
             if let Some(id) = Self::allocate_channel_id(&sessions) {
-                sessions.insert(id, Arc::new(ClientSession::new(id, link.clone(), kind)));
+                sessions.insert(
+                    id,
+                    Arc::new(ClientSession::new(
+                        id,
+                        control_link.clone(),
+                        data_link.clone(),
+                        kind,
+                    )),
+                );
                 id
             } else {
                 let response = ConnectResponse {
@@ -573,15 +607,20 @@ impl TunnelServer {
                     crd: Vec::new(),
                     assigned_address: None,
                 };
-                self.send_reply(ServiceType::ConnectResponse, &response.serialize(), &link)
-                    .await?;
-                return Ok(None);
+                drop(sessions);
+                self.send_reply(
+                    ServiceType::ConnectResponse,
+                    &response.serialize(),
+                    &control_link,
+                )
+                .await?;
+                return Ok(());
             }
         };
 
         let (data_endpoint, crd, assigned_address) = match kind {
             ClientSessionKind::Tunnel => (
-                match link {
+                match data_link {
                     ClientLink::Tcp { .. } => Hpai::new_tcp_route_back(),
                     ClientLink::Udp { .. } => Hpai::new(self.local_addr),
                 },
@@ -589,7 +628,7 @@ impl TunnelServer {
                 Some(self.individual_address),
             ),
             ClientSessionKind::DeviceManagement => (
-                match link {
+                match data_link {
                     ClientLink::Tcp { .. } => Hpai::new_tcp_route_back(),
                     ClientLink::Udp { .. } => Hpai::new(self.local_addr),
                 },
@@ -604,15 +643,33 @@ impl TunnelServer {
             crd,
             assigned_address,
         };
-        self.send_reply(ServiceType::ConnectResponse, &response.serialize(), &link)
-            .await?;
+        self.send_reply(
+            ServiceType::ConnectResponse,
+            &response.serialize(),
+            &control_link,
+        )
+        .await?;
         log_transport!(
             LogLevel::Info,
             "TunnelServer: client {} connected, channel_id={}",
-            link.peer_addr(),
+            control_link.peer_addr(),
             channel_id
         );
-        Ok(Some(channel_id))
+        Ok(())
+    }
+
+    async fn data_session(
+        &self,
+        channel_id: u8,
+        link: &ClientLink,
+        kind: ClientSessionKind,
+    ) -> Option<Arc<ClientSession>> {
+        self.sessions
+            .read()
+            .await
+            .get(&channel_id)
+            .filter(|session| session.kind == kind && session.link.same_peer(link))
+            .cloned()
     }
 
     async fn handle_tunnelling_request(
@@ -622,11 +679,12 @@ impl TunnelServer {
     ) -> Result<()> {
         let request = TunnellingRequest::parse(body)?;
         let session = self
-            .sessions
-            .read()
-            .await
-            .get(&request.communication_channel_id)
-            .cloned();
+            .data_session(
+                request.communication_channel_id,
+                &link,
+                ClientSessionKind::Tunnel,
+            )
+            .await;
         let Some(session) = session else {
             log_transport!(
                 LogLevel::Warn,
@@ -730,14 +788,16 @@ impl TunnelServer {
         self.send_cemi_to_session(session, &cemi.serialize()?).await
     }
 
-    async fn handle_tunnelling_ack(&self, body: &[u8]) -> Result<()> {
+    async fn handle_tunnelling_ack(
+        &self,
+        body: &[u8],
+        link: &ClientLink,
+        kind: ClientSessionKind,
+    ) -> Result<()> {
         let ack = TunnellingAck::parse(body)?;
         let session = self
-            .sessions
-            .read()
-            .await
-            .get(&ack.communication_channel_id)
-            .cloned();
+            .data_session(ack.communication_channel_id, link, kind)
+            .await;
         if let Some(session) = session {
             let mut pending_ack = session.pending_ack.lock().unwrap();
             if let Some((sequence, _)) = pending_ack.as_ref()
@@ -752,54 +812,67 @@ impl TunnelServer {
 
     async fn handle_connectionstate_request(&self, body: &[u8], link: ClientLink) -> Result<()> {
         let request = ConnectionstateRequest::parse(body)?;
-        let (status, reply_link) = {
+        let status = {
             let sessions = self.sessions.read().await;
-            match sessions.get(&request.communication_channel_id) {
+            match sessions
+                .get(&request.communication_channel_id)
+                .filter(|session| session.control_link.same_peer(&link))
+            {
                 Some(session) => {
                     session.touch();
-                    (ConnectionstateResponse::STATUS_OK, session.link.clone())
+                    ConnectionstateResponse::STATUS_OK
                 }
-                None => (ConnectResponse::STATUS_ERROR_CONNECTION_ID, link),
+                None => ConnectResponse::STATUS_ERROR_CONNECTION_ID,
             }
         };
         let response = ConnectionstateResponse::new(request.communication_channel_id, status);
         self.send_reply(
             ServiceType::ConnectionstateResponse,
             &response.serialize(),
-            &reply_link,
+            &link,
         )
         .await
     }
 
     async fn handle_disconnect_request(&self, body: &[u8], link: ClientLink) -> Result<()> {
         let request = DisconnectRequest::parse(body)?;
-        let reply_link = self
-            .sessions
-            .write()
-            .await
-            .remove(&request.communication_channel_id)
-            .map_or(link, |s| s.link.clone());
-        log_transport!(
-            LogLevel::Info,
-            "TunnelServer: client channel {} disconnected",
-            request.communication_channel_id
-        );
-        let response = DisconnectResponse::new(
-            request.communication_channel_id,
-            DisconnectResponse::STATUS_OK,
-        );
+        let removed = {
+            let mut sessions = self.sessions.write().await;
+            if sessions
+                .get(&request.communication_channel_id)
+                .is_some_and(|session| session.control_link.same_peer(&link))
+            {
+                sessions.remove(&request.communication_channel_id);
+                true
+            } else {
+                false
+            }
+        };
+        let status = if removed {
+            log_transport!(
+                LogLevel::Info,
+                "TunnelServer: client channel {} disconnected",
+                request.communication_channel_id
+            );
+            DisconnectResponse::STATUS_OK
+        } else {
+            DisconnectResponse::STATUS_ERROR_CONNECTION_ID
+        };
+        let response = DisconnectResponse::new(request.communication_channel_id, status);
         let result = self
             .send_reply(
                 ServiceType::DisconnectResponse,
                 &response.serialize(),
-                &reply_link,
+                &link,
             )
             .await;
         #[cfg(feature = "secure")]
-        self.secure_sessions
-            .write()
-            .await
-            .remove(&reply_link.peer_addr());
+        if removed {
+            self.secure_sessions
+                .write()
+                .await
+                .remove(&link.session_peer());
+        }
         result
     }
 
@@ -810,7 +883,7 @@ impl TunnelServer {
         link: &ClientLink,
     ) -> Result<()> {
         let frame = KnxIpFrame::new(service_type, body.to_vec()).serialize();
-        let frame = self.maybe_encrypt(frame, link.peer_addr()).await?;
+        let frame = self.maybe_encrypt(frame, link).await?;
         link.send_frame(&frame).await
     }
 
@@ -830,7 +903,7 @@ impl TunnelServer {
         let request = TunnellingRequest::new(session.channel_id, seq, cemi.to_vec());
         let frame =
             KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize();
-        let frame = self.maybe_encrypt(frame, session.link.peer_addr()).await?;
+        let frame = self.maybe_encrypt(frame, &session.link).await?;
 
         if matches!(session.link, ClientLink::Tcp { .. }) {
             session.link.send_frame(&frame).await?;
@@ -1018,6 +1091,75 @@ mod tests {
                 assert_eq!(server.client_count().await, 0);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn udp_channels_honor_split_control_and_data_endpoints() {
+        let server = bind_server().await;
+        let control = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let data = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let control_addr = control.local_addr().unwrap();
+        let data_addr = data.local_addr().unwrap();
+        control.connect(server.local_addr()).await.unwrap();
+        data.connect(server.local_addr()).await.unwrap();
+
+        let request = ConnectRequest::new(control_addr, data_addr);
+        let frame = KnxIpFrame::new(ServiceType::ConnectRequest, request.serialize()).serialize();
+        control.send(&frame).await.unwrap();
+        let mut buf = [0; 1024];
+        let len = timeout(Duration::from_secs(1), control.recv(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        let frame = KnxIpFrame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.header.service_type, ServiceType::ConnectResponse);
+        let response = ConnectResponse::parse(&frame.body).unwrap();
+        assert_eq!(response.status, ConnectResponse::STATUS_OK);
+        let id = response.channel_id;
+        let data_link = ClientLink::Udp {
+            socket: server.socket.clone(),
+            peer_addr: data_addr,
+        };
+        let control_link = ClientLink::Udp {
+            socket: server.socket.clone(),
+            peer_addr: control_addr,
+        };
+        assert!(
+            server
+                .data_session(id, &data_link, ClientSessionKind::Tunnel)
+                .await
+                .is_some()
+        );
+        assert!(
+            server
+                .data_session(id, &control_link, ClientSessionKind::Tunnel)
+                .await
+                .is_none()
+        );
+        assert!(
+            server
+                .data_session(id, &data_link, ClientSessionKind::DeviceManagement)
+                .await
+                .is_none()
+        );
+
+        let request = ConnectionstateRequest::new(id, Hpai::new(control_addr));
+        let frame =
+            KnxIpFrame::new(ServiceType::ConnectionstateRequest, request.serialize()).serialize();
+        control.send(&frame).await.unwrap();
+        let len = timeout(Duration::from_secs(1), control.recv(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        let frame = KnxIpFrame::parse(&buf[..len]).unwrap();
+        assert_eq!(
+            frame.header.service_type,
+            ServiceType::ConnectionstateResponse
+        );
+        assert_eq!(
+            ConnectionstateResponse::parse(&frame.body).unwrap().status,
+            ConnectionstateResponse::STATUS_OK
+        );
     }
 
     #[tokio::test]

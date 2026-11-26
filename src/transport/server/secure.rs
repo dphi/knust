@@ -74,7 +74,7 @@ impl TunnelServer {
         .await?;
 
         self.secure_sessions.write().await.insert(
-            link.peer_addr(),
+            link.session_peer(),
             Arc::new(SecureSessionEntry {
                 session: tokio::sync::Mutex::new(session),
                 client_public_key: request.public_key,
@@ -119,15 +119,23 @@ impl TunnelServer {
                 "TunnelServer: secure authentication failed for {}",
                 peer
             );
-            self.secure_sessions.write().await.remove(&peer);
+            self.secure_sessions
+                .write()
+                .await
+                .remove(&link.session_peer());
         }
         Ok(())
     }
 
     /// Encrypt `frame` for `peer` if it has an established secure session,
     /// otherwise return it unchanged.
-    pub(super) async fn maybe_encrypt(&self, frame: Vec<u8>, peer: SocketAddr) -> Result<Vec<u8>> {
-        let entry = self.secure_sessions.read().await.get(&peer).cloned();
+    pub(super) async fn maybe_encrypt(&self, frame: Vec<u8>, link: &ClientLink) -> Result<Vec<u8>> {
+        let entry = self
+            .secure_sessions
+            .read()
+            .await
+            .get(&link.session_peer())
+            .cloned();
         match entry {
             Some(entry) => entry.session.lock().await.encrypt_frame(&frame).await,
             None => Ok(frame),
@@ -138,16 +146,21 @@ impl TunnelServer {
         self: &Arc<Self>,
         data: &[u8],
         link: ClientLink,
-    ) -> Result<Option<u8>> {
+    ) -> Result<()> {
         let peer = link.peer_addr();
-        let entry = self.secure_sessions.read().await.get(&peer).cloned();
+        let entry = self
+            .secure_sessions
+            .read()
+            .await
+            .get(&link.session_peer())
+            .cloned();
         let Some(entry) = entry else {
             log_transport!(
                 LogLevel::Warn,
                 "TunnelServer: SecureWrapper from {} with no established secure session",
                 peer
             );
-            return Ok(None);
+            return Ok(());
         };
         let session = entry.session.lock().await;
         let plaintext = session.decrypt_frame(data).await?;
@@ -158,14 +171,14 @@ impl TunnelServer {
             if inner.header.service_type == ServiceType::SessionAuthenticate {
                 self.handle_session_authenticate(&inner.body, link, &entry)
                     .await?;
-                return Ok(None);
+                return Ok(());
             }
             log_transport!(
                 LogLevel::Warn,
                 "TunnelServer: SecureWrapper from {} rejected — session not yet authenticated",
                 peer
             );
-            return Ok(None);
+            return Ok(());
         }
         self.dispatch_plain_frame(inner, link, true).await
     }

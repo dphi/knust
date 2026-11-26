@@ -24,7 +24,7 @@ use crate::log_transport;
 use crate::logging::LogLevel;
 
 /// The kind of byte transport backing a tunnel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransportKind {
     Udp,
     Tcp,
