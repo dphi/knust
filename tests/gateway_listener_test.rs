@@ -143,9 +143,14 @@ async fn listen_for_packets(config: TestConfig) -> Result<(), Box<dyn std::error
     // Create connection configuration
     let connection_config = ConnectionConfig {
         connection_type: config.connection_type,
-        gateway_ip: config.gateway_ip,
+        gateway: Some(std::net::SocketAddr::new(
+            config
+                .gateway_ip
+                .unwrap_or_else(|| "192.168.1.100".parse().unwrap()),
+            3671,
+        )),
         individual_address: config.individual_address,
-        timeout_ms: 10000, // 10 second timeout
+        timeout: std::time::Duration::from_millis(10000), // 10 second timeout
         auto_reconnect: true,
         ..Default::default()
     };
@@ -154,19 +159,7 @@ async fn listen_for_packets(config: TestConfig) -> Result<(), Box<dyn std::error
     let packet_counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = packet_counter.clone();
 
-    // Create Knx instance
-    let knx = Knx::builder()
-        .connection_type(config.connection_type)
-        .gateway_ip(
-            config
-                .gateway_ip
-                .unwrap_or_else(|| "192.168.1.100".parse().unwrap()),
-        )
-        .individual_address(config.individual_address)
-        .timeout_ms(connection_config.timeout_ms)
-        .auto_reconnect(connection_config.auto_reconnect)
-        .build()
-        .await?;
+    let knx = Knx::new(connection_config).await?;
 
     // Register telegram callback after creation
     let _callback_handle = knx

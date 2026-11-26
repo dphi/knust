@@ -62,11 +62,8 @@ pub struct ConnectionConfig {
     /// Type of connection to establish
     pub connection_type: ConnectionType,
 
-    /// Gateway IP address (required for tunneling)
-    pub gateway_ip: Option<IpAddr>,
-
-    /// Gateway port (defaults to 3671 for KNX/IP)
-    pub gateway_port: Option<u16>,
+    /// Gateway endpoint for tunneling, including its port.
+    pub gateway: Option<SocketAddr>,
 
     /// Local IP address to bind to
     pub local_ip: Option<IpAddr>,
@@ -77,32 +74,27 @@ pub struct ConnectionConfig {
     /// Security configuration
     pub security: Option<SecurityConfig>,
 
-    /// Connection timeout in milliseconds
-    pub timeout_ms: u64,
+    /// Deadline for opening the transport and for each tunnel handshake step.
+    pub timeout: Duration,
 
     /// Enable automatic reconnection
     pub auto_reconnect: bool,
 
     /// Reconnection backoff settings
     pub reconnect_backoff: BackoffConfig,
-
-    /// TCP-specific configuration
-    pub tcp_config: TcpConfig,
 }
 
 impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
             connection_type: ConnectionType::Tunneling,
-            gateway_ip: None,
-            gateway_port: Some(3671), // Standard KNX/IP port
+            gateway: None,
             local_ip: None,
             individual_address: IndividualAddress::new(1, 1, 240), // Default client address
             security: None,
-            timeout_ms: 5000,
+            timeout: Duration::from_secs(5),
             auto_reconnect: true,
             reconnect_backoff: BackoffConfig::default(),
-            tcp_config: TcpConfig::default(),
         }
     }
 }
@@ -166,16 +158,10 @@ impl ConnectionConfig {
             }
         }
 
-        let name = if self.connection_type.uses_tcp() {
-            "tcp_config.connect_timeout_ms"
-        } else {
-            "timeout_ms"
-        };
-        let millis = self.tunnel_timeout_ms();
-        if millis == 0 {
+        if self.connection_type != ConnectionType::Routing && self.timeout.is_zero() {
             return Err(ConfigurationError::InvalidValue {
-                parameter: name.to_owned(),
-                value: millis.to_string(),
+                parameter: "timeout".to_owned(),
+                value: format!("{:?}", self.timeout),
                 reason: "Timeout must be greater than 0".to_owned(),
             }
             .into());
@@ -184,16 +170,20 @@ impl ConnectionConfig {
     }
 
     pub(crate) fn gateway_addr(&self) -> Result<SocketAddr> {
-        let ip = self
-            .gateway_ip
+        let gateway = self
+            .gateway
             .ok_or_else(|| ConfigurationError::MissingParameter {
-                parameter: "gateway_ip".to_owned(),
+                parameter: "gateway".to_owned(),
             })?;
-        let port = self.gateway_port.unwrap_or(3671);
-        if port == 0 || ip.is_unspecified() || ip.is_multicast() || ip == IpAddr::from([255; 4]) {
+        let ip = gateway.ip();
+        if gateway.port() == 0
+            || ip.is_unspecified()
+            || ip.is_multicast()
+            || ip == IpAddr::from([255; 4])
+        {
             return Err(ConfigurationError::InvalidValue {
                 parameter: "gateway".to_owned(),
-                value: SocketAddr::new(ip, port).to_string(),
+                value: gateway.to_string(),
                 reason: "Expected a unicast gateway address and a nonzero port".to_owned(),
             }
             .into());
@@ -204,15 +194,7 @@ impl ConnectionConfig {
             }
             .into());
         }
-        Ok(SocketAddr::new(ip, port))
-    }
-
-    pub(crate) fn tunnel_timeout_ms(&self) -> u64 {
-        if self.connection_type.uses_tcp() {
-            self.tcp_config.connect_timeout_ms
-        } else {
-            self.timeout_ms
-        }
+        Ok(gateway)
     }
 }
 
@@ -233,12 +215,6 @@ pub enum ConnectionType {
 
     /// Secure routing connection
     SecureRouting,
-}
-
-impl ConnectionType {
-    fn uses_tcp(self) -> bool {
-        matches!(self, Self::TcpTunneling | Self::SecureTunneling)
-    }
 }
 
 /// Security configuration for secure connections.
@@ -346,21 +322,6 @@ impl Default for BackoffConfig {
             max_delay_ms: 30000,
             multiplier: 2.0,
             max_attempts: 10,
-        }
-    }
-}
-
-/// TCP-specific configuration options
-#[derive(Debug, Clone)]
-pub struct TcpConfig {
-    /// TCP connection timeout in milliseconds
-    pub connect_timeout_ms: u64,
-}
-
-impl Default for TcpConfig {
-    fn default() -> Self {
-        Self {
-            connect_timeout_ms: 5000,
         }
     }
 }

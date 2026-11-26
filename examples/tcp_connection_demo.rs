@@ -6,7 +6,7 @@
 //! The example will try to read gateway configuration from .env.test file,
 //! or use a default address if not configured.
 
-use knust::transport::{BackoffConfig, TcpConfig};
+use knust::transport::BackoffConfig;
 use knust::{ConnectionConfig, ConnectionType, Knx, KnxError};
 use std::time::Duration;
 
@@ -39,15 +39,13 @@ async fn main() -> Result<(), KnxError> {
     // Configure TCP connection
     let config = ConnectionConfig {
         connection_type: ConnectionType::TcpTunneling,
-        gateway_ip: Some(gateway_ip),
-        gateway_port: Some(gateway_port),
+        gateway: Some(std::net::SocketAddr::new(gateway_ip, gateway_port)),
         local_ip: None, // Let the system choose
         individual_address: "1.1.240".parse()?,
         security: None,
-        timeout_ms: 5000,
+        timeout: Duration::from_millis(5000),
         auto_reconnect: true,
         reconnect_backoff: BackoffConfig::default(),
-        tcp_config: TcpConfig::default(), // Use default TCP settings
     };
 
     println!("Creating Knx instance with TCP connection...");

@@ -81,12 +81,11 @@ yourself — see [`examples/send_telegrams.rs`](examples/send_telegrams.rs).
 
 ```rust
 use knust::Knx;
+use std::time::Duration;
 
 let knx = Knx::builder()
-    .connection_type(ConnectionType::Tunneling)
-    .gateway_ip("192.168.1.100".parse().unwrap())
-    .individual_address("1.1.240".parse()?)
-    .timeout_ms(5000)
+    .tunnel("192.168.1.100:3671".parse()?)
+    .timeout(Duration::from_secs(5))
     .auto_reconnect(true)
     .build()
     .await?;
@@ -101,8 +100,7 @@ Best for reliable communication with a single KNX/IP gateway:
 ```rust
 let config = ConnectionConfig {
     connection_type: ConnectionType::Tunneling,
-    gateway_ip: Some("192.168.1.100".parse().unwrap()),
-    gateway_port: Some(3671),
+    gateway: Some("192.168.1.100:3671".parse().unwrap()),
     individual_address: "1.1.240".parse()?,
     ..Default::default()
 };

@@ -77,9 +77,8 @@ async fn udp_connect_uses_configured_timeout() {
     let addr = gateway.local_addr().unwrap();
     let config = ConnectionConfig {
         connection_type: ConnectionType::Tunneling,
-        gateway_ip: Some(addr.ip()),
-        gateway_port: Some(addr.port()),
-        timeout_ms: 50,
+        gateway: Some(addr),
+        timeout: std::time::Duration::from_millis(50),
         ..Default::default()
     };
     let result =
@@ -491,8 +490,7 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
     });
     let knx = Knx::new(ConnectionConfig {
         connection_type: ConnectionType::Tunneling,
-        gateway_ip: Some(gateway.ip()),
-        gateway_port: Some(gateway.port()),
+        gateway: Some(gateway),
         ..Default::default()
     })
     .await

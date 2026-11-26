@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating Knx instance...");
     let knx = Knx::builder()
         .connection_type(ConnectionType::Routing)
-        .timeout_ms(5000)
+        .timeout(Duration::from_millis(5000))
         .auto_reconnect(true)
         .build()
         .await?;

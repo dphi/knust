@@ -54,8 +54,7 @@ impl KnxBuilder {
     /// Set the IP address and port of the tunneling gateway.
     #[must_use]
     pub fn gateway(mut self, address: SocketAddr) -> Self {
-        self.config.gateway_ip = Some(address.ip());
-        self.config.gateway_port = Some(address.port());
+        self.config.gateway = Some(address);
         self
     }
 
@@ -92,24 +91,9 @@ impl KnxBuilder {
     #[must_use]
     pub fn routing(mut self, interface: Option<Ipv4Addr>) -> Self {
         self.config.security = None;
-        self.config.gateway_ip = None;
-        self.config.gateway_port = None;
+        self.config.gateway = None;
         self.config.local_ip = interface.map(Into::into);
         self.connection_type(ConnectionType::Routing)
-    }
-
-    /// Set the gateway IP address (required for tunneling)
-    #[must_use]
-    pub fn gateway_ip(mut self, ip: std::net::IpAddr) -> Self {
-        self.config.gateway_ip = Some(ip);
-        self
-    }
-
-    /// Set the gateway port (default: 3671)
-    #[must_use]
-    pub fn gateway_port(mut self, port: u16) -> Self {
-        self.config.gateway_port = Some(port);
-        self
     }
 
     /// Set the local IP address for binding
@@ -126,21 +110,10 @@ impl KnxBuilder {
         self
     }
 
-    /// Set the connection timeout in milliseconds
-    #[must_use]
-    pub fn timeout_ms(mut self, timeout: u64) -> Self {
-        self.config.timeout_ms = timeout;
-        self
-    }
-
     /// Set the connection deadline for either tunnel transport.
     #[must_use]
     pub fn timeout(mut self, timeout: Duration) -> Self {
-        let millis = u64::try_from(timeout.as_millis())
-            .unwrap_or(u64::MAX)
-            .max(u64::from(!timeout.is_zero()));
-        self.config.timeout_ms = millis;
-        self.config.tcp_config.connect_timeout_ms = millis;
+        self.config.timeout = timeout;
         self
     }
 

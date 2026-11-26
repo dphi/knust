@@ -43,7 +43,7 @@ Example configuration:
 ```rust
 let config = ConnectionConfig {
     connection_type: ConnectionType::Tunneling,
-    gateway_ip: Some("192.168.1.100".parse()?),
+    gateway: Some("192.168.1.100:3671".parse()?),
     individual_address: "1.1.240".parse()?,
     ..Default::default()
 };

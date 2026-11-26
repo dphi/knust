@@ -196,15 +196,13 @@ impl TestConfig {
         self.gateway_addr
             .map(|addr| crate::transport::ConnectionConfig {
                 connection_type: crate::transport::ConnectionType::Tunneling,
-                gateway_ip: Some(addr.ip()),
-                gateway_port: Some(addr.port()),
+                gateway: Some(addr),
                 local_ip: None,
                 individual_address: crate::protocol::IndividualAddress::new(1, 1, 240),
                 security: None,
-                timeout_ms: self.test_timeout_ms,
+                timeout: self.test_timeout(),
                 auto_reconnect: false,
                 reconnect_backoff: crate::transport::BackoffConfig::default(),
-                tcp_config: crate::transport::TcpConfig::default(),
             })
     }
 
@@ -214,15 +212,13 @@ impl TestConfig {
         self.gateway_addr
             .map(|addr| crate::transport::ConnectionConfig {
                 connection_type: crate::transport::ConnectionType::TcpTunneling,
-                gateway_ip: Some(addr.ip()),
-                gateway_port: Some(addr.port()),
+                gateway: Some(addr),
                 local_ip: None,
                 individual_address: crate::protocol::IndividualAddress::new(1, 1, 240),
                 security: None,
-                timeout_ms: self.test_timeout_ms,
+                timeout: self.test_timeout(),
                 auto_reconnect: false,
                 reconnect_backoff: crate::transport::BackoffConfig::default(),
-                tcp_config: crate::transport::TcpConfig::default(),
             })
     }
 
@@ -231,15 +227,13 @@ impl TestConfig {
     pub fn create_routing_config(&self) -> crate::transport::ConnectionConfig {
         crate::transport::ConnectionConfig {
             connection_type: crate::transport::ConnectionType::Routing,
-            gateway_ip: None,
-            gateway_port: Some(3671),
+            gateway: None,
             local_ip: None,
             individual_address: crate::protocol::IndividualAddress::new(1, 1, 240),
             security: None,
-            timeout_ms: self.test_timeout_ms,
+            timeout: self.test_timeout(),
             auto_reconnect: false,
             reconnect_backoff: crate::transport::BackoffConfig::default(),
-            tcp_config: crate::transport::TcpConfig::default(),
         }
     }
 }
@@ -318,7 +312,7 @@ mod tests {
                 udp_config.connection_type,
                 crate::transport::ConnectionType::Tunneling
             );
-            assert!(udp_config.gateway_ip.is_some());
+            assert!(udp_config.gateway.is_some());
         }
 
         // Test TCP config creation
@@ -327,7 +321,7 @@ mod tests {
                 tcp_config.connection_type,
                 crate::transport::ConnectionType::TcpTunneling
             );
-            assert!(tcp_config.gateway_ip.is_some());
+            assert!(tcp_config.gateway.is_some());
         }
 
         // Test routing config creation (always works)

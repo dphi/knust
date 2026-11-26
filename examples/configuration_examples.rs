@@ -4,7 +4,7 @@
 //! use cases, including connection types, device setup, and advanced options.
 
 use knust::protocol::{MainGroup, MiddleGroup, RawGroupAddress};
-use knust::transport::{BackoffConfig, SecurityConfig, TcpConfig};
+use knust::transport::{BackoffConfig, SecurityConfig};
 use knust::{Component, ConnectionConfig, ConnectionType, Knx, LogLevel, LoggingConfig};
 
 // Linear connect -> demonstrate -> report walkthrough; splitting it up would
@@ -23,23 +23,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let basic_config = ConnectionConfig {
         connection_type: ConnectionType::Tunneling,
-        gateway_ip: Some("192.168.1.100".parse().unwrap()),
-        gateway_port: Some(3671), // Standard KNX/IP port
-        local_ip: None,           // Auto-detect
+        gateway: Some("192.168.1.100:3671".parse().unwrap()),
+        local_ip: None, // Auto-detect
         individual_address: "1.1.240".parse()?,
         security: None,
-        timeout_ms: 5000,
+        timeout: std::time::Duration::from_millis(5000),
         auto_reconnect: true,
         reconnect_backoff: BackoffConfig::default(),
-        tcp_config: TcpConfig::default(),
     };
 
     println!("📋 Basic Tunneling Configuration:");
     println!("   Connection type: {:?}", basic_config.connection_type);
-    println!("   Gateway IP: {:?}", basic_config.gateway_ip);
-    println!("   Gateway port: {:?}", basic_config.gateway_port);
+    println!("   Gateway: {:?}", basic_config.gateway);
     println!("   Individual address: {}", basic_config.individual_address);
-    println!("   Timeout: {}ms", basic_config.timeout_ms);
+    println!("   Timeout: {:?}", basic_config.timeout);
     println!("   Auto-reconnect: {}", basic_config.auto_reconnect);
 
     let _basic_knx = Knx::new(basic_config).await?;
@@ -51,15 +48,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let routing_config = ConnectionConfig {
         connection_type: ConnectionType::Routing,
-        gateway_ip: None, // Not needed for routing
-        gateway_port: Some(3671),
+        gateway: None,
         local_ip: Some("192.168.1.50".parse().unwrap()), // Specify interface
         individual_address: "1.1.241".parse()?,
         security: None,
-        timeout_ms: 3000,
+        timeout: std::time::Duration::from_millis(3000),
         auto_reconnect: false, // Routing doesn't need reconnection
         reconnect_backoff: BackoffConfig::default(),
-        tcp_config: TcpConfig::default(),
     };
 
     println!("📋 Routing Configuration:");
@@ -87,19 +82,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let advanced_config = ConnectionConfig {
         connection_type: ConnectionType::Tunneling,
-        gateway_ip: Some("192.168.1.100".parse().unwrap()),
-        gateway_port: Some(3671),
+        gateway: Some("192.168.1.100:3671".parse().unwrap()),
         local_ip: Some("192.168.1.50".parse().unwrap()),
         individual_address: "1.1.242".parse()?,
         security: None,
-        timeout_ms: 8000,
+        timeout: std::time::Duration::from_millis(8000),
         auto_reconnect: true,
         reconnect_backoff: custom_backoff,
-        tcp_config: TcpConfig::default(),
     };
 
     println!("📋 Advanced Configuration:");
-    println!("   Timeout: {}ms", advanced_config.timeout_ms);
+    println!("   Timeout: {:?}", advanced_config.timeout);
     println!(
         "   Backoff initial delay: {}ms",
         advanced_config.reconnect_backoff.initial_delay_ms
@@ -129,12 +122,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let secure_config = ConnectionConfig {
         connection_type: ConnectionType::SecureTunneling,
-        gateway_ip: Some("192.168.1.100".parse().unwrap()),
-        gateway_port: Some(3671),
+        gateway: Some("192.168.1.100:3671".parse().unwrap()),
         local_ip: None,
         individual_address: "1.1.243".parse()?,
         security: Some(security_config),
-        timeout_ms: 5000,
+        timeout: std::time::Duration::from_secs(15),
         auto_reconnect: true,
         reconnect_backoff: BackoffConfig {
             initial_delay_ms: 2000, // Longer initial delay for secure connections
@@ -142,18 +134,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             multiplier: 2.0,
             max_attempts: 10,
         },
-        tcp_config: TcpConfig {
-            connect_timeout_ms: 15_000,
-        },
     };
 
     println!("📋 Secure Configuration:");
     println!("   Connection type: {:?}", secure_config.connection_type);
     println!("   Security: Enabled");
-    println!(
-        "   Extended timeout: {}ms",
-        secure_config.tcp_config.connect_timeout_ms
-    );
+    println!("   Extended timeout: {:?}", secure_config.timeout);
 
     let _secure_knx = Knx::new(secure_config).await?;
     println!("✅ Secure Knx instance created");
@@ -231,10 +217,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _builder_knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip("192.168.1.100".parse().unwrap())
-        .gateway_port(3671)
+        .gateway("192.168.1.100:3671".parse()?)
         .individual_address("1.1.244".parse()?)
-        .timeout_ms(7000)
+        .timeout(std::time::Duration::from_millis(7000))
         .auto_reconnect(true)
         .build()
         .await?;

@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use crate::protocol::address::IndividualAddress;
-use crate::transport::{BackoffConfig, ConnectionConfig, ConnectionType, TcpConfig};
+use crate::transport::{BackoffConfig, ConnectionConfig, ConnectionType};
 use crate::{ConnectionState, Knx};
 
 /// Generate arbitrary connection configurations for property testing
@@ -22,15 +22,13 @@ fn arb_connection_config() -> impl Strategy<Value = ConnectionConfig> {
         .prop_map(
             |(connection_type, (area, line, device), timeout_ms)| ConnectionConfig {
                 connection_type,
-                gateway_ip: None,
-                gateway_port: Some(3671),
+                gateway: None,
                 local_ip: None,
                 individual_address: IndividualAddress::new(area, line, device),
                 security: None,
-                timeout_ms,
+                timeout: Duration::from_millis(timeout_ms),
                 auto_reconnect: false,
                 reconnect_backoff: BackoffConfig::default(),
-                tcp_config: TcpConfig::default(),
             },
         )
 }
@@ -233,15 +231,13 @@ mod unit_tests {
     async fn test_knx_creation_with_routing_config() {
         let config = ConnectionConfig {
             connection_type: ConnectionType::Routing,
-            gateway_ip: None,
-            gateway_port: Some(3671),
+            gateway: None,
             local_ip: None,
             individual_address: IndividualAddress::new(1, 1, 240),
             security: None,
-            timeout_ms: 5000,
+            timeout: Duration::from_millis(5000),
             auto_reconnect: true,
             reconnect_backoff: BackoffConfig::default(),
-            tcp_config: TcpConfig::default(),
         };
 
         let knx = Knx::new(config).await.unwrap();
@@ -252,15 +248,13 @@ mod unit_tests {
     async fn test_knx_state_transitions() {
         let config = ConnectionConfig {
             connection_type: ConnectionType::Routing,
-            gateway_ip: None,
-            gateway_port: Some(3671),
+            gateway: None,
             local_ip: None,
             individual_address: IndividualAddress::new(1, 1, 240),
             security: None,
-            timeout_ms: 5000,
+            timeout: Duration::from_millis(5000),
             auto_reconnect: false,
             reconnect_backoff: BackoffConfig::default(),
-            tcp_config: TcpConfig::default(),
         };
 
         let knx = Knx::new(config).await.unwrap();
@@ -287,15 +281,13 @@ mod unit_tests {
     async fn test_cancellation_during_connect() {
         let config = ConnectionConfig {
             connection_type: ConnectionType::Routing,
-            gateway_ip: None,
-            gateway_port: Some(3671),
+            gateway: None,
             local_ip: None,
             individual_address: IndividualAddress::new(1, 1, 240),
             security: None,
-            timeout_ms: 5000,
+            timeout: Duration::from_millis(5000),
             auto_reconnect: false,
             reconnect_backoff: BackoffConfig::default(),
-            tcp_config: TcpConfig::default(),
         };
 
         let knx = Knx::new(config).await.unwrap();
@@ -319,7 +311,7 @@ mod unit_tests {
         // Test builder with routing connection
         let knx = Knx::builder()
             .connection_type(ConnectionType::Routing)
-            .timeout_ms(3000)
+            .timeout(Duration::from_millis(3000))
             .auto_reconnect(false)
             .build()
             .await
@@ -327,7 +319,7 @@ mod unit_tests {
 
         assert_eq!(knx.state().await, ConnectionState::Disconnected);
         assert_eq!(knx.config().connection_type, ConnectionType::Routing);
-        assert_eq!(knx.config().timeout_ms, 3000);
+        assert_eq!(knx.config().timeout, Duration::from_secs(3));
         assert!(!knx.config().auto_reconnect);
     }
 
@@ -335,15 +327,13 @@ mod unit_tests {
     async fn test_knx_shutdown_flag() {
         let config = ConnectionConfig {
             connection_type: ConnectionType::Routing,
-            gateway_ip: None,
-            gateway_port: Some(3671),
+            gateway: None,
             local_ip: None,
             individual_address: IndividualAddress::new(1, 1, 240),
             security: None,
-            timeout_ms: 5000,
+            timeout: Duration::from_millis(5000),
             auto_reconnect: false,
             reconnect_backoff: BackoffConfig::default(),
-            tcp_config: TcpConfig::default(),
         };
 
         let knx = Knx::new(config).await.unwrap();
@@ -360,23 +350,20 @@ mod unit_tests {
     async fn test_knx_config_access() {
         let config = ConnectionConfig {
             connection_type: ConnectionType::Routing,
-            gateway_ip: None,
-            gateway_port: Some(3672),
+            gateway: None,
             local_ip: None,
             individual_address: IndividualAddress::new(2, 3, 4),
             security: None,
-            timeout_ms: 10000,
+            timeout: Duration::from_millis(10000),
             auto_reconnect: true,
             reconnect_backoff: BackoffConfig::default(),
-            tcp_config: TcpConfig::default(),
         };
 
         let knx = Knx::new(config.clone()).await.unwrap();
 
         // Verify config is accessible
         assert_eq!(knx.config().connection_type, ConnectionType::Routing);
-        assert_eq!(knx.config().gateway_port, Some(3672));
-        assert_eq!(knx.config().timeout_ms, 10000);
+        assert_eq!(knx.config().timeout, Duration::from_secs(10));
         assert!(knx.config().auto_reconnect);
     }
 
@@ -389,15 +376,13 @@ mod unit_tests {
 
         let config = ConnectionConfig {
             connection_type: ConnectionType::Routing,
-            gateway_ip: None,
-            gateway_port: Some(3671),
+            gateway: None,
             local_ip: None,
             individual_address: IndividualAddress::new(1, 1, 240),
             security: None,
-            timeout_ms: 5000,
+            timeout: Duration::from_millis(5000),
             auto_reconnect: false,
             reconnect_backoff: BackoffConfig::default(),
-            tcp_config: TcpConfig::default(),
         };
         let knx = Knx::new(config).await.unwrap();
 
@@ -453,15 +438,13 @@ mod unit_tests {
 
         let config = ConnectionConfig {
             connection_type: ConnectionType::Routing,
-            gateway_ip: None,
-            gateway_port: Some(3671),
+            gateway: None,
             local_ip: None,
             individual_address: IndividualAddress::new(1, 1, 240),
             security: None,
-            timeout_ms: 5000,
+            timeout: Duration::from_millis(5000),
             auto_reconnect: false,
             reconnect_backoff: BackoffConfig::default(),
-            tcp_config: TcpConfig::default(),
         };
         let knx = Knx::new(config).await.unwrap();
 
@@ -519,15 +502,13 @@ mod unit_tests {
 
         let config = ConnectionConfig {
             connection_type: ConnectionType::Routing,
-            gateway_ip: None,
-            gateway_port: Some(3671),
+            gateway: None,
             local_ip: None,
             individual_address: IndividualAddress::new(1, 1, 240),
             security: None,
-            timeout_ms: 5000,
+            timeout: Duration::from_millis(5000),
             auto_reconnect: false,
             reconnect_backoff: BackoffConfig::default(),
-            tcp_config: TcpConfig::default(),
         };
         let knx = Knx::new(config).await.unwrap();
 

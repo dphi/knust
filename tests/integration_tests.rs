@@ -8,7 +8,7 @@
 
 use knust::protocol::telegram::Telegram;
 use knust::protocol::{IndividualAddress, RawGroupAddress};
-use knust::transport::{BackoffConfig, TcpConfig};
+use knust::transport::BackoffConfig;
 use knust::{ConnectionConfig, ConnectionType, Knx, KnxError};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -21,7 +21,7 @@ async fn builder_validates_the_selected_connection_mode() {
     assert!(matches!(
         Knx::builder().build().await,
         Err(KnxError::Configuration(ConfigurationError::MissingParameter { parameter }))
-            if parameter == "gateway_ip"
+            if parameter == "gateway"
     ));
     for address in ["0.0.0.0:3671", "127.0.0.1:0", "224.0.23.12:3671"] {
         assert!(matches!(
@@ -39,17 +39,14 @@ async fn builder_validates_the_selected_connection_mode() {
             ConfigurationError::ValidationError { .. }
         ))
     ));
-    for (builder, timeout_name) in [
-        (Knx::builder().tunnel(gateway), "timeout_ms"),
-        (
-            Knx::builder().tcp_tunnel(gateway),
-            "tcp_config.connect_timeout_ms",
-        ),
+    for builder in [
+        Knx::builder().tunnel(gateway),
+        Knx::builder().tcp_tunnel(gateway),
     ] {
         assert!(matches!(
             builder.timeout(Duration::ZERO).build().await,
             Err(KnxError::Configuration(ConfigurationError::InvalidValue { parameter, .. }))
-                if parameter == timeout_name
+                if parameter == "timeout"
         ));
     }
     let routing = Knx::builder()
@@ -63,7 +60,18 @@ async fn builder_validates_the_selected_connection_mode() {
         routing.config().local_ip,
         Some(std::net::Ipv4Addr::LOCALHOST.into())
     );
-    assert_eq!(routing.config().gateway_ip, None);
+    assert_eq!(routing.config().gateway, None);
+
+    let scoped: std::net::SocketAddr = "[fe80::1%3]:4567".parse().unwrap();
+    let short_timeout = Duration::from_micros(750);
+    let tcp = Knx::builder()
+        .tcp_tunnel(scoped)
+        .timeout(short_timeout)
+        .build()
+        .await
+        .unwrap();
+    assert_eq!(tcp.config().gateway, Some(scoped));
+    assert_eq!(tcp.config().timeout, short_timeout);
 }
 
 #[cfg(feature = "server")]
@@ -201,15 +209,13 @@ fn write_telegram(destination: RawGroupAddress, payload: Vec<u8>) -> Telegram {
 async fn test_end_to_end_group_communication() -> Result<(), KnxError> {
     let config = ConnectionConfig {
         connection_type: ConnectionType::Tunneling,
-        gateway_ip: Some("127.0.0.1".parse().unwrap()),
-        gateway_port: Some(3671),
+        gateway: Some("127.0.0.1:3671".parse().unwrap()),
         local_ip: Some("127.0.0.1".parse().unwrap()),
         individual_address: IndividualAddress::new(1, 1, 1),
         security: None,
-        timeout_ms: 5000,
+        timeout: Duration::from_millis(5000),
         auto_reconnect: false,
         reconnect_backoff: BackoffConfig::default(),
-        tcp_config: TcpConfig::default(),
     };
 
     let knx = Knx::new(config).await?;
@@ -282,10 +288,10 @@ async fn test_end_to_end_group_communication() -> Result<(), KnxError> {
 async fn test_multi_target_coordination() -> Result<(), KnxError> {
     let config = ConnectionConfig {
         connection_type: ConnectionType::Routing,
-        timeout_ms: 5000,
+        timeout: Duration::from_millis(5000),
         auto_reconnect: false,
         reconnect_backoff: BackoffConfig::default(),
-        tcp_config: TcpConfig::default(),
+
         ..Default::default()
     };
 
@@ -415,11 +421,11 @@ async fn secure_tunnel_builder_exchanges_typed_telegrams() -> Result<(), KnxErro
 async fn test_error_handling_and_recovery() -> Result<(), KnxError> {
     let config = ConnectionConfig {
         connection_type: ConnectionType::Tunneling,
-        gateway_ip: Some("192.168.255.255".parse().unwrap()), // Invalid IP
-        timeout_ms: 5000,
+        gateway: Some("192.168.255.255:3671".parse().unwrap()), // Invalid IP
+        timeout: Duration::from_millis(5000),
         auto_reconnect: false,
         reconnect_backoff: BackoffConfig::default(),
-        tcp_config: TcpConfig::default(),
+
         ..Default::default()
     };
 
@@ -445,10 +451,10 @@ async fn test_error_handling_and_recovery() -> Result<(), KnxError> {
     // Test a telegram send without a connection
     let config = ConnectionConfig {
         connection_type: ConnectionType::Routing,
-        timeout_ms: 2000,
+        timeout: Duration::from_millis(2000),
         auto_reconnect: false,
         reconnect_backoff: BackoffConfig::default(),
-        tcp_config: TcpConfig::default(),
+
         ..Default::default()
     };
     let knx = Knx::new(config).await?;
@@ -483,11 +489,11 @@ async fn test_configuration_validation() {
     // Test connection config validation
     let config = ConnectionConfig {
         connection_type: ConnectionType::Tunneling,
-        gateway_ip: None, // Missing required gateway IP for tunneling
-        timeout_ms: 2000,
+        gateway: None,
+        timeout: Duration::from_millis(2000),
         auto_reconnect: false,
         reconnect_backoff: BackoffConfig::default(),
-        tcp_config: TcpConfig::default(),
+
         ..Default::default()
     };
 
@@ -507,10 +513,10 @@ async fn test_configuration_validation() {
 async fn test_resource_cleanup() -> Result<(), KnxError> {
     let config = ConnectionConfig {
         connection_type: ConnectionType::Routing,
-        timeout_ms: 1000,
+        timeout: Duration::from_millis(1000),
         auto_reconnect: false,
         reconnect_backoff: BackoffConfig::default(),
-        tcp_config: TcpConfig::default(),
+
         ..Default::default()
     };
 

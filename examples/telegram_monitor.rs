@@ -62,7 +62,7 @@ async fn monitor(
     // Configure connection
     let config = ConnectionConfig {
         connection_type: ConnectionType::Tunneling,
-        gateway_ip,
+        gateway: gateway_ip.map(|ip| std::net::SocketAddr::new(ip, 3671)),
         individual_address: individual_address.unwrap_or(IndividualAddress::new(1, 0, 253)),
         ..Default::default()
     };

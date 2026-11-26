@@ -17,10 +17,7 @@ mod tests {
         skip_if_no_gateway!(config);
 
         let conn_config = config.create_udp_tunneling_config().unwrap();
-        let gateway_addr = std::net::SocketAddr::new(
-            conn_config.gateway_ip.unwrap(),
-            conn_config.gateway_port.unwrap(),
-        );
+        let gateway_addr = conn_config.gateway.unwrap();
 
         println!("Testing UDP tunneling connection to {gateway_addr}");
 
@@ -71,10 +68,7 @@ mod tests {
         skip_if_no_gateway!(config);
 
         let conn_config = config.create_tcp_tunneling_config().unwrap();
-        let gateway_addr = std::net::SocketAddr::new(
-            conn_config.gateway_ip.unwrap(),
-            conn_config.gateway_port.unwrap(),
-        );
+        let gateway_addr = conn_config.gateway.unwrap();
 
         println!("Testing TCP tunneling connection to {gateway_addr}");
 
@@ -225,10 +219,7 @@ mod tests {
         skip_if_no_gateway!(config);
 
         let conn_config = config.create_tcp_tunneling_config().unwrap();
-        let gateway_addr = std::net::SocketAddr::new(
-            conn_config.gateway_ip.unwrap(),
-            conn_config.gateway_port.unwrap(),
-        );
+        let gateway_addr = conn_config.gateway.unwrap();
 
         println!("Testing TCP telegram exchange with {gateway_addr}");
 
@@ -320,10 +311,7 @@ mod tests {
         skip_if_no_gateway!(config);
 
         let conn_config = config.create_udp_tunneling_config().unwrap();
-        let gateway_addr = std::net::SocketAddr::new(
-            conn_config.gateway_ip.unwrap(),
-            conn_config.gateway_port.unwrap(),
-        );
+        let gateway_addr = conn_config.gateway.unwrap();
 
         println!("Testing UDP telegram exchange with {gateway_addr}");
 
@@ -446,10 +434,7 @@ mod tests {
         skip_if_no_gateway!(config);
 
         let conn_config = config.create_tcp_tunneling_config().unwrap();
-        let gateway_addr = std::net::SocketAddr::new(
-            conn_config.gateway_ip.unwrap(),
-            conn_config.gateway_port.unwrap(),
-        );
+        let gateway_addr = conn_config.gateway.unwrap();
 
         println!("Testing TCP tunneling ACK response with {gateway_addr}");
 

@@ -221,9 +221,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create connection configuration
     let connection_config = ConnectionConfig {
         connection_type: config.connection_type,
-        gateway_ip: config.gateway_ip,
+        gateway: config
+            .gateway_ip
+            .map(|ip| std::net::SocketAddr::new(ip, 3671)),
         individual_address: config.individual_address,
-        timeout_ms: 10000, // 10 second timeout
+        timeout: std::time::Duration::from_millis(10000), // 10 second timeout
         auto_reconnect: true,
         ..Default::default()
     };
@@ -231,19 +233,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Packet counter for display
     let packet_counter = Arc::new(AtomicUsize::new(0));
 
-    // Create Knx instance with proper configuration
-    let mut builder = Knx::builder()
-        .connection_type(config.connection_type)
-        .individual_address(config.individual_address)
-        .timeout_ms(connection_config.timeout_ms)
-        .auto_reconnect(connection_config.auto_reconnect);
-
-    // Add gateway IP if provided
-    if let Some(gateway_ip) = config.gateway_ip {
-        builder = builder.gateway_ip(gateway_ip);
-    }
-
-    let knx = builder.build().await?;
+    let knx = Knx::new(connection_config).await?;
 
     // Use the configured instance
     run_listener(knx, config, packet_counter).await

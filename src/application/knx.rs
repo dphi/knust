@@ -341,9 +341,9 @@ impl Knx {
         log_application!(LogLevel::Info, "Creating new Knx instance");
         log_application!(
             LogLevel::Debug,
-            "Configuration: connection_type={:?}, timeout={}ms, auto_reconnect={}, memory_limit={}MB, max_connections={}",
+            "Configuration: connection_type={:?}, timeout={:?}, auto_reconnect={}, memory_limit={}MB, max_connections={}",
             config.connection_type,
-            config.timeout_ms,
+            config.timeout,
             config.auto_reconnect,
             memory_limit_mb,
             max_connections
@@ -729,7 +729,7 @@ impl Knx {
             | ConnectionType::TcpTunneling
             | ConnectionType::SecureTunneling => {
                 let gateway_addr = config.gateway_addr()?;
-                let timeout = std::time::Duration::from_millis(config.tunnel_timeout_ms());
+                let timeout = config.timeout;
                 let mut tunnel = if config.connection_type == ConnectionType::Tunneling {
                     Tunnel::new_udp_with_timeout(gateway_addr, timeout)
                 } else {

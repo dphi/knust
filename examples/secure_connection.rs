@@ -38,13 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let secure_config = knust::ConnectionConfig {
         connection_type: ConnectionType::SecureTunneling,
-        gateway_ip: Some("192.168.1.100".parse().unwrap()),
-        gateway_port: Some(3671),
+        gateway: Some("192.168.1.100:3671".parse().unwrap()),
         individual_address: "1.1.240".parse()?,
         security: Some(security_config),
-        tcp_config: knust::transport::TcpConfig {
-            connect_timeout_ms: 10_000,
-        },
+        timeout: std::time::Duration::from_secs(10),
         auto_reconnect: true,
         reconnect_backoff: BackoffConfig::default(),
         ..Default::default()

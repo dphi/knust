@@ -104,8 +104,7 @@ async fn tunnel_server_loopback_round_trips_group_telegrams() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(client_address)
         .build()
         .await
@@ -158,8 +157,7 @@ async fn individual_request_matches_device_and_response_service() {
     let server_addr = server.local_addr();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server_addr.ip())
-        .gateway_port(server_addr.port())
+        .gateway(server_addr)
         .individual_address(client_address)
         .build()
         .await
@@ -218,8 +216,7 @@ async fn connectionless_p2p_collects_replies_alongside_a_connected_session() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(IndividualAddress::new(1, 1, 240))
         .build()
         .await
@@ -320,8 +317,7 @@ async fn programming_mode_assignment_rejects_conflicts_and_ambiguous_scans() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(client_address)
         .build()
         .await
@@ -393,8 +389,7 @@ async fn programming_mode_assignment_verifies_and_restarts_device() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(client_address)
         .build()
         .await
@@ -518,8 +513,7 @@ async fn programming_mode_address_scan_collects_broadcast_responses() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(client_address)
         .build()
         .await
@@ -669,8 +663,7 @@ async fn individual_address_check_detects_connected_and_refusing_devices() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(client_address)
         .build()
         .await
@@ -797,8 +790,7 @@ async fn programming_mode_property_switch_verifies_over_knust_loopback() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(client_address)
         .build()
         .await
@@ -903,8 +895,7 @@ async fn programming_mode_selects_mask_and_rejects_unknown_over_loopback() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(client_address)
         .build()
         .await
@@ -1032,8 +1023,7 @@ async fn basic_restart_is_sent_without_waiting_for_device_ack() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(client_address)
         .build()
         .await
@@ -1096,8 +1086,7 @@ async fn programming_mode_memory_switch_verifies_over_knust_loopback() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(client_address)
         .build()
         .await
@@ -1213,8 +1202,7 @@ async fn p2p_session_connects_sends_acknowledged_data_and_closes() {
         .unwrap();
     let knx = Knx::builder()
         .connection_type(ConnectionType::Tunneling)
-        .gateway_ip(server.local_addr().ip())
-        .gateway_port(server.local_addr().port())
+        .gateway(server.local_addr())
         .individual_address(client_address)
         .build()
         .await

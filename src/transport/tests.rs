@@ -7,7 +7,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use crate::protocol::address::IndividualAddress;
 use crate::transport::connection::{Connection, TransportState};
-use crate::transport::{BackoffConfig, ConnectionConfig, ConnectionType, TcpConfig};
+use crate::transport::{BackoffConfig, ConnectionConfig, ConnectionType};
 use crate::transport::{GatewayScanner, RoutingConnection, ServiceFamily, Tunnel};
 
 #[cfg(test)]
@@ -47,15 +47,13 @@ fn arb_connection_config() -> impl Strategy<Value = ConnectionConfig> {
             )| {
                 ConnectionConfig {
                     connection_type,
-                    gateway_ip,
-                    gateway_port,
+                    gateway: gateway_ip.map(|ip| SocketAddr::new(ip, gateway_port.unwrap_or(3671))),
                     local_ip,
                     individual_address: IndividualAddress::new(area, line, device),
                     security: None,
-                    timeout_ms,
+                    timeout: std::time::Duration::from_millis(timeout_ms),
                     auto_reconnect,
                     reconnect_backoff: BackoffConfig::default(),
-                    tcp_config: TcpConfig::default(),
                 }
             },
         )
@@ -115,9 +113,7 @@ proptest! {
             match config.connection_type {
                 ConnectionType::Tunneling => {
                     // For tunneling, we need a gateway IP
-                    if let Some(gateway_ip) = config.gateway_ip {
-                        let gateway_port = config.gateway_port.unwrap_or(3671);
-                        let gateway_addr = SocketAddr::new(gateway_ip, gateway_port);
+                    if let Some(gateway_addr) = config.gateway {
 
                         // Test that tunneling connection can be created with short timeout
                         // Note: This will fail in test environment without actual gateway,
@@ -153,9 +149,7 @@ proptest! {
                 },
                 ConnectionType::TcpTunneling => {
                     // For TCP tunneling, we need a gateway IP
-                    if let Some(gateway_ip) = config.gateway_ip {
-                        let gateway_port = config.gateway_port.unwrap_or(3671);
-                        let gateway_addr = SocketAddr::new(gateway_ip, gateway_port);
+                    if let Some(gateway_addr) = config.gateway {
 
                         // Test that TCP tunneling connection can be created with short timeout
                         // Note: This will fail in test environment without actual gateway,
@@ -298,8 +292,8 @@ mod unit_tests {
         let config = ConnectionConfig::default();
 
         assert_eq!(config.connection_type, ConnectionType::Tunneling);
-        assert_eq!(config.gateway_port, Some(3671));
-        assert_eq!(config.timeout_ms, 5000);
+        assert_eq!(config.gateway, None);
+        assert_eq!(config.timeout, std::time::Duration::from_secs(5));
         assert!(config.auto_reconnect);
         assert_eq!(config.individual_address, IndividualAddress::new(1, 1, 240));
     }
