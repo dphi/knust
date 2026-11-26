@@ -849,6 +849,7 @@ impl SessionStatus {
     pub const LENGTH: usize = 2;
     pub const STATUS_OK: u8 = 0x00;
     pub const STATUS_AUTH_FAILED: u8 = 0x01;
+    pub const STATUS_KEEPALIVE: u8 = 0x04;
 
     /// # Errors
     ///
@@ -861,13 +862,12 @@ impl SessionStatus {
             }
             .into());
         }
-        // data[0] is reserved
-        Ok(Self { status: data[1] })
+        Ok(Self { status: data[0] })
     }
 
     #[must_use]
     pub fn serialize(&self) -> Vec<u8> {
-        vec![0x00, self.status]
+        vec![self.status, 0x00]
     }
 
     #[must_use]
@@ -1388,12 +1388,13 @@ mod tests {
     }
 
     #[test]
-    fn session_status_round_trips() {
+    fn session_status_places_the_code_before_the_reserved_byte() {
         let status = SessionStatus {
-            status: SessionStatus::STATUS_OK,
+            status: SessionStatus::STATUS_AUTH_FAILED,
         };
-        let parsed = SessionStatus::parse(&status.serialize()).unwrap();
-        assert!(parsed.is_success());
+        assert_eq!(status.serialize(), [0x01, 0x00]);
+        let parsed = SessionStatus::parse(&[0x01, 0x00]).unwrap();
+        assert_eq!(parsed.status, SessionStatus::STATUS_AUTH_FAILED);
     }
 
     #[test]

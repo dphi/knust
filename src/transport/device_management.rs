@@ -116,7 +116,11 @@ impl SecureManagementTransport {
                         if tokio::time::Instant::now() < *task_activity.lock().await + interval {
                             continue;
                         }
-                        let keepalive = [0x06, 0x10, 0x09, 0x54, 0x00, 0x08, 0x00, 0x04];
+                        let keepalive = KnxIpFrame::new(
+                            ServiceType::SessionStatus,
+                            SessionStatus { status: SessionStatus::STATUS_KEEPALIVE }.serialize(),
+                        )
+                        .serialize();
                         let encrypted = match task_session.read().await.encrypt_frame(&keepalive).await {
                             Ok(frame) => frame,
                             Err(_) => break,
@@ -1499,7 +1503,7 @@ mod tests {
             let frame = loop {
                 let (frame, _) = receive_secure(&transport, &session).await;
                 if frame.header.service_type == ServiceType::SessionStatus {
-                    assert_eq!(frame.body, [0x00, 0x04]);
+                    assert_eq!(frame.body, [0x04, 0x00]);
                     keepalive_count += 1;
                 } else {
                     break frame;

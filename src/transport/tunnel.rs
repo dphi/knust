@@ -34,6 +34,8 @@ use crate::error::{ProtocolError, Result, TransportError};
 use crate::log_transport;
 use crate::logging::LogLevel;
 use crate::protocol::address::IndividualAddress;
+#[cfg(feature = "secure")]
+use crate::protocol::knxip::SessionStatus;
 use crate::protocol::knxip::{
     ConnectRequest, ConnectResponse, ConnectionstateRequest, ConnectionstateResponse,
     DisconnectRequest, DisconnectResponse, Hpai, KnxIpFrame, ServiceType, TunnellingAck,
@@ -544,7 +546,8 @@ impl Tunnel {
             }
             .into());
         }
-        session.complete_authentication(status_data[7]).await?;
+        let status = SessionStatus::parse(&status_data[6..])?;
+        session.complete_authentication(status.status).await?;
 
         self.secure_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
         self.secure_wrapped_tunneling_seen
@@ -593,7 +596,14 @@ impl Tunnel {
         activity.changed.notify_one();
         let (cancel, mut cancelled) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            let keepalive = [0x06, 0x10, 0x09, 0x54, 0x00, 0x08, 0x00, 0x04];
+            let keepalive = KnxIpFrame::new(
+                ServiceType::SessionStatus,
+                SessionStatus {
+                    status: SessionStatus::STATUS_KEEPALIVE,
+                }
+                .serialize(),
+            )
+            .serialize();
             loop {
                 let deadline = activity.last().await + interval;
                 tokio::select! {
@@ -1277,7 +1287,7 @@ mod tunneling_address_tests {
             .unwrap();
         assert_eq!(
             server.decrypt_frame(&encrypted).await.unwrap(),
-            [0x06, 0x10, 0x09, 0x54, 0x00, 0x08, 0x00, 0x04]
+            [0x06, 0x10, 0x09, 0x54, 0x00, 0x08, 0x04, 0x00]
         );
         if let Some(cancel) = tunnel.secure_keepalive_cancel.take() {
             let _ = cancel.send(());
