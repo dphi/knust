@@ -124,11 +124,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔐 Example 4: Secure Tunneling Configuration");
     println!("---------------------------------------------");
 
-    let security_config = SecurityConfig {
-        device_auth_password: "DeviceAuthPassword123!".to_string(),
-        user_password: Some("SecurePassword123!".to_string()),
-        session_timeout: 600, // 10 minutes
-    };
+    let security_config =
+        SecurityConfig::new("DeviceAuthPassword123!", "SecurePassword123!").with_user_id(2)?;
 
     let secure_config = ConnectionConfig {
         connection_type: ConnectionType::SecureTunneling,
@@ -137,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         local_ip: None,
         individual_address: "1.1.243".parse()?,
         security: Some(security_config),
-        timeout_ms: 15000, // Longer timeout for secure handshake
+        timeout_ms: 5000,
         auto_reconnect: true,
         reconnect_backoff: BackoffConfig {
             initial_delay_ms: 2000, // Longer initial delay for secure connections
@@ -145,17 +142,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             multiplier: 2.0,
             max_attempts: 10,
         },
-        tcp_config: TcpConfig::default(),
+        tcp_config: TcpConfig {
+            connect_timeout_ms: 15_000,
+        },
     };
 
     println!("📋 Secure Configuration:");
     println!("   Connection type: {:?}", secure_config.connection_type);
     println!("   Security: Enabled");
     println!(
-        "   Session timeout: {}s",
-        secure_config.security.as_ref().unwrap().session_timeout
+        "   Extended timeout: {}ms",
+        secure_config.tcp_config.connect_timeout_ms
     );
-    println!("   Extended timeout: {}ms", secure_config.timeout_ms);
 
     let _secure_knx = Knx::new(secure_config).await?;
     println!("✅ Secure Knx instance created");

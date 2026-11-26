@@ -33,11 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("------------------------------------------");
 
     // Create security configuration for tunneling
-    let security_config = SecurityConfig {
-        device_auth_password: "DeviceAuthPassword123!".to_string(),
-        user_password: Some("MySecurePassword123".to_string()),
-        session_timeout: 300, // 5 minutes
-    };
+    let security_config =
+        SecurityConfig::new("DeviceAuthPassword123!", "MySecurePassword123").with_user_id(2)?;
 
     let secure_config = knust::ConnectionConfig {
         connection_type: ConnectionType::SecureTunneling,
@@ -45,7 +42,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         gateway_port: Some(3671),
         individual_address: "1.1.240".parse()?,
         security: Some(security_config),
-        timeout_ms: 10000,
+        tcp_config: knust::transport::TcpConfig {
+            connect_timeout_ms: 10_000,
+        },
         auto_reconnect: true,
         reconnect_backoff: BackoffConfig::default(),
         ..Default::default()
@@ -55,7 +54,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Connection type: Secure Tunneling");
     println!("   Gateway: 192.168.1.100:3671");
     println!("   Individual address: 1.1.240");
-    println!("   Session timeout: 5 minutes");
     println!("   Auto-reconnect: Enabled");
 
     // Create Knx instance with secure configuration

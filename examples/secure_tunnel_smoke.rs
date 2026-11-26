@@ -39,11 +39,13 @@ async fn main() -> anyhow::Result<()> {
 
     println!("→ Connecting (TCP, secure) to {addr} ...");
     let mut tunnel = Tunnel::new_tcp(addr);
-    let security = SecurityConfig {
-        device_auth_password,
-        user_password: Some(user_password),
-        session_timeout: 60,
-    };
+    let user_id = args
+        .next()
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(1);
+    let security =
+        SecurityConfig::new(device_auth_password, user_password).with_user_id(user_id)?;
     tunnel.connect_secure(&security).await?;
     println!(
         "✓ Secure handshake + tunnel connect OK: channel_id={}",

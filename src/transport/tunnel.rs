@@ -39,7 +39,9 @@ use crate::protocol::knxip::{
 #[cfg(feature = "secure")]
 use crate::protocol::knxip::{SessionAuthenticate, SessionRequest, SessionResponse, SessionStatus};
 #[cfg(feature = "secure")]
-use crate::security::{SecureSession, SessionConfig};
+use crate::security::SecureSession;
+#[cfg(all(test, feature = "secure"))]
+use crate::security::SessionConfig;
 
 /// Result of validating an incoming tunnelling request's sequence number.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,9 +53,6 @@ pub enum SequenceValidationResult {
     /// Sequence number is out of order; potential lost frame.
     Invalid { expected: u8, received: u8 },
 }
-
-#[cfg(feature = "secure")]
-const IP_SECURE_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 #[cfg(feature = "secure")]
 #[derive(Default)]
@@ -482,14 +481,7 @@ impl Tunnel {
     pub async fn connect_secure(&mut self, security: &SecurityConfig) -> Result<()> {
         let transport = self.establish_transport().await?;
 
-        let config = SessionConfig {
-            user_id: 1,
-            user_password: security.user_password.clone().unwrap_or_default(),
-            device_auth_password: Some(security.device_auth_password.clone()),
-            keepalive_interval: security
-                .session_timeout
-                .clamp(1, IP_SECURE_KEEPALIVE_INTERVAL.as_secs() as u32),
-        };
+        let config = security.session_config();
         let mut session = SecureSession::new(&config);
         let request = SessionRequest {
             control_endpoint: self.local_hpai.clone(),
@@ -555,7 +547,7 @@ impl Tunnel {
         session.complete_authentication(status.status).await?;
 
         self.secure_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
-        self.start_secure_keepalive(Duration::from_secs(config.keepalive_interval as u64))?;
+        self.start_secure_keepalive(security.keepalive_interval)?;
         log_transport!(LogLevel::Info, "Secure session established");
 
         // The secure *session* is now up, but that's just the encrypted

@@ -34,6 +34,7 @@ mod integration_tests;
 use crate::error::{ConfigurationError, Result};
 use crate::protocol::address::IndividualAddress;
 use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 
 pub use address_probe::{auto_select_address, probe_address};
 pub use address_registry::AddressRegistry;
@@ -248,13 +249,13 @@ pub struct SecurityConfig {
     /// device authentication password set via ETS. Derived via PBKDF2 the
     /// same way as `user_password` — pass the password as-is, not pre-derived
     /// key bytes.
-    pub device_auth_password: String,
+    device_auth_password: String,
 
     /// User password (plaintext).
-    pub user_password: Option<String>,
+    user_password: String,
 
-    /// Security session timeout in seconds
-    pub session_timeout: u32,
+    user_id: u8,
+    keepalive_interval: Duration,
 }
 
 impl SecurityConfig {
@@ -262,8 +263,53 @@ impl SecurityConfig {
     pub fn new(device_auth_password: impl Into<String>, user_password: impl Into<String>) -> Self {
         Self {
             device_auth_password: device_auth_password.into(),
-            user_password: Some(user_password.into()),
-            session_timeout: 60,
+            user_password: user_password.into(),
+            user_id: 1,
+            keepalive_interval: Duration::from_secs(15),
+        }
+    }
+
+    /// Select the configured KNX IP Secure user. The default is management user 1.
+    ///
+    /// # Errors
+    /// Returns a configuration error for IDs outside `1..=127`.
+    pub fn with_user_id(mut self, user_id: u8) -> Result<Self> {
+        if !(1..=127).contains(&user_id) {
+            return Err(ConfigurationError::InvalidValue {
+                parameter: "user_id".into(),
+                value: user_id.to_string(),
+                reason: "Expected a KNX IP Secure user ID between 1 and 127".into(),
+            }
+            .into());
+        }
+        self.user_id = user_id;
+        Ok(self)
+    }
+
+    /// Send a keepalive after the session has been idle for this duration.
+    ///
+    /// # Errors
+    /// Returns a configuration error for intervals outside 1 to 15 seconds.
+    pub fn with_keepalive_interval(mut self, interval: Duration) -> Result<Self> {
+        if !(Duration::from_secs(1)..=Duration::from_secs(15)).contains(&interval) {
+            return Err(ConfigurationError::InvalidValue {
+                parameter: "keepalive_interval".into(),
+                value: format!("{interval:?}"),
+                reason: "Expected a keepalive interval between 1 and 15 seconds".into(),
+            }
+            .into());
+        }
+        self.keepalive_interval = interval;
+        Ok(self)
+    }
+
+    #[cfg(feature = "secure")]
+    fn session_config(&self) -> crate::security::SessionConfig {
+        crate::security::SessionConfig {
+            user_id: self.user_id,
+            user_password: self.user_password.clone(),
+            device_auth_password: Some(self.device_auth_password.clone()),
+            ..Default::default()
         }
     }
 }
@@ -271,8 +317,8 @@ impl SecurityConfig {
 impl std::fmt::Debug for SecurityConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SecurityConfig")
-            .field("has_user_password", &self.user_password.is_some())
-            .field("session_timeout", &self.session_timeout)
+            .field("user_id", &self.user_id)
+            .field("keepalive_interval", &self.keepalive_interval)
             .finish_non_exhaustive()
     }
 }

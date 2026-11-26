@@ -1494,11 +1494,7 @@ mod tests {
             device_auth_password: Some(device_auth_password.clone()),
             keepalive_interval: 60,
         };
-        let client_security = SecurityConfig {
-            device_auth_password,
-            user_password: Some(user_password),
-            session_timeout: 60,
-        };
+        let client_security = SecurityConfig::new(device_auth_password, user_password);
         (server_config, client_security)
     }
 
@@ -1562,11 +1558,14 @@ mod tests {
     #[cfg(feature = "secure")]
     #[tokio::test]
     async fn secure_connect_rejects_wrong_user_password() {
-        let (server_config, mut client_security) = matching_security_configs(
+        let (server_config, _) = matching_security_configs(
             crate::security::generate_password(),
             crate::security::generate_password(),
         );
-        client_security.user_password = Some(crate::security::generate_password());
+        let client_security = SecurityConfig::new(
+            server_config.device_auth_password.clone().unwrap(),
+            crate::security::generate_password(),
+        );
 
         let server = TunnelServer::bind_secure(
             "127.0.0.1:0".parse().unwrap(),

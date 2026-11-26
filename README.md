@@ -128,7 +128,8 @@ KNX IP Secure tunneling uses TCP and requires the `secure` feature.
 ```rust
 use knust::transport::SecurityConfig;
 
-let security = SecurityConfig::new("device-auth password", "tunnel user password");
+let security = SecurityConfig::new("device-auth password", "tunnel user password")
+    .with_user_id(2)?;
 let knx = Knx::builder()
     .secure_tunnel("192.168.1.100:3671".parse()?, security)
     .connect()

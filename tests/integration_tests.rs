@@ -363,7 +363,7 @@ async fn secure_tunnel_builder_exchanges_typed_telegrams() -> Result<(), KnxErro
         "127.0.0.1:0".parse().unwrap(),
         "1.1.240".parse()?,
         SessionConfig {
-            user_id: 1,
+            user_id: 2,
             user_password: "test user password".into(),
             device_auth_password: Some("test device password".into()),
             keepalive_interval: 15,
@@ -374,7 +374,7 @@ async fn secure_tunnel_builder_exchanges_typed_telegrams() -> Result<(), KnxErro
     let knx = Knx::builder()
         .secure_tunnel(
             server.local_addr(),
-            SecurityConfig::new("test device password", "test user password"),
+            SecurityConfig::new("test device password", "test user password").with_user_id(2)?,
         )
         .timeout(Duration::from_secs(3))
         .connect()

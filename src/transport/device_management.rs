@@ -24,7 +24,7 @@ use crate::protocol::knxip::{
 #[cfg(feature = "secure")]
 use crate::protocol::knxip::{SessionAuthenticate, SessionRequest, SessionResponse, SessionStatus};
 #[cfg(feature = "secure")]
-use crate::security::{SecureSession, SessionConfig};
+use crate::security::SecureSession;
 
 /// A KNXnet/IP device-management connection over UDP or TCP, optionally using
 /// IP Secure.
@@ -213,12 +213,7 @@ async fn secure_management_transport(
     security: &SecurityConfig,
     timeout: Duration,
 ) -> Result<ManagementTransport> {
-    let config = SessionConfig {
-        user_id: 1,
-        user_password: security.user_password.clone().unwrap_or_default(),
-        device_auth_password: Some(security.device_auth_password.clone()),
-        keepalive_interval: security.session_timeout.clamp(1, 15),
-    };
+    let config = security.session_config();
     let mut session = SecureSession::new(&config);
     let public_key: [u8; 32] = session.initialize().await.try_into().map_err(|_| {
         TransportError::InvalidConfiguration {
@@ -288,7 +283,7 @@ async fn secure_management_transport(
         transport,
         session,
         gateway,
-        Duration::from_secs(config.keepalive_interval.into()),
+        security.keepalive_interval,
     )))
 }
 
@@ -1431,7 +1426,7 @@ mod tests {
             let request = SessionRequest::parse(&frame.body).unwrap();
 
             let config = SessionConfig {
-                user_id: 1,
+                user_id: 2,
                 user_password: "user password".into(),
                 device_auth_password: Some("device password".into()),
                 keepalive_interval: 5,
@@ -1582,11 +1577,11 @@ mod tests {
             .await;
         }
 
-        let security = SecurityConfig {
-            device_auth_password: "device password".into(),
-            user_password: Some("user password".into()),
-            session_timeout: 1,
-        };
+        let security = SecurityConfig::new("device password", "user password")
+            .with_user_id(2)
+            .unwrap()
+            .with_keepalive_interval(Duration::from_secs(1))
+            .unwrap();
         for tcp in [false, true] {
             let (gateway, server_task) = if tcp {
                 let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

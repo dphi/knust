@@ -435,15 +435,36 @@ fn public_connection_configuration_debug_omits_passwords() {
         ..Default::default()
     };
     let connection = crate::transport::ConnectionConfig {
-        security: Some(crate::transport::SecurityConfig {
-            device_auth_password: device_password.to_string(),
-            user_password: Some(user_password.to_string()),
-            session_timeout: 60,
-        }),
+        security: Some(crate::transport::SecurityConfig::new(
+            device_password,
+            user_password,
+        )),
         ..Default::default()
     };
     for debug in [format!("{session:?}"), format!("{connection:?}")] {
         assert!(!debug.contains(device_password));
         assert!(!debug.contains(user_password));
     }
+}
+
+#[test]
+fn secure_tunnel_options_reject_reserved_users_and_invalid_keepalive_intervals() {
+    use crate::transport::SecurityConfig;
+    use std::time::Duration;
+
+    let security = SecurityConfig::new("device password", "user password");
+    for id in [0, 128, 255] {
+        assert!(security.clone().with_user_id(id).is_err());
+    }
+    for id in [1, 2, 127] {
+        assert!(security.clone().with_user_id(id).is_ok());
+    }
+    for interval in [Duration::ZERO, Duration::from_millis(15_001)] {
+        assert!(security.clone().with_keepalive_interval(interval).is_err());
+    }
+    assert!(
+        security
+            .with_keepalive_interval(Duration::from_secs(15))
+            .is_ok()
+    );
 }
