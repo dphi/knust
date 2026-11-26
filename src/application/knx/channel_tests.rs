@@ -537,7 +537,7 @@ async fn read_response_can_arrive_before_tunnelling_ack() {
     let reading = tokio::spawn({
         let knx = knx.clone();
         async move {
-            knx.read_group_value(address, Duration::from_millis(200))
+            knx.read_group_response(address, Duration::from_millis(200))
                 .await
         }
     });
@@ -570,7 +570,7 @@ async fn read_response_can_arrive_before_tunnelling_ack() {
         MessageCode::LDataInd,
         IndividualAddress::new(1, 1, 1),
         Address::Group(address),
-        GroupValueService::Response(vec![42]).encode(),
+        GroupValueService::Response(vec![42]).encode_with_compact_payload(false),
     );
     let response = KnxIpFrame::new(
         ServiceType::TunnellingRequest,
@@ -589,14 +589,14 @@ async fn read_response_can_arrive_before_tunnelling_ack() {
     .unwrap();
     assert_eq!(telegram.telegram_type, TelegramType::GroupValueResponse);
     knx.test_notify_telegram_received(&telegram).await;
-    assert_eq!(
-        timeout(Duration::from_millis(100), reading)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap(),
-        [42]
-    );
+    let response = timeout(Duration::from_millis(100), reading)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.source, IndividualAddress::new(1, 1, 1));
+    assert_eq!(response.payload, [42]);
+    assert!(!response.compact_payload);
     let ack = TunnellingAck::new_ok(7, request.sequence_counter);
     peer.send_to(
         &KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize()).serialize(),

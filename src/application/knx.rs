@@ -274,7 +274,7 @@ pub struct Knx {
 
 struct GroupValueReadCallback {
     address: RawGroupAddress,
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: mpsc::Sender<Telegram>,
 }
 
 #[async_trait::async_trait]
@@ -284,7 +284,7 @@ impl TelegramCallbackFn for GroupValueReadCallback {
             && telegram.destination == Address::Group(self.address)
             && !telegram.payload.is_empty()
         {
-            let _ = self.tx.try_send(telegram.payload.clone());
+            let _ = self.tx.try_send(telegram.clone());
         }
     }
 }
@@ -917,7 +917,13 @@ impl Knx {
         self.telegram_queue.enqueue_outgoing(telegram.clone()).await
     }
 
-    async fn send_telegram_acknowledged(&self, telegram: &Telegram) -> Result<()> {
+    /// Transmit a telegram and wait for its cEMI confirmation on a tunnel.
+    ///
+    /// On routing connections, success means the socket accepted the telegram.
+    ///
+    /// # Errors
+    /// Returns queue, transport, or confirmation errors.
+    pub async fn send_telegram_confirmed(&self, telegram: &Telegram) -> Result<()> {
         let job = crate::transport::queue::OutgoingTelegram::new(telegram.clone());
         self.send_tracked_job(job).await
     }
@@ -941,6 +947,23 @@ impl Knx {
         address: RawGroupAddress,
         timeout_duration: std::time::Duration,
     ) -> Result<Vec<u8>> {
+        Ok(self
+            .read_group_response(address, timeout_duration)
+            .await?
+            .payload)
+    }
+
+    /// Read a group address and return the responding telegram with its source
+    /// and wire payload format. The response deadline starts after transmission.
+    ///
+    /// # Errors
+    /// Returns queue or transport errors, a send timeout after ten seconds,
+    /// or a response timeout after `timeout_duration`.
+    pub async fn read_group_response(
+        &self,
+        address: RawGroupAddress,
+        timeout_duration: std::time::Duration,
+    ) -> Result<Telegram> {
         let stopping = self.shutdown_started.notified();
         tokio::pin!(stopping);
         stopping.as_mut().enable();
@@ -968,7 +991,7 @@ impl Knx {
                 }
             }).await.map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })??;
             match tokio::time::timeout(timeout_duration, rx.recv()).await {
-                Ok(Some(payload)) => Ok(payload),
+                Ok(Some(telegram)) => Ok(telegram),
                 _ => Err(DeviceError::CommunicationTimeout {
                     device: format!("group address {address}"),
                     timeout_ms: timeout_duration.as_millis() as u64,

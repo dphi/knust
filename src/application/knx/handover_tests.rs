@@ -226,7 +226,7 @@ async fn an_invalid_outgoing_telegram_does_not_retire_a_healthy_connection() {
     knx.start().await.unwrap();
     let address = RawGroupAddress::try_from_raw(1).unwrap();
     let error = knx
-        .send_telegram_acknowledged(&Telegram::group_write(address, vec![1; 256]))
+        .send_telegram_confirmed(&Telegram::group_write(address, vec![1; 256]))
         .await
         .unwrap_err();
     assert!(matches!(
@@ -235,7 +235,7 @@ async fn an_invalid_outgoing_telegram_does_not_retire_a_healthy_connection() {
     ));
     assert!(sent.try_recv().is_err());
 
-    knx.send_telegram_acknowledged(&Telegram::group_write(address, vec![1]))
+    knx.send_telegram_confirmed(&Telegram::group_write(address, vec![1]))
         .await
         .unwrap();
     assert!(sent.try_recv().is_ok());
@@ -254,7 +254,7 @@ async fn a_write_that_may_have_reached_the_peer_is_not_replayed_after_reconnect(
 
     let address = RawGroupAddress::try_from_raw(1).unwrap();
     let first = Telegram::group_write(address, vec![1]);
-    let (result, ()) = tokio::join!(knx.send_telegram_acknowledged(&first), async {
+    let (result, ()) = tokio::join!(knx.send_telegram_confirmed(&first), async {
         old_sent.recv().await.unwrap();
         knx.connection.send_replace(Some(new));
     });
@@ -266,7 +266,7 @@ async fn a_write_that_may_have_reached_the_peer_is_not_replayed_after_reconnect(
     ));
     assert!(new_sent.try_recv().is_err());
 
-    knx.send_telegram_acknowledged(&Telegram::group_write(address, vec![0]))
+    knx.send_telegram_confirmed(&Telegram::group_write(address, vec![0]))
         .await
         .unwrap();
     assert!(new_sent.try_recv().is_ok());
@@ -307,7 +307,7 @@ async fn outgoing_telegrams_expire_during_an_outage_and_in_the_backlog() {
     let (replacement, _incoming, mut sent) = peer();
     knx.connection.send_replace(Some(replacement));
     assert!(sent.try_recv().is_err());
-    knx.send_telegram_acknowledged(&telegram).await.unwrap();
+    knx.send_telegram_confirmed(&telegram).await.unwrap();
     assert!(sent.try_recv().is_ok());
     assert!(sent.try_recv().is_err());
     knx.stop().await;
@@ -516,7 +516,7 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
             .unwrap();
         if value == 2 {
             let failed = knx
-                .send_telegram_acknowledged(&Telegram::group_write(
+                .send_telegram_confirmed(&Telegram::group_write(
                     RawGroupAddress::try_from_raw(1).unwrap(),
                     vec![0x20],
                 ))

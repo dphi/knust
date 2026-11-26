@@ -106,7 +106,7 @@ impl P2pConnectionless {
         tokio::select! {
             biased;
             _ = Self::wait_for_shutdown(knx) => Err(crate::error::TransportError::QueueClosed.into()),
-            result = knx.send_telegram_acknowledged(&telegram) => result,
+            result = knx.send_telegram_confirmed(&telegram) => result,
         }
     }
 
@@ -298,7 +298,7 @@ impl Knx {
             let mut telegram = Telegram::group_write(broadcast, apdu);
             telegram.telegram_type = TelegramType::IndividualData;
             telegram.compact_payload = false;
-            self.send_telegram_acknowledged(&telegram).await?;
+            self.send_telegram_confirmed(&telegram).await?;
         }
         let mut connection = self.connect_p2p(address).await?;
         let result = async {
@@ -623,7 +623,7 @@ impl P2pConnection {
 
     async fn send_control(&self, tpci: crate::protocol::TpciFrame) -> Result<()> {
         self.knx
-            .send_telegram_acknowledged(&self.control_telegram(tpci))
+            .send_telegram_confirmed(&self.control_telegram(tpci))
             .await
     }
 
@@ -808,7 +808,7 @@ impl Drop for P2pConnection {
                 let mut telegram = Telegram::individual_data(destination, Vec::new());
                 telegram.telegram_type = TelegramType::IndividualControl;
                 telegram.tpci = crate::protocol::TpciFrame::Disconnect.encode();
-                let _ = knx.send_telegram_acknowledged(&telegram).await;
+                let _ = knx.send_telegram_confirmed(&telegram).await;
             });
         }
     }
