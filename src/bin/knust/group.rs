@@ -1,9 +1,12 @@
 use clap::{Args, Subcommand};
-use knust::Knx;
 use knust::protocol::dpt::{DptRegistry, DptType};
 use knust::protocol::{RawGroupAddress, Telegram};
+use knust::{Knx, KnxBuilder};
 use std::net::{IpAddr, SocketAddr};
+use std::process::ExitCode;
 use std::time::Duration;
+
+mod monitor;
 
 #[derive(Args)]
 pub(super) struct Options {
@@ -42,16 +45,27 @@ enum Command {
         #[arg(long, value_parser = parse_dpt)]
         r#type: Option<DptType>,
     },
+    /// Print group telegrams until Ctrl-C.
+    Monitor {
+        /// Only show matching addresses. Repeat for additional patterns.
+        #[arg(long = "filter", value_name = "PATTERN")]
+        filters: Vec<monitor::GroupPattern>,
+    },
 }
 
-pub(super) async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
+pub(super) async fn run(options: Options) -> Result<ExitCode, Box<dyn std::error::Error>> {
     match &options.command {
         Command::Read {
             address,
             r#type,
             timeout,
         } => {
-            let client = options.connect().await?;
+            let client = options
+                .builder()
+                .await?
+                .auto_reconnect(false)
+                .connect()
+                .await?;
             let response = client.read_group_response(*address, *timeout).await;
             let shutdown = client.shutdown().await;
             let response = response?;
@@ -73,18 +87,26 @@ pub(super) async fn run(options: Options) -> Result<(), Box<dyn std::error::Erro
             };
             let mut telegram = Telegram::group_write(*address, payload);
             telegram.compact_payload = compact;
-            let client = options.connect().await?;
+            let client = options
+                .builder()
+                .await?
+                .auto_reconnect(false)
+                .connect()
+                .await?;
             let written = client.send_telegram_confirmed(&telegram).await;
             let shutdown = client.shutdown().await;
             written?;
             shutdown?;
         }
+        Command::Monitor { filters } => {
+            return monitor::run(options.builder().await?, filters.clone()).await;
+        }
     }
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 impl Options {
-    async fn connect(&self) -> Result<Knx, Box<dyn std::error::Error>> {
+    async fn builder(&self) -> Result<KnxBuilder, Box<dyn std::error::Error>> {
         let gateway = match &self.gateway {
             Some(value) => resolve_gateway(value, self.tcp, self.local_ip).await?,
             None => {
@@ -125,7 +147,7 @@ impl Options {
             Some(ip) => builder.local_ip(ip),
             None => builder,
         };
-        Ok(builder.auto_reconnect(false).connect().await?)
+        Ok(builder)
     }
 }
 

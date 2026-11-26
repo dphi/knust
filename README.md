@@ -91,6 +91,22 @@ let knx = Knx::builder()
     .await?;
 ```
 
+## Command line
+
+Build and install the optional CLI with `cargo install --path . --features cli`.
+
+```sh
+knust scan --local-ip 192.168.1.50
+knust group read 1/2/3 --type temperature --gateway 192.168.1.100
+knust group write 1/2/4 on --gateway 192.168.1.100
+knust group monitor --filter '1/2/*' --gateway 192.168.1.100
+```
+
+Group commands accept `KNX_GATEWAY` and `KNX_LOCAL_IP` as defaults. When the
+gateway is omitted, discovery must find exactly one compatible gateway.
+Use `--tcp` for TCP tunneling. An untyped write accepts `on` or `off`, an
+integer from 0 to 63, or hex octets such as `0x01`.
+
 ## Connection Types
 
 ### Tunneling (Point-to-Point)

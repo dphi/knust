@@ -141,3 +141,68 @@ async fn group_commands_exchange_telegram_values_with_a_knust_server() {
     );
     server.shutdown();
 }
+
+#[cfg(all(feature = "server", unix))]
+#[tokio::test]
+async fn monitor_filters_group_telegrams_and_disconnects_on_interrupt() {
+    use knust::protocol::Telegram;
+    use knust::transport::TunnelServer;
+    use std::process::Stdio;
+    use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::time::{sleep, timeout};
+
+    let server = TunnelServer::bind("127.0.0.1:0".parse().unwrap(), "1.1.241".parse().unwrap())
+        .await
+        .unwrap();
+    let mut monitor = tokio::process::Command::new(env!("CARGO_BIN_EXE_knust"))
+        .args([
+            "group",
+            "monitor",
+            "--gateway",
+            &server.local_addr().to_string(),
+            "--filter",
+            "1/2/1-3",
+        ])
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut output = BufReader::new(monitor.stdout.take().unwrap()).lines();
+    timeout(Duration::from_secs(2), async {
+        while server.client_count().await != 1 {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    server
+        .send(Telegram::group_write("1/2/4".parse().unwrap(), vec![0]))
+        .await
+        .unwrap();
+    server
+        .send(Telegram::group_write("1/2/3".parse().unwrap(), vec![1]))
+        .await
+        .unwrap();
+    let line = timeout(Duration::from_secs(2), output.next_line())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(line.contains("1/2/3 | 1"), "{line}");
+
+    let signal = tokio::process::Command::new("kill")
+        .args(["-INT", &monitor.id().unwrap().to_string()])
+        .status()
+        .await
+        .unwrap();
+    assert!(signal.success());
+    let status = timeout(Duration::from_secs(5), monitor.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status.code(), Some(130));
+    assert_eq!(server.client_count().await, 0);
+    server.shutdown();
+}

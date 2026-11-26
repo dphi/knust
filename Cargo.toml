@@ -26,7 +26,7 @@ ets = ["dep:strum", "dpt", "tokio/fs"]
 server = []
 
 # The standalone gateway and bus command line tool.
-cli = ["dep:clap", "dep:if-addrs", "dpt"]
+cli = ["dep:clap", "dep:if-addrs", "dpt", "tokio/io-std", "tokio/signal"]
 
 # KNX IP Secure + KNX Data Security: session handshake, group encryption,
 # keyring (.knxkeys) parsing, and the secure TunnelServer path. Pulls in the

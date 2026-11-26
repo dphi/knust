@@ -24,18 +24,20 @@ enum Command {
         #[arg(long, default_value = "3", value_parser = positive_seconds)]
         timeout: Duration,
     },
-    /// Read or write group addresses on the KNX bus.
+    /// Read, write or monitor group addresses on the KNX bus.
     Group(group::Options),
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let result = match Options::parse().command {
-        Command::Scan { local_ip, timeout } => scan::run(local_ip, timeout).await,
+        Command::Scan { local_ip, timeout } => scan::run(local_ip, timeout)
+            .await
+            .map(|()| ExitCode::SUCCESS),
         Command::Group(options) => group::run(options).await,
     };
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(exit) => exit,
         Err(error) => {
             eprintln!("Error: {error}");
             ExitCode::FAILURE
