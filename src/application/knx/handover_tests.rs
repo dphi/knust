@@ -11,12 +11,16 @@ struct Peer {
     incoming: Mutex<mpsc::Receiver<Vec<u8>>>,
     outgoing: mpsc::Sender<Vec<u8>>,
     closes: AtomicUsize,
+    fail_after_send: AtomicBool,
 }
 
 #[async_trait::async_trait]
 impl Connection for Peer {
     async fn send(&self, frame: &[u8]) -> Result<()> {
         self.outgoing.send(frame.to_vec()).await.unwrap();
+        if self.fail_after_send.load(Ordering::SeqCst) {
+            return Err(crate::error::TransportError::ConnectionClosed.into());
+        }
         Ok(())
     }
     async fn recv(&self) -> Result<Vec<u8>> {
@@ -50,6 +54,7 @@ fn peer() -> (Arc<Peer>, mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
             incoming: Mutex::new(rx),
             outgoing: sent,
             closes: AtomicUsize::new(0),
+            fail_after_send: AtomicBool::new(false),
         }),
         tx,
         received,
@@ -141,6 +146,36 @@ async fn an_invalid_outgoing_telegram_does_not_retire_a_healthy_connection() {
         .unwrap();
     assert!(sent.try_recv().is_ok());
     assert_eq!(connection.closes.load(Ordering::SeqCst), 0);
+    knx.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_write_that_may_have_reached_the_peer_is_not_replayed_after_reconnect() {
+    let knx = Knx::builder().routing(None).build().await.unwrap();
+    let (old, _old_incoming, mut old_sent) = peer();
+    old.fail_after_send.store(true, Ordering::SeqCst);
+    let (new, _new_incoming, mut new_sent) = peer();
+    knx.connection.send_replace(Some(old));
+    knx.sending_task.replace(knx.start_telegram_sending_task());
+
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
+    let first = Telegram::group_write(address, vec![1]);
+    let (result, ()) = tokio::join!(knx.send_telegram_acknowledged(&first), async {
+        old_sent.recv().await.unwrap();
+        knx.connection.send_replace(Some(new));
+    });
+    assert!(matches!(
+        result,
+        Err(KnxError::Transport(
+            crate::error::TransportError::ConnectionClosed
+        ))
+    ));
+    assert!(new_sent.try_recv().is_err());
+
+    knx.send_telegram_acknowledged(&Telegram::group_write(address, vec![0]))
+        .await
+        .unwrap();
+    assert!(new_sent.try_recv().is_ok());
     knx.stop().await;
 }
 

@@ -148,6 +148,8 @@ or addresses whose DPT is determined at runtime.
 Use a running client from `Knx::builder().connect().await?` for typed I/O.
 `write().await` waits for transmission and, on a tunnel, a successful cEMI
 confirmation. Use `enqueue_write().await` when queue acceptance is sufficient.
+After a connection failure, automatic reconnect resumes with the next queued
+telegram. The error from an interrupted write can leave its delivery uncertain.
 
 ```rust
 use std::time::Duration;

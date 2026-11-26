@@ -1171,7 +1171,6 @@ impl Knx {
     fn start_telegram_sending_task(&self) -> JoinHandle<()> {
         let mut active = self.connection.subscribe();
         let control_tx = self.control_tx.clone();
-        let auto_reconnect = self.config.auto_reconnect;
         let shutdown_flag = self.shutdown_flag.clone();
         let telegram_queue = self.telegram_queue.clone();
         let pending_cemi_confirmation = self.pending_cemi_confirmation.clone();
@@ -1187,7 +1186,7 @@ impl Knx {
             log_application!(LogLevel::Info, "Telegram sending task started");
             let mut send_count = 0u64;
 
-            'sending: loop {
+            loop {
                 // Check shutdown flag
                 if shutdown_flag.load(Ordering::SeqCst) && telegram_queue.is_empty().await {
                     log_application!(
@@ -1251,7 +1250,7 @@ impl Knx {
                     let frame_result =
                         Self::build_outgoing_frame_for_connection(telegram, &connection);
                     let frame_was_built = frame_result.is_ok();
-                    let mut result = match frame_result {
+                    let result = match frame_result {
                         Ok(frame_data) => {
                             Self::send_telegram_frame_with_confirmation(
                                 &connection,
@@ -1277,63 +1276,6 @@ impl Knx {
                             error.to_string(),
                         )
                         .await;
-                        if auto_reconnect && !shutdown_flag.load(Ordering::SeqCst) {
-                            let replacement = loop {
-                                let current = active.borrow_and_update().clone();
-                                if let Some(current) = current
-                                    && !Arc::ptr_eq(&current, &connection)
-                                {
-                                    break current;
-                                }
-                                if shutdown_flag.load(Ordering::SeqCst) {
-                                    return;
-                                }
-                                if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
-                                    continue 'sending;
-                                }
-                                tokio::select! {
-                                    _ = active.changed() => {}
-                                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
-                                }
-                            };
-                            #[cfg(feature = "secure")]
-                            let replacement_frame_result =
-                                Self::build_outgoing_frame_with_security(
-                                    telegram,
-                                    &replacement,
-                                    &data_secure_keyring,
-                                    &data_secure_sequence,
-                                )
-                                .await;
-                            #[cfg(not(feature = "secure"))]
-                            let replacement_frame_result =
-                                Self::build_outgoing_frame_for_connection(telegram, &replacement);
-                            let frame_was_built = replacement_frame_result.is_ok();
-                            result = match replacement_frame_result {
-                                Ok(frame) => {
-                                    Self::send_telegram_frame_with_confirmation(
-                                        &replacement,
-                                        &frame,
-                                        1,
-                                        &mut receipt,
-                                        &pending_cemi_confirmation,
-                                    )
-                                    .await
-                                }
-                                Err(error) => Err(error),
-                            };
-                            if frame_was_built
-                                && let Err(error) = &result
-                                && !Self::is_cemi_confirmation_error(error)
-                            {
-                                Self::report_connection_failure(
-                                    &control_tx,
-                                    replacement,
-                                    error.to_string(),
-                                )
-                                .await;
-                            }
-                        }
                     }
                     match &result {
                         Ok(()) => {
