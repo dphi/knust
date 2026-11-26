@@ -37,6 +37,7 @@ pub enum ServiceType {
     SessionResponse = 0x0952,
     SessionAuthenticate = 0x0953,
     SessionStatus = 0x0954,
+    TimerNotify = 0x0955,
 }
 
 impl ServiceType {
@@ -67,6 +68,7 @@ impl ServiceType {
             0x0952 => Some(Self::SessionResponse),
             0x0953 => Some(Self::SessionAuthenticate),
             0x0954 => Some(Self::SessionStatus),
+            0x0955 => Some(Self::TimerNotify),
             _ => None,
         }
     }
@@ -876,6 +878,98 @@ impl SessionStatus {
     }
 }
 
+/// A multicast timer notification carried by KNX IP Secure routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimerNotify {
+    timer: [u8; 6],
+    pub serial_number: [u8; 6],
+    pub message_tag: [u8; 2],
+    pub mac: [u8; 16],
+}
+
+impl TimerNotify {
+    pub const LENGTH: usize = 30;
+
+    /// Create a notification with a 48-bit timer value in milliseconds.
+    ///
+    /// # Errors
+    /// Returns [`ProtocolError::InvalidFrame`] if `timer_value` exceeds 48 bits.
+    pub fn new(
+        timer_value: u64,
+        serial_number: [u8; 6],
+        message_tag: [u8; 2],
+        mac: [u8; 16],
+    ) -> Result<Self> {
+        if timer_value >= 1 << 48 {
+            return Err(ProtocolError::InvalidFrame {
+                details: "TimerNotify timer exceeds 48 bits".into(),
+            }
+            .into());
+        }
+        let [_, _, timer @ ..] = timer_value.to_be_bytes();
+        Ok(Self {
+            timer,
+            serial_number,
+            message_tag,
+            mac,
+        })
+    }
+
+    #[must_use]
+    pub fn timer_value(self) -> u64 {
+        let mut bytes = [0; 8];
+        bytes[2..].copy_from_slice(&self.timer);
+        u64::from_be_bytes(bytes)
+    }
+
+    /// Decode the wire format. Authentication requires the routing backbone key.
+    ///
+    /// # Errors
+    /// Returns [`ProtocolError::ParseError`] if the body is not exactly 30 bytes.
+    pub fn parse(data: &[u8]) -> Result<Self> {
+        let body: [u8; Self::LENGTH] = data.try_into().map_err(|_| ProtocolError::ParseError {
+            offset: 0,
+            reason: format!(
+                "Expected a 30-byte TimerNotify body, got {} bytes",
+                data.len()
+            ),
+        })?;
+        let [
+            t0,
+            t1,
+            t2,
+            t3,
+            t4,
+            t5,
+            s0,
+            s1,
+            s2,
+            s3,
+            s4,
+            s5,
+            m0,
+            m1,
+            mac @ ..,
+        ] = body;
+        Ok(Self {
+            timer: [t0, t1, t2, t3, t4, t5],
+            serial_number: [s0, s1, s2, s3, s4, s5],
+            message_tag: [m0, m1],
+            mac,
+        })
+    }
+
+    #[must_use]
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::with_capacity(Self::LENGTH);
+        data.extend_from_slice(&self.timer);
+        data.extend_from_slice(&self.serial_number);
+        data.extend_from_slice(&self.message_tag);
+        data.extend_from_slice(&self.mac);
+        data
+    }
+}
+
 /// `ConnectionState` Request message (service type 0x0207).
 /// Used for heartbeat: client sends this every 60s to verify connection is alive.
 #[derive(Debug, Clone)]
@@ -1395,6 +1489,36 @@ mod tests {
         assert_eq!(status.serialize(), [0x01, 0x00]);
         let parsed = SessionStatus::parse(&[0x01, 0x00]).unwrap();
         assert_eq!(parsed.status, SessionStatus::STATUS_AUTH_FAILED);
+    }
+
+    #[test]
+    fn timer_notify_matches_the_wire_layout_and_checks_lengths() {
+        let packet =
+            hex::decode("061009550024010203040506112233445566aabb00112233445566778899aabbccddeeff")
+                .unwrap();
+        let frame = KnxIpFrame::parse(&packet).unwrap();
+        assert_eq!(frame.header.service_type, ServiceType::TimerNotify);
+        let notification = TimerNotify::parse(&frame.body).unwrap();
+        assert_eq!(notification.timer_value(), 0x0102_0304_0506);
+        assert_eq!(
+            notification.serial_number,
+            [0x11, 0x22, 0x33, 0x44, 0x55, 0x66]
+        );
+        assert_eq!(notification.message_tag, [0xaa, 0xbb]);
+        assert_eq!(notification.serialize(), frame.body);
+        assert_eq!(
+            TimerNotify::new(
+                notification.timer_value(),
+                notification.serial_number,
+                notification.message_tag,
+                notification.mac
+            )
+            .unwrap(),
+            notification
+        );
+        assert!(TimerNotify::new(1 << 48, [0; 6], [0; 2], [0; 16]).is_err());
+        assert!(TimerNotify::parse(&frame.body[..29]).is_err());
+        assert!(TimerNotify::parse(&[0; 31]).is_err());
     }
 
     #[test]
