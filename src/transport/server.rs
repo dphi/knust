@@ -579,7 +579,10 @@ impl TunnelServer {
 
         let (data_endpoint, crd, assigned_address) = match kind {
             ClientSessionKind::Tunnel => (
-                Hpai::new(self.local_addr),
+                match link {
+                    ClientLink::Tcp { .. } => Hpai::new_tcp_route_back(),
+                    ClientLink::Udp { .. } => Hpai::new(self.local_addr),
+                },
                 build_tunnel_crd(self.individual_address),
                 Some(self.individual_address),
             ),
@@ -638,8 +641,7 @@ impl TunnelServer {
                     request.communication_channel_id,
                     request.sequence_counter,
                 );
-                self.send_reply(ServiceType::TunnellingAck, &ack.serialize(), &session.link)
-                    .await?;
+                self.send_tunnel_ack(ack, &session.link).await?;
                 match parse_cemi_to_telegram(&request.raw_cemi) {
                     Ok(telegram) => {
                         let _ = self.telegram_tx.send(telegram);
@@ -673,8 +675,7 @@ impl TunnelServer {
                     request.communication_channel_id,
                     request.sequence_counter,
                 );
-                self.send_reply(ServiceType::TunnellingAck, &ack.serialize(), &session.link)
-                    .await?;
+                self.send_tunnel_ack(ack, &session.link).await?;
                 let server = self.clone();
                 let session = session.clone();
                 let raw_cemi = request.raw_cemi.clone();
@@ -700,9 +701,16 @@ impl TunnelServer {
                     request.communication_channel_id,
                     request.sequence_counter,
                 );
-                self.send_reply(ServiceType::TunnellingAck, &ack.serialize(), &session.link)
-                    .await?;
+                self.send_tunnel_ack(ack, &session.link).await?;
             }
+        }
+        Ok(())
+    }
+
+    async fn send_tunnel_ack(&self, ack: TunnellingAck, link: &ClientLink) -> Result<()> {
+        if matches!(link, ClientLink::Udp { .. }) {
+            self.send_reply(ServiceType::TunnellingAck, &ack.serialize(), link)
+                .await?;
         }
         Ok(())
     }
@@ -811,7 +819,7 @@ impl TunnelServer {
         self.send_cemi_to_session(session, &cemi).await
     }
 
-    /// Send one CEMI frame, retrying once with the same sequence after an ACK timeout.
+    /// Send one CEMI frame, retrying UDP once after an ACK timeout.
     async fn send_cemi_to_session(&self, session: &Arc<ClientSession>, cemi: &[u8]) -> Result<()> {
         let _guard = session.send_lock.lock().await;
         let seq = session.send_seq.load(Ordering::SeqCst);
@@ -819,6 +827,14 @@ impl TunnelServer {
         let frame =
             KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize();
         let frame = self.maybe_encrypt(frame, session.link.peer_addr()).await?;
+
+        if matches!(session.link, ClientLink::Tcp { .. }) {
+            session.link.send_frame(&frame).await?;
+            session
+                .send_seq
+                .store(seq.wrapping_add(1), Ordering::SeqCst);
+            return Ok(());
+        }
 
         for attempt in 0..2u8 {
             let (tx, rx) = oneshot::channel();
@@ -1294,12 +1310,17 @@ mod tests {
             .unwrap();
         assert_eq!(received.payload, vec![2]);
 
-        let ack_data = timeout(Duration::from_secs(1), tunnel.recv_frame())
+        let confirmation = timeout(Duration::from_secs(1), tunnel.recv_frame())
             .await
             .unwrap()
             .unwrap();
-        let ack_frame = KnxIpFrame::parse(&ack_data).unwrap();
-        assert_eq!(ack_frame.header.service_type, ServiceType::TunnellingAck);
+        let frame = KnxIpFrame::parse(&confirmation).unwrap();
+        assert_eq!(frame.header.service_type, ServiceType::TunnellingRequest);
+        let request = TunnellingRequest::parse(&frame.body).unwrap();
+        assert_eq!(
+            CemiFrame::parse(&request.raw_cemi).unwrap().message_code,
+            MessageCode::LDataCon
+        );
     }
 
     #[tokio::test]
@@ -1308,9 +1329,21 @@ mod tests {
         let tunnel = connected_tcp_client(server.local_addr()).await;
         tokio::time::sleep(Duration::from_millis(20)).await;
 
-        let (send_result, ()) =
-            tokio::join!(server.send(test_telegram(11)), client_ack_next(&tunnel));
-        send_result.unwrap();
+        timeout(Duration::from_millis(500), server.send(test_telegram(11)))
+            .await
+            .unwrap()
+            .unwrap();
+        let data = timeout(Duration::from_secs(1), tunnel.recv_frame())
+            .await
+            .unwrap()
+            .unwrap();
+        let frame = KnxIpFrame::parse(&data).unwrap();
+        assert_eq!(frame.header.service_type, ServiceType::TunnellingRequest);
+        let request = TunnellingRequest::parse(&frame.body).unwrap();
+        assert_eq!(
+            parse_cemi_to_telegram(&request.raw_cemi).unwrap().payload,
+            vec![11]
+        );
     }
 
     #[tokio::test]
