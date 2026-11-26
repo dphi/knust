@@ -8,10 +8,6 @@
 
 use knust::protocol::telegram::Telegram;
 use knust::protocol::{IndividualAddress, RawGroupAddress};
-#[cfg(feature = "secure")]
-use knust::security::SessionConfig;
-#[cfg(feature = "secure")]
-use knust::transport::SecurityConfig;
 use knust::transport::{BackoffConfig, TcpConfig};
 use knust::{ConnectionConfig, ConnectionType, Knx, KnxError};
 use std::time::Duration;
@@ -356,57 +352,56 @@ async fn test_multi_target_coordination() -> Result<(), KnxError> {
     Ok(())
 }
 
-/// Test secure communication workflows
-#[cfg(feature = "secure")]
+#[cfg(all(feature = "secure", feature = "server", feature = "dpt"))]
 #[tokio::test]
-async fn test_secure_communication_workflow() -> Result<(), KnxError> {
-    // Create security configuration
-    let _session_config = SessionConfig {
-        user_id: 1,
-        user_password: "test_password".to_string(),
-        device_auth_password: Some("device_auth".to_string()),
-        keepalive_interval: 60,
-    };
+async fn secure_tunnel_builder_exchanges_typed_telegrams() -> Result<(), KnxError> {
+    use knust::protocol::dpt::DPTSwitch;
+    use knust::security::SessionConfig;
+    use knust::transport::{SecurityConfig, TunnelServer};
 
-    let security_config = SecurityConfig {
-        device_auth_password: "device_auth".to_string(),
-        user_password: Some("test_password".to_string()),
-        session_timeout: 300,
-    };
+    let server = TunnelServer::bind_secure(
+        "127.0.0.1:0".parse().unwrap(),
+        "1.1.240".parse()?,
+        SessionConfig {
+            user_id: 1,
+            user_password: "test user password".into(),
+            device_auth_password: Some("test device password".into()),
+            keepalive_interval: 15,
+        },
+    )
+    .await?;
+    let mut incoming = server.subscribe();
+    let knx = Knx::builder()
+        .secure_tunnel(
+            server.local_addr(),
+            SecurityConfig::new("test device password", "test user password"),
+        )
+        .timeout(Duration::from_secs(3))
+        .connect()
+        .await?;
+    let address: RawGroupAddress = "1/5/1".parse()?;
+    let switch = knx.group_address::<DPTSwitch>(address)?;
+    let mut updates = switch.subscribe()?;
 
-    let config = ConnectionConfig {
-        connection_type: ConnectionType::SecureTunneling,
-        gateway_ip: Some("127.0.0.1".parse().unwrap()),
-        security: Some(security_config),
-        timeout_ms: 10000,
-        auto_reconnect: false,
-        reconnect_backoff: BackoffConfig::default(),
-        tcp_config: TcpConfig::default(),
-        ..Default::default()
-    };
+    switch.write(true).await?;
+    let received = timeout(Duration::from_secs(1), incoming.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        received.destination,
+        knust::protocol::Address::Group(address)
+    );
+    assert_eq!(received.payload, vec![1]);
 
-    // Create Knx instance with security
-    let knx = Knx::new(config).await?;
-    let secure_addr = RawGroupAddress::from_parts(1, 5, 1)?;
-
-    // Test secure operations
-    let result = timeout(Duration::from_secs(10), async {
-        knx.send_telegram(&write_telegram(secure_addr, vec![0x01]))
-            .await?;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        knx.send_telegram(&write_telegram(secure_addr, vec![0x00]))
-            .await?;
-        Ok::<(), KnxError>(())
-    })
-    .await;
-
-    match result {
-        Ok(Ok(())) => println!("✓ Secure communication workflow completed successfully"),
-        Ok(Err(e)) => println!("⚠ Secure communication failed (expected in test): {e}"),
-        Err(_) => println!("⚠ Secure communication timed out (expected in test)"),
-    }
-
-    println!("✓ Secure communication workflow test completed");
+    server.send(Telegram::group_write(address, vec![0])).await?;
+    let received = timeout(Duration::from_secs(1), updates.recv())
+        .await
+        .unwrap()
+        .unwrap()?;
+    assert!(!received.value());
+    knx.shutdown().await?;
+    server.shutdown();
     Ok(())
 }
 

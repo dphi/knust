@@ -165,14 +165,12 @@ impl ConnectionConfig {
             }
         }
 
-        let (name, millis) = if self.connection_type == ConnectionType::TcpTunneling {
-            (
-                "tcp_config.connect_timeout_ms",
-                self.tcp_config.connect_timeout_ms,
-            )
+        let name = if self.connection_type.uses_tcp() {
+            "tcp_config.connect_timeout_ms"
         } else {
-            ("timeout_ms", self.timeout_ms)
+            "timeout_ms"
         };
+        let millis = self.tunnel_timeout_ms();
         if millis == 0 {
             return Err(ConfigurationError::InvalidValue {
                 parameter: name.to_owned(),
@@ -199,13 +197,21 @@ impl ConnectionConfig {
             }
             .into());
         }
-        if self.connection_type != ConnectionType::TcpTunneling && ip.is_ipv6() {
+        if self.connection_type == ConnectionType::Tunneling && ip.is_ipv6() {
             return Err(ConfigurationError::ValidationError {
                 details: "UDP tunneling requires an IPv4 gateway".to_owned(),
             }
             .into());
         }
         Ok(SocketAddr::new(ip, port))
+    }
+
+    pub(crate) fn tunnel_timeout_ms(&self) -> u64 {
+        if self.connection_type.uses_tcp() {
+            self.tcp_config.connect_timeout_ms
+        } else {
+            self.timeout_ms
+        }
     }
 }
 
@@ -226,6 +232,12 @@ pub enum ConnectionType {
 
     /// Secure routing connection
     SecureRouting,
+}
+
+impl ConnectionType {
+    fn uses_tcp(self) -> bool {
+        matches!(self, Self::TcpTunneling | Self::SecureTunneling)
+    }
 }
 
 /// Security configuration for secure connections.

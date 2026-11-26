@@ -659,8 +659,7 @@ impl Knx {
                         if shutdown_flag.load(Ordering::SeqCst) {
                             break;
                         }
-                        *channel_id_arc.write().await =
-                            Self::establish_connection(&connection, &config);
+                        *channel_id_arc.write().await = Self::connection_channel_id(&connection);
                         *state.write().await = ConnectionState::Connected;
                         connection_arc.send_replace(Some(connection));
                         event_handler
@@ -689,13 +688,16 @@ impl Knx {
     /// Create a new connection based on configuration (helper for reconnection)
     async fn create_connection(config: &ConnectionConfig) -> Result<Arc<dyn Connection>> {
         match config.connection_type {
-            ConnectionType::Tunneling | ConnectionType::SecureTunneling => {
+            ConnectionType::Tunneling
+            | ConnectionType::TcpTunneling
+            | ConnectionType::SecureTunneling => {
                 let gateway_addr = config.gateway_addr()?;
-
-                let mut tunneling_conn = Tunnel::new_udp_with_timeout(
-                    gateway_addr,
-                    std::time::Duration::from_millis(config.timeout_ms),
-                )
+                let timeout = std::time::Duration::from_millis(config.tunnel_timeout_ms());
+                let mut tunnel = if config.connection_type == ConnectionType::Tunneling {
+                    Tunnel::new_udp_with_timeout(gateway_addr, timeout)
+                } else {
+                    Tunnel::new_tcp_with_timeout(gateway_addr, timeout)
+                }
                 .bind_to(config.local_ip);
 
                 if config.connection_type == ConnectionType::SecureTunneling {
@@ -706,7 +708,7 @@ impl Knx {
                                 parameter: "security".to_string(),
                             }
                         })?;
-                        tunneling_conn.connect_secure(security).await?;
+                        tunnel.connect_secure(security).await?;
                     }
                     #[cfg(not(feature = "secure"))]
                     {
@@ -716,25 +718,10 @@ impl Knx {
                         .into());
                     }
                 } else {
-                    // Establish the tunneling connection with KNX/IP protocol handshake
-                    tunneling_conn.connect().await?;
+                    tunnel.connect().await?;
                 }
 
-                Ok(Arc::new(tunneling_conn))
-            }
-            ConnectionType::TcpTunneling => {
-                let gateway_addr = config.gateway_addr()?;
-
-                let mut tcp_conn = Tunnel::new_tcp_with_timeout(
-                    gateway_addr,
-                    std::time::Duration::from_millis(config.tcp_config.connect_timeout_ms),
-                )
-                .bind_to(config.local_ip);
-
-                // Establish the TCP connection
-                tcp_conn.connect().await?;
-
-                Ok(Arc::new(tcp_conn))
+                Ok(Arc::new(tunnel))
             }
             ConnectionType::Routing => {
                 let routing_conn = RoutingConnection::new(config.local_ip).await?;
@@ -748,52 +735,11 @@ impl Knx {
         }
     }
 
-    /// Get the channel ID for a newly established connection (helper for reconnection).
-    ///
-    /// Returns `None` for connection types with no channel ID (Routing), or if
-    /// downcasting to the concrete connection type fails — callers should
-    /// keep the previous channel ID in that case rather than treat this as authoritative.
-    fn establish_connection(
-        connection: &Arc<dyn Connection>,
-        config: &ConnectionConfig,
-    ) -> Option<u8> {
-        match config.connection_type {
-            ConnectionType::Tunneling | ConnectionType::SecureTunneling => {
-                // For tunneling connections, try to get channel ID via downcasting
-                if let Some(tunneling_conn) = connection.as_any().downcast_ref::<Tunnel>() {
-                    let channel_id = tunneling_conn.channel_id();
-                    log_application!(
-                        LogLevel::Debug,
-                        "Tunneling connection established with channel ID: {}",
-                        channel_id
-                    );
-                    Some(channel_id)
-                } else {
-                    log_application!(LogLevel::Warn, "Failed to downcast to Tunnel");
-                    None
-                }
-            }
-            ConnectionType::TcpTunneling => {
-                // Similar for TCP tunneling
-                if let Some(tcp_conn) = connection.as_any().downcast_ref::<Tunnel>() {
-                    let channel_id = tcp_conn.channel_id();
-                    log_application!(
-                        LogLevel::Debug,
-                        "TCP tunneling connection established with channel ID: {}",
-                        channel_id
-                    );
-                    Some(channel_id)
-                } else {
-                    log_application!(LogLevel::Warn, "Failed to downcast to Tunnel");
-                    None
-                }
-            }
-            ConnectionType::Routing | ConnectionType::SecureRouting => {
-                // Routing connections don't have channel IDs
-                log_application!(LogLevel::Debug, "Routing connection established");
-                None
-            }
-        }
+    fn connection_channel_id(connection: &Arc<dyn Connection>) -> Option<u8> {
+        connection
+            .as_any()
+            .downcast_ref::<Tunnel>()
+            .map(Tunnel::channel_id)
     }
 
     /// Connect to the configured KNX/IP network.
@@ -810,8 +756,7 @@ impl Knx {
             .await;
         match Self::create_connection(&self.config).await {
             Ok(connection) => {
-                *self.channel_id.write().await =
-                    Self::establish_connection(&connection, &self.config);
+                *self.channel_id.write().await = Self::connection_channel_id(&connection);
                 *self.state.write().await = ConnectionState::Connected;
                 self.connection.send_replace(Some(connection));
                 self.notify_connection_state_changed(ConnectionState::Connected)

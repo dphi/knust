@@ -123,25 +123,16 @@ let config = ConnectionConfig {
 
 ### Secure Connections
 
-For encrypted communication using KNX IP Secure (requires the `secure`
-feature — without it, or without `security` set, `connect()` returns a
-configuration error during construction):
+KNX IP Secure tunneling uses TCP and requires the `secure` feature.
 
 ```rust
 use knust::transport::SecurityConfig;
 
-let security_config = SecurityConfig {
-    device_auth_password: "DeviceAuthPassword123!".to_string(),
-    user_password: Some("MySecurePassword".to_string()),
-    session_timeout: 300,
-};
-
-let config = ConnectionConfig {
-    connection_type: ConnectionType::SecureTunneling,
-    gateway_ip: Some("192.168.1.100".parse().unwrap()),
-    security: Some(security_config),
-    ..Default::default()
-};
+let security = SecurityConfig::new("device-auth password", "tunnel user password");
+let knx = Knx::builder()
+    .secure_tunnel("192.168.1.100:3671".parse()?, security)
+    .connect()
+    .await?;
 ```
 
 ## Typed Group Addresses

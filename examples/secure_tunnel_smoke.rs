@@ -37,8 +37,8 @@ async fn main() -> anyhow::Result<()> {
         .expect("device-auth-password required (e.g. the FDSK, hyphens/spaces stripped)");
     let user_password = args.next().unwrap_or_else(|| device_auth_password.clone());
 
-    println!("→ Connecting (UDP, secure) to {addr} ...");
-    let mut tunnel = Tunnel::new_udp(addr);
+    println!("→ Connecting (TCP, secure) to {addr} ...");
+    let mut tunnel = Tunnel::new_tcp(addr);
     let security = SecurityConfig {
         device_auth_password,
         user_password: Some(user_password),

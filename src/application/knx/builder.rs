@@ -75,7 +75,7 @@ impl KnxBuilder {
             .gateway(gateway)
     }
 
-    /// Select authenticated KNX IP Secure tunneling.
+    /// Select authenticated KNX IP Secure tunneling over TCP.
     #[cfg(feature = "secure")]
     #[must_use]
     pub fn secure_tunnel(
