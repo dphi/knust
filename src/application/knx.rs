@@ -1250,6 +1250,7 @@ impl Knx {
                     #[cfg(not(feature = "secure"))]
                     let frame_result =
                         Self::build_outgoing_frame_for_connection(telegram, &connection);
+                    let frame_was_built = frame_result.is_ok();
                     let mut result = match frame_result {
                         Ok(frame_data) => {
                             Self::send_telegram_frame_with_confirmation(
@@ -1263,7 +1264,8 @@ impl Knx {
                         }
                         Err(error) => Err(error),
                     };
-                    if let Err(error) = &result
+                    if frame_was_built
+                        && let Err(error) = &result
                         && !Self::is_cemi_confirmation_error(error)
                     {
                         if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
@@ -1306,6 +1308,7 @@ impl Knx {
                             #[cfg(not(feature = "secure"))]
                             let replacement_frame_result =
                                 Self::build_outgoing_frame_for_connection(telegram, &replacement);
+                            let frame_was_built = replacement_frame_result.is_ok();
                             result = match replacement_frame_result {
                                 Ok(frame) => {
                                     Self::send_telegram_frame_with_confirmation(
@@ -1319,7 +1322,8 @@ impl Knx {
                                 }
                                 Err(error) => Err(error),
                             };
-                            if let Err(error) = &result
+                            if frame_was_built
+                                && let Err(error) = &result
                                 && !Self::is_cemi_confirmation_error(error)
                             {
                                 Self::report_connection_failure(

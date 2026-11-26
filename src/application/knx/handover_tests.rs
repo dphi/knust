@@ -120,6 +120,31 @@ async fn sender_uses_replacement_connection() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_invalid_outgoing_telegram_does_not_retire_a_healthy_connection() {
+    let knx = knx().await;
+    let (connection, _incoming, mut sent) = peer();
+    knx.connection.send_replace(Some(connection.clone()));
+    knx.start().await.unwrap();
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
+    let error = knx
+        .send_telegram_acknowledged(&Telegram::group_write(address, vec![1; 256]))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        KnxError::Protocol(crate::error::ProtocolError::InvalidFrame { .. })
+    ));
+    assert!(sent.try_recv().is_err());
+
+    knx.send_telegram_acknowledged(&Telegram::group_write(address, vec![1]))
+        .await
+        .unwrap();
+    assert!(sent.try_recv().is_ok());
+    assert_eq!(connection.closes.load(Ordering::SeqCst), 0);
+    knx.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn receiver_uses_replacement_and_keeps_queue_open_after_socket_failure() {
     let knx = knx().await;
     let (old, old_tx, _old_sent) = peer();
