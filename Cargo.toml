@@ -25,6 +25,9 @@ ets = ["dep:strum", "dpt", "tokio/fs"]
 # clients and don't need it.
 server = []
 
+# The standalone gateway and bus command line tool.
+cli = ["dep:clap", "dep:if-addrs"]
+
 # KNX IP Secure + KNX Data Security: session handshake, group encryption,
 # keyring (.knxkeys) parsing, and the secure TunnelServer path. Pulls in the
 # crypto stack. Off by default — the plaintext KNX/IP library needs none of it.
@@ -46,6 +49,8 @@ async-trait = "0.1"
 rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 strum = { version = "0.28", default-features = false, features = ["derive"], optional = true }
+clap = { version = "4.6", features = ["derive"], optional = true }
+if-addrs = { version = "0.15", optional = true }
 
 # secure feature only
 aes = { version = "0.9", default-features = false, optional = true }
@@ -69,6 +74,11 @@ anyhow = "1"
 [lib]
 name = "knust"
 path = "src/lib.rs"
+
+[[bin]]
+name = "knust"
+path = "src/bin/knust/main.rs"
+required-features = ["cli"]
 
 [[example]]
 name = "gateway_discovery"
