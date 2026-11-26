@@ -48,14 +48,13 @@ instead of hand-building `Telegram`s. See
 handles like this into device structs.
 
 ```rust
-use knust::{ConnectionType, Knx};
+use knust::Knx;
 use knust::protocol::dpt::DPTSwitch;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let knx = Knx::builder()
-        .connection_type(ConnectionType::Tunneling)
-        .gateway("192.168.1.100:3671".parse()?)
+        .tunnel("192.168.1.100:3671".parse()?)
         .individual_address("1.1.240".parse()?)
         .connect()
         .await?;
@@ -126,7 +125,7 @@ let config = ConnectionConfig {
 
 For encrypted communication using KNX IP Secure (requires the `secure`
 feature — without it, or without `security` set, `connect()` returns a
-configuration error rather than silently falling back to plaintext):
+configuration error during construction):
 
 ```rust
 use knust::transport::SecurityConfig;

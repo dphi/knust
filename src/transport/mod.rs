@@ -31,8 +31,9 @@ mod tunneling_test;
 #[cfg(test)]
 mod integration_tests;
 
+use crate::error::{ConfigurationError, Result};
 use crate::protocol::address::IndividualAddress;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 pub use address_probe::{auto_select_address, probe_address};
 pub use address_registry::AddressRegistry;
@@ -105,6 +106,109 @@ impl Default for ConnectionConfig {
     }
 }
 
+impl ConnectionConfig {
+    /// Validate the settings before opening a socket or starting tasks.
+    ///
+    /// # Errors
+    /// Returns a configuration error if this mode has unsupported, missing, or
+    /// inconsistent settings.
+    pub fn validate(&self) -> Result<()> {
+        if self.security.is_some() && self.connection_type != ConnectionType::SecureTunneling {
+            return Err(ConfigurationError::ValidationError {
+                details: "Security settings require SecureTunneling".to_owned(),
+            }
+            .into());
+        }
+        match self.connection_type {
+            ConnectionType::Tunneling
+            | ConnectionType::TcpTunneling
+            | ConnectionType::SecureTunneling => {
+                let gateway = self.gateway_addr()?;
+                if let Some(local) = self.local_ip
+                    && local.is_ipv4() != gateway.is_ipv4()
+                {
+                    return Err(ConfigurationError::ValidationError {
+                        details: "The local address and gateway must use the same IP family"
+                            .to_owned(),
+                    }
+                    .into());
+                }
+            }
+            ConnectionType::Routing if self.local_ip.is_some_and(|ip| ip.is_ipv6()) => {
+                return Err(ConfigurationError::ValidationError {
+                    details: "Routing requires an IPv4 interface".to_owned(),
+                }
+                .into());
+            }
+            ConnectionType::SecureRouting => {
+                return Err(ConfigurationError::ValidationError {
+                    details: "SecureRouting (KNX IP Secure over multicast) is not yet implemented"
+                        .to_owned(),
+                }
+                .into());
+            }
+            ConnectionType::Routing => {}
+        }
+
+        if self.connection_type == ConnectionType::SecureTunneling {
+            if !cfg!(feature = "secure") {
+                return Err(ConfigurationError::ValidationError {
+                    details: "SecureTunneling requires the `secure` feature".to_owned(),
+                }
+                .into());
+            }
+            if self.security.is_none() {
+                return Err(ConfigurationError::MissingParameter {
+                    parameter: "security".to_owned(),
+                }
+                .into());
+            }
+        }
+
+        let (name, millis) = if self.connection_type == ConnectionType::TcpTunneling {
+            (
+                "tcp_config.connect_timeout_ms",
+                self.tcp_config.connect_timeout_ms,
+            )
+        } else {
+            ("timeout_ms", self.timeout_ms)
+        };
+        if millis == 0 {
+            return Err(ConfigurationError::InvalidValue {
+                parameter: name.to_owned(),
+                value: millis.to_string(),
+                reason: "Timeout must be greater than 0".to_owned(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn gateway_addr(&self) -> Result<SocketAddr> {
+        let ip = self
+            .gateway_ip
+            .ok_or_else(|| ConfigurationError::MissingParameter {
+                parameter: "gateway_ip".to_owned(),
+            })?;
+        let port = self.gateway_port.unwrap_or(3671);
+        if port == 0 || ip.is_unspecified() || ip.is_multicast() || ip == IpAddr::from([255; 4]) {
+            return Err(ConfigurationError::InvalidValue {
+                parameter: "gateway".to_owned(),
+                value: SocketAddr::new(ip, port).to_string(),
+                reason: "Expected a unicast gateway address and a nonzero port".to_owned(),
+            }
+            .into());
+        }
+        if self.connection_type != ConnectionType::TcpTunneling && ip.is_ipv6() {
+            return Err(ConfigurationError::ValidationError {
+                details: "UDP tunneling requires an IPv4 gateway".to_owned(),
+            }
+            .into());
+        }
+        Ok(SocketAddr::new(ip, port))
+    }
+}
+
 /// Types of KNX/IP connections
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionType {
@@ -139,6 +243,17 @@ pub struct SecurityConfig {
 
     /// Security session timeout in seconds
     pub session_timeout: u32,
+}
+
+impl SecurityConfig {
+    /// Create the credentials for an authenticated tunnel.
+    pub fn new(device_auth_password: impl Into<String>, user_password: impl Into<String>) -> Self {
+        Self {
+            device_auth_password: device_auth_password.into(),
+            user_password: Some(user_password.into()),
+            session_timeout: 60,
+        }
+    }
 }
 
 impl std::fmt::Debug for SecurityConfig {

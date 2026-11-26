@@ -17,6 +17,59 @@ use knust::{ConnectionConfig, ConnectionType, Knx, KnxError};
 use std::time::Duration;
 use tokio::time::timeout;
 
+#[tokio::test]
+async fn builder_validates_the_selected_connection_mode() {
+    use knust::error::ConfigurationError;
+
+    let gateway = "127.0.0.1:3671".parse().unwrap();
+    assert!(matches!(
+        Knx::builder().build().await,
+        Err(KnxError::Configuration(ConfigurationError::MissingParameter { parameter }))
+            if parameter == "gateway_ip"
+    ));
+    for address in ["0.0.0.0:3671", "127.0.0.1:0", "224.0.23.12:3671"] {
+        assert!(matches!(
+            Knx::builder().tunnel(address.parse().unwrap()).build().await,
+            Err(KnxError::Configuration(ConfigurationError::InvalidValue { parameter, .. }))
+                if parameter == "gateway"
+        ));
+    }
+    let mismatched = Knx::builder()
+        .tcp_tunnel(gateway)
+        .local_ip("::1".parse().unwrap());
+    assert!(matches!(
+        mismatched.build().await,
+        Err(KnxError::Configuration(
+            ConfigurationError::ValidationError { .. }
+        ))
+    ));
+    for (builder, timeout_name) in [
+        (Knx::builder().tunnel(gateway), "timeout_ms"),
+        (
+            Knx::builder().tcp_tunnel(gateway),
+            "tcp_config.connect_timeout_ms",
+        ),
+    ] {
+        assert!(matches!(
+            builder.timeout(Duration::ZERO).build().await,
+            Err(KnxError::Configuration(ConfigurationError::InvalidValue { parameter, .. }))
+                if parameter == timeout_name
+        ));
+    }
+    let routing = Knx::builder()
+        .tunnel(gateway)
+        .routing(Some(std::net::Ipv4Addr::LOCALHOST))
+        .build()
+        .await
+        .unwrap();
+    assert_eq!(routing.config().connection_type, ConnectionType::Routing);
+    assert_eq!(
+        routing.config().local_ip,
+        Some(std::net::Ipv4Addr::LOCALHOST.into())
+    );
+    assert_eq!(routing.config().gateway_ip, None);
+}
+
 #[cfg(feature = "server")]
 #[tokio::test]
 async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), KnxError> {
@@ -43,8 +96,7 @@ async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), Kn
     let mut incoming = server.subscribe();
     let states = States::default();
     let knx = Knx::builder()
-        .connection_type(ConnectionType::Tunneling)
-        .gateway(server.local_addr())
+        .tunnel(server.local_addr())
         .connection_callback(states.clone())?
         .connect()
         .await?;

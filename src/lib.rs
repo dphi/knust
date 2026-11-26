@@ -31,13 +31,12 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use knust::{ConnectionType, Knx};
+//! use knust::Knx;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let knx = Knx::builder()
-//!         .connection_type(ConnectionType::Tunneling)
-//!         .gateway("192.168.1.100:3671".parse()?)
+//!         .tunnel("192.168.1.100:3671".parse()?)
 //!         .individual_address("1.2.3".parse()?)
 //!         .connect()
 //!         .await?;

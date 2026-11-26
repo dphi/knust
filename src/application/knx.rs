@@ -310,9 +310,7 @@ impl Knx {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigurationError::MissingParameter`] if `config` selects a
-    /// tunneling connection type without a `gateway_ip`, or
-    /// [`ConfigurationError::InvalidValue`] if `config.timeout_ms` is 0.
+    /// Returns the configuration errors documented in [`ConnectionConfig::validate`].
     pub async fn new_with_options(
         config: ConnectionConfig,
         memory_limit_mb: u64,
@@ -331,7 +329,7 @@ impl Knx {
         );
 
         // Validate configuration
-        Self::validate_config(&config)?;
+        config.validate()?;
         log_application!(LogLevel::Debug, "Configuration validation passed");
 
         // Initialize memory monitor
@@ -692,15 +690,7 @@ impl Knx {
     async fn create_connection(config: &ConnectionConfig) -> Result<Arc<dyn Connection>> {
         match config.connection_type {
             ConnectionType::Tunneling | ConnectionType::SecureTunneling => {
-                let gateway_ip =
-                    config
-                        .gateway_ip
-                        .ok_or_else(|| ConfigurationError::MissingParameter {
-                            parameter: "gateway_ip".to_string(),
-                        })?;
-
-                let gateway_port = config.gateway_port.unwrap_or(3671);
-                let gateway_addr = std::net::SocketAddr::new(gateway_ip, gateway_port);
+                let gateway_addr = config.gateway_addr()?;
 
                 let mut tunneling_conn = Tunnel::new_udp_with_timeout(
                     gateway_addr,
@@ -732,15 +722,7 @@ impl Knx {
                 Ok(Arc::new(tunneling_conn))
             }
             ConnectionType::TcpTunneling => {
-                let gateway_ip =
-                    config
-                        .gateway_ip
-                        .ok_or_else(|| ConfigurationError::MissingParameter {
-                            parameter: "gateway_ip".to_string(),
-                        })?;
-
-                let gateway_port = config.gateway_port.unwrap_or(3671);
-                let gateway_addr = std::net::SocketAddr::new(gateway_ip, gateway_port);
+                let gateway_addr = config.gateway_addr()?;
 
                 let mut tcp_conn = Tunnel::new_tcp_with_timeout(
                     gateway_addr,
@@ -1850,36 +1832,6 @@ impl Knx {
     #[must_use]
     pub fn is_shutting_down(&self) -> bool {
         self.shutdown_flag.load(Ordering::SeqCst)
-    }
-
-    /// Validate the configuration
-    fn validate_config(config: &ConnectionConfig) -> Result<()> {
-        match config.connection_type {
-            ConnectionType::Tunneling
-            | ConnectionType::TcpTunneling
-            | ConnectionType::SecureTunneling => {
-                if config.gateway_ip.is_none() {
-                    return Err(ConfigurationError::MissingParameter {
-                        parameter: "gateway_ip".to_string(),
-                    }
-                    .into());
-                }
-            }
-            ConnectionType::Routing | ConnectionType::SecureRouting => {
-                // Routing doesn't require gateway IP
-            }
-        }
-
-        if config.timeout_ms == 0 {
-            return Err(ConfigurationError::InvalidValue {
-                parameter: "timeout_ms".to_string(),
-                value: config.timeout_ms.to_string(),
-                reason: "Timeout must be greater than 0".to_string(),
-            }
-            .into());
-        }
-
-        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]

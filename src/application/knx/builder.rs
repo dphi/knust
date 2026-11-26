@@ -6,7 +6,8 @@ use crate::error::{ConfigurationError, KnxError, Result};
 use crate::log_application;
 use crate::logging::LogLevel;
 use crate::transport::{ConnectionConfig, ConnectionType};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::time::Duration;
 
 /// Maximum number of callbacks that can be registered via builder
 const MAX_BUILDER_CALLBACKS: usize = 1000;
@@ -58,6 +59,45 @@ impl KnxBuilder {
         self
     }
 
+    /// Select UDP tunneling to a gateway with a known endpoint.
+    #[must_use]
+    pub fn tunnel(mut self, gateway: SocketAddr) -> Self {
+        self.config.security = None;
+        self.connection_type(ConnectionType::Tunneling)
+            .gateway(gateway)
+    }
+
+    /// Select TCP tunneling to a gateway with a known endpoint.
+    #[must_use]
+    pub fn tcp_tunnel(mut self, gateway: SocketAddr) -> Self {
+        self.config.security = None;
+        self.connection_type(ConnectionType::TcpTunneling)
+            .gateway(gateway)
+    }
+
+    /// Select authenticated KNX IP Secure tunneling.
+    #[cfg(feature = "secure")]
+    #[must_use]
+    pub fn secure_tunnel(
+        mut self,
+        gateway: SocketAddr,
+        security: crate::transport::SecurityConfig,
+    ) -> Self {
+        self.config.security = Some(security);
+        self.connection_type(ConnectionType::SecureTunneling)
+            .gateway(gateway)
+    }
+
+    /// Select multicast routing, optionally on a specific IPv4 interface.
+    #[must_use]
+    pub fn routing(mut self, interface: Option<Ipv4Addr>) -> Self {
+        self.config.security = None;
+        self.config.gateway_ip = None;
+        self.config.gateway_port = None;
+        self.config.local_ip = interface.map(Into::into);
+        self.connection_type(ConnectionType::Routing)
+    }
+
     /// Set the gateway IP address (required for tunneling)
     #[must_use]
     pub fn gateway_ip(mut self, ip: std::net::IpAddr) -> Self {
@@ -90,6 +130,17 @@ impl KnxBuilder {
     #[must_use]
     pub fn timeout_ms(mut self, timeout: u64) -> Self {
         self.config.timeout_ms = timeout;
+        self
+    }
+
+    /// Set the connection deadline for either tunnel transport.
+    #[must_use]
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        let millis = u64::try_from(timeout.as_millis())
+            .unwrap_or(u64::MAX)
+            .max(u64::from(!timeout.is_zero()));
+        self.config.timeout_ms = millis;
+        self.config.tcp_config.connect_timeout_ms = millis;
         self
     }
 
