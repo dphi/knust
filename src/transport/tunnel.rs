@@ -3,11 +3,11 @@
 //! The KNX-layer state machine — ConnectRequest/Response handshake, channel id,
 //! sequence numbers, TunnellingRequest/Ack, `TransportState` heartbeat and
 //! `DisconnectRequest` — is identical for both transports. Only framing and
-//! liveness differ, handled by the transport plus a couple of flags:
+//! liveness differ:
 //!
-//! * `use_heartbeat` — UDP needs the `TransportState` heartbeat for liveness;
-//!   TCP uses it only as a NAT/idle keepalive (on by default).
-//! * `send_acks` — UDP acknowledges incoming `TunnellingRequests`; TCP relies on
+//! * UDP needs the `TransportState` heartbeat for liveness. TCP also uses it
+//!   to keep idle tunnels open.
+//! * UDP acknowledges incoming `TunnellingRequests`; TCP relies on
 //!   the stream and does not.
 //!
 //! Constructors perform no network I/O; the transport is established lazily in
@@ -100,10 +100,6 @@ pub struct Tunnel {
     secure_keepalive_cancel: Option<tokio::sync::oneshot::Sender<()>>,
     #[cfg(feature = "secure")]
     secure_send_lock: Arc<tokio::sync::Mutex<()>>,
-    /// Whether the `TransportState` heartbeat should run for this tunnel.
-    pub(crate) use_heartbeat: bool,
-    /// Whether incoming `TunnellingRequests` must be acknowledged (UDP only).
-    pub(crate) send_acks: bool,
     /// Address explicitly configured for this tunnel; requested via Extended CRI
     /// during [`Tunnel::connect`]. `None` unless address management is enabled.
     configured_address: Option<IndividualAddress>,
@@ -129,8 +125,6 @@ impl Tunnel {
             gateway_addr,
             Hpai::route_back(),
             connection_timeout,
-            true, // heartbeat
-            true, // send acks
         )
     }
 
@@ -148,8 +142,6 @@ impl Tunnel {
             gateway_addr,
             Hpai::new_tcp_route_back(),
             connection_timeout,
-            true,  // heartbeat (NAT keepalive)
-            false, // TCP does not ack at the tunnelling layer here
         )
     }
 
@@ -158,8 +150,6 @@ impl Tunnel {
         gateway_addr: SocketAddr,
         local_hpai: Hpai,
         connection_timeout: Duration,
-        use_heartbeat: bool,
-        send_acks: bool,
     ) -> Self {
         Self {
             kind,
@@ -186,8 +176,6 @@ impl Tunnel {
             secure_keepalive_cancel: None,
             #[cfg(feature = "secure")]
             secure_send_lock: Arc::new(tokio::sync::Mutex::new(())),
-            use_heartbeat,
-            send_acks,
             configured_address: None,
             address_registry: None,
             individual_address: std::sync::Mutex::new(None),
@@ -704,7 +692,7 @@ impl Tunnel {
         Ok(())
     }
 
-    /// Send a `TunnellingAck` for a received `TunnellingRequest`.
+    /// Send a `TunnellingAck` for a received `TunnellingRequest` on UDP.
     ///
     /// # Errors
     ///
@@ -716,10 +704,12 @@ impl Tunnel {
         sequence: u8,
         status: u8,
     ) -> Result<()> {
-        let transport = self.transport()?;
+        if self.kind == TransportKind::Tcp {
+            return Ok(());
+        }
         let ack = TunnellingAck::new(channel_id, sequence, status);
         let frame = KnxIpFrame::new(ServiceType::TunnellingAck, ack.serialize());
-        transport.send_frame(&frame.serialize()).await
+        self.send_frame(&frame.serialize()).await
     }
 
     /// Send an already-serialized KNX/IP frame (encrypting if a secure session exists).
@@ -885,23 +875,14 @@ impl Tunnel {
     /// Start the `TransportState` heartbeat loop and return its lifecycle handle.
     ///
     /// The loop reports outcomes through the handle and declares this tunnel lost
-    /// after the configured consecutive failures. It is inert when this tunnel
-    /// was created without heartbeat support, as with TCP tunnelling.
+    /// after the configured consecutive failures.
     ///
     /// # Panics
     ///
     /// Panics if the internal heartbeat lock is poisoned.
-    pub fn start_heartbeat(&self, label: String) -> HeartbeatHandle {
+    pub fn start_heartbeat(self: Arc<Self>, label: String) -> HeartbeatHandle {
         let lost = Arc::new(tokio::sync::Notify::new());
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        if !self.use_heartbeat {
-            return HeartbeatHandle {
-                lost,
-                events: event_rx,
-                task: None,
-            };
-        }
-
         let monitor = Arc::new(HeartbeatMonitor::new(
             HeartbeatConfig::default(),
             self.channel_id,
@@ -909,14 +890,8 @@ impl Tunnel {
         ));
         *self.heartbeat.write().unwrap() = Some(monitor.clone());
 
-        let transport = self.transport().ok();
         let router = self.router.clone();
         let channel_id = self.channel_id;
-        let request = KnxIpFrame::new(
-            ServiceType::ConnectionstateRequest,
-            ConnectionstateRequest::new(channel_id, self.local_hpai.clone()).serialize(),
-        )
-        .serialize();
         let task_lost = lost.clone();
         let task = tokio::spawn(async move {
             let interval = monitor.config().interval;
@@ -929,10 +904,7 @@ impl Tunnel {
                 let rx = router
                     .register_channel_response(ServiceType::ConnectionstateResponse, channel_id);
                 let t0 = Instant::now();
-                let sent = match transport.as_ref() {
-                    Some(transport) => transport.send_frame(&request).await.is_ok(),
-                    None => false,
-                };
+                let sent = self.send_connectionstate_request().await.is_ok();
                 if !sent {
                     let _ = event_tx.send(HeartbeatEvent {
                         ok: false,
@@ -991,10 +963,9 @@ impl Tunnel {
     /// Returns [`TransportError::ConnectionClosed`] if the transport was
     /// never established, or the underlying transport's send error.
     pub async fn send_connectionstate_request(&self) -> Result<()> {
-        let transport = self.transport()?;
         let req = ConnectionstateRequest::new(self.channel_id, self.local_hpai.clone());
         let frame = KnxIpFrame::new(ServiceType::ConnectionstateRequest, req.serialize());
-        transport.send_frame(&frame.serialize()).await
+        self.send_frame(&frame.serialize()).await
     }
 
     /// # Panics
@@ -1144,7 +1115,7 @@ impl Connection for Tunnel {
         self.send_disconnect().await
     }
 
-    fn start_heartbeat(&self, label: String) -> Option<HeartbeatHandle> {
+    fn start_heartbeat(self: Arc<Self>, label: String) -> Option<HeartbeatHandle> {
         Some(Tunnel::start_heartbeat(self, label))
     }
 
@@ -1165,13 +1136,11 @@ impl Connection for Tunnel {
 mod tunneling_address_tests {
     use super::*;
 
-    #[cfg(feature = "secure")]
     struct KeepaliveTestTransport {
         sent: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
         incoming: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>,
     }
 
-    #[cfg(feature = "secure")]
     #[async_trait::async_trait]
     impl FrameTransport for KeepaliveTestTransport {
         async fn send_frame(&self, frame: &[u8]) -> Result<()> {
@@ -1191,6 +1160,29 @@ mod tunneling_address_tests {
 
         fn kind(&self) -> TransportKind {
             TransportKind::Udp
+        }
+    }
+
+    #[tokio::test]
+    async fn only_udp_tunnels_send_transport_acknowledgments() {
+        for tunnel in [Tunnel::new_udp(gateway()), Tunnel::new_tcp(gateway())] {
+            let (sent, mut outbound) = tokio::sync::mpsc::unbounded_channel();
+            let (_incoming, frames) = tokio::sync::mpsc::unbounded_channel();
+            *tunnel.transport.lock().unwrap() = Some(Arc::new(KeepaliveTestTransport {
+                sent,
+                incoming: tokio::sync::Mutex::new(frames),
+            }));
+            tunnel
+                .send_tunnelling_ack(1, 2, TunnellingAck::STATUS_OK)
+                .await
+                .unwrap();
+            if tunnel.kind() == TransportKind::Udp {
+                let bytes = outbound.try_recv().unwrap();
+                let frame = KnxIpFrame::parse(&bytes).unwrap();
+                assert_eq!(frame.header.service_type, ServiceType::TunnellingAck);
+            } else {
+                assert!(outbound.try_recv().is_err());
+            }
         }
     }
 
@@ -1251,6 +1243,27 @@ mod tunneling_address_tests {
         assert_eq!(
             server.decrypt_frame(&encrypted).await.unwrap(),
             [0x06, 0x10, 0x09, 0x54, 0x00, 0x08, 0x04, 0x00]
+        );
+        tunnel.send_connectionstate_request().await.unwrap();
+        let plaintext = server
+            .decrypt_frame(&sent_rx.try_recv().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            KnxIpFrame::parse(&plaintext).unwrap().header.service_type,
+            ServiceType::ConnectionstateRequest
+        );
+        tunnel
+            .send_tunnelling_ack(1, 2, TunnellingAck::STATUS_OK)
+            .await
+            .unwrap();
+        let plaintext = server
+            .decrypt_frame(&sent_rx.try_recv().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            KnxIpFrame::parse(&plaintext).unwrap().header.service_type,
+            ServiceType::TunnellingAck
         );
         if let Some(cancel) = tunnel.secure_keepalive_cancel.take() {
             let _ = cancel.send(());
@@ -1322,7 +1335,6 @@ mod tunneling_address_tests {
         let handle = connection
             .start_heartbeat("test".into())
             .expect("tunnel provides a heartbeat");
-        drop(connection);
         drop(tunnel);
         drop(handle);
         tokio::task::yield_now().await;

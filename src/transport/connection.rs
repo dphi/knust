@@ -31,7 +31,10 @@ pub trait Connection: Send + Sync {
     }
 
     /// Start connection-specific liveness checks if this transport provides them.
-    fn start_heartbeat(&self, _label: String) -> Option<super::tunnel::HeartbeatHandle> {
+    fn start_heartbeat(
+        self: std::sync::Arc<Self>,
+        _label: String,
+    ) -> Option<super::tunnel::HeartbeatHandle> {
         None
     }
 

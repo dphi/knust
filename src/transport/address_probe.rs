@@ -137,15 +137,13 @@ async fn recv_until_signal(conn: &Tunnel) -> Result<bool> {
         };
 
         // Mirror the normal receive path: acknowledge the request on UDP.
-        if conn.send_acks {
-            let _ = conn
-                .send_tunnelling_ack(
-                    request.communication_channel_id,
-                    request.sequence_counter,
-                    0,
-                )
-                .await;
-        }
+        let _ = conn
+            .send_tunnelling_ack(
+                request.communication_channel_id,
+                request.sequence_counter,
+                0,
+            )
+            .await;
 
         if let Ok(cemi) = parse_probe_cemi(&request.raw_cemi)
             && classify_cemi(&cemi) == ProbeSignal::Occupied
