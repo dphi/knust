@@ -517,8 +517,11 @@ impl Knx {
             active_sessions,
             key,
         };
-        let local_address = self.config.individual_address;
+        let fallback_address = self.config.individual_address;
+        let active = self.connection.subscribe();
         let filter = TelegramFilter::Custom(Arc::new(move |telegram| {
+            let local_address =
+                Self::active_individual_address(active.borrow().as_deref(), fallback_address);
             if telegram.source != destination
                 || telegram.destination != Address::Individual(local_address)
             {
@@ -639,7 +642,6 @@ impl P2pConnection {
         }
         let sequence = self.send_sequence;
         let mut telegram = Telegram::individual_data(self.destination, apdu);
-        telegram.source = self.knx.config.individual_address;
         telegram.tpci = crate::protocol::TpciFrame::DataConnected { sequence }.encode();
         for attempt in 0..=P2P_MAX_RETRANSMISSIONS {
             let (sent, completed) = self

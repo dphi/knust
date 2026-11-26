@@ -175,8 +175,7 @@ impl<T: DptValue> GroupAddress<T> {
             .knx
             .group_registry
             .reserve_write(self.address, self.dpt)?;
-        let mut telegram = Telegram::group_write_value(self.address, value)?;
-        telegram.source = self.knx.config.individual_address;
+        let telegram = Telegram::group_write_value(self.address, value)?;
         Ok(OutgoingTelegram::typed(telegram, permit))
     }
 

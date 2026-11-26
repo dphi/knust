@@ -223,7 +223,7 @@ impl Tunnel {
 
     /// The individual address in effect for this tunnel once connected, if any.
     ///
-    /// Always `None` when address management is not enabled.
+    /// Without address management, this is the address assigned by the gateway.
     ///
     /// # Panics
     ///
@@ -413,7 +413,7 @@ impl Tunnel {
 
         // Address management (opt-in): only runs when a registry is
         // configured. Determine the final address, claim it, and store it.
-        let mut final_addr: Option<IndividualAddress> = None;
+        let mut final_addr = assigned_address;
         if let Some(registry) = &self.address_registry {
             let addr = if let Some(cfg) = self.configured_address {
                 // (a) Explicit configured address takes priority.
@@ -434,9 +434,9 @@ impl Tunnel {
             };
             // Claim the final address (propagates Err on collision).
             registry.claim(addr)?;
-            *self.individual_address.lock().unwrap() = Some(addr);
             final_addr = Some(addr);
         }
+        *self.individual_address.lock().unwrap() = final_addr;
 
         match final_addr {
             Some(addr) => log_transport!(
@@ -641,11 +641,9 @@ impl Tunnel {
         self.established_at = None;
         self.channel_id = 0;
         // Address management (opt-in): release any claimed address.
-        if let Some(registry) = &self.address_registry {
-            let claimed = self.individual_address.lock().unwrap().take();
-            if let Some(addr) = claimed {
-                registry.release(addr);
-            }
+        let address = self.individual_address.lock().unwrap().take();
+        if let (Some(registry), Some(address)) = (&self.address_registry, address) {
+            registry.release(address);
         }
     }
 

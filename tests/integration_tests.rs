@@ -136,11 +136,13 @@ async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), Kn
     let states = States::default();
     let knx = Knx::builder()
         .tunnel(server.local_addr())
+        .individual_address("1.1.8".parse()?)
         .connection_callback(states.clone())?
         .connect()
         .await?;
 
     assert_eq!(knx.state().await, ConnectionState::Connected);
+    assert_eq!(knx.individual_address(), IndividualAddress::new(1, 1, 240));
     let address: RawGroupAddress = "1/2/3".parse()?;
     #[cfg(feature = "dpt")]
     knx.group_address::<knust::protocol::dpt::DPTSwitch>(address)?
@@ -153,6 +155,7 @@ async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), Kn
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(received.source, knx.individual_address());
     assert_eq!(
         received.destination,
         knust::protocol::Address::Group(address)

@@ -119,7 +119,7 @@ impl KnxBuilder {
         self
     }
 
-    /// Set the individual address for this client
+    /// Set the source address for routing or a tunnel without an assigned address.
     #[must_use]
     pub fn individual_address(mut self, address: crate::protocol::IndividualAddress) -> Self {
         self.config.individual_address = address;

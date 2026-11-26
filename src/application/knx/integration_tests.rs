@@ -220,7 +220,7 @@ async fn connectionless_p2p_collects_replies_alongside_a_connected_session() {
         .connection_type(ConnectionType::Tunneling)
         .gateway_ip(server.local_addr().ip())
         .gateway_port(server.local_addr().port())
-        .individual_address(client_address)
+        .individual_address(IndividualAddress::new(1, 1, 240))
         .build()
         .await
         .unwrap();
@@ -234,6 +234,7 @@ async fn connectionless_p2p_collects_replies_alongside_a_connected_session() {
         .unwrap()
         .unwrap();
     assert_eq!(connect.tpci, TpciFrame::Connect.encode());
+    assert_eq!(connect.source, client_address);
 
     let mut session = knx.connectionless_p2p(device_address).await.unwrap();
     assert!(knx.connectionless_p2p(device_address).await.is_err());
@@ -251,6 +252,7 @@ async fn connectionless_p2p_collects_replies_alongside_a_connected_session() {
         .unwrap()
         .unwrap();
     assert_eq!(request.destination, Address::Individual(device_address));
+    assert_eq!(request.source, client_address);
     assert_eq!(request.tpci, TpciFrame::DataUnconnected.encode());
     assert_eq!(request.payload, [0x03, 0x00]);
 

@@ -71,7 +71,7 @@ pub struct ConnectionConfig {
     /// Local IP address to bind to
     pub local_ip: Option<IpAddr>,
 
-    /// Individual address for this client
+    /// Source address for routing and for tunnels that return no assigned address.
     pub individual_address: IndividualAddress,
 
     /// Security configuration

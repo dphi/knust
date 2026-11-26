@@ -820,10 +820,8 @@ impl Knx {
 
     /// Enqueue a telegram for transmission by the processing task.
     ///
-    /// `telegram.source` is overwritten with this bus's configured
-    /// individual address before sending — callers building a telegram
-    /// (e.g. via [`Telegram::group_write`]) never need to know or set it
-    /// themselves, and can't accidentally send under the wrong address.
+    /// The client supplies the source address from [`Self::individual_address`]
+    /// when the telegram is sent.
     ///
     /// # Errors
     ///
@@ -832,10 +830,7 @@ impl Knx {
     /// [`TransportError::QueueFull`](crate::error::TransportError::QueueFull)
     /// if it is at capacity.
     pub async fn send_telegram(&self, telegram: &Telegram) -> Result<()> {
-        let mut telegram = telegram.clone();
-        telegram.source = self.config.individual_address;
-        self.telegram_queue.enqueue_outgoing(telegram).await?;
-        Ok(())
+        self.telegram_queue.enqueue_outgoing(telegram.clone()).await
     }
 
     async fn send_telegram_acknowledged(&self, telegram: &Telegram) -> Result<()> {
@@ -843,11 +838,7 @@ impl Knx {
         self.send_tracked_job(job).await
     }
 
-    async fn send_tracked_job(
-        &self,
-        mut job: crate::transport::queue::OutgoingTelegram,
-    ) -> Result<()> {
-        job.telegram.source = self.config.individual_address;
+    async fn send_tracked_job(&self, job: crate::transport::queue::OutgoingTelegram) -> Result<()> {
         let (_sent, completed) = self.telegram_queue.enqueue_tracked_job(job).await?;
         tokio::time::timeout(std::time::Duration::from_secs(10), completed)
             .await
@@ -881,8 +872,7 @@ impl Knx {
             handle: Some(handle),
         };
         let operation = async {
-            let mut read = Telegram::group_read(address);
-            read.source = self.config.individual_address;
+            let read = Telegram::group_read(address);
             let (sent, mut completed) = self.telegram_queue.enqueue_outgoing_tracked(read).await?;
             tokio::time::timeout(std::time::Duration::from_secs(10), async {
                 tokio::select! {
@@ -1182,6 +1172,7 @@ impl Knx {
         #[cfg(feature = "secure")]
         let data_secure_sequence = self.data_secure_sequence.clone();
         let performance_optimizer = self.performance_optimizer.clone();
+        let fallback_address = self.config.individual_address;
 
         log_application!(LogLevel::Debug, "Starting telegram sending task");
 
@@ -1202,7 +1193,6 @@ impl Knx {
 
                 // Dequeue outgoing telegram for sending
                 if let Some((mut job, enqueued_at)) = telegram_queue.dequeue_outgoing_job().await {
-                    let telegram = &job.telegram;
                     let mut receipt = job.receipt.take();
                     if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
                         continue;
@@ -1245,6 +1235,11 @@ impl Knx {
                     if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
                         continue;
                     }
+                    let telegram = &mut job.telegram;
+                    telegram.source = Self::active_individual_address(
+                        Some(connection.as_ref()),
+                        fallback_address,
+                    );
 
                     send_count += 1;
                     let send_timer = std::time::Instant::now();
@@ -1567,6 +1562,25 @@ impl Knx {
     /// Check if connected to the KNX network
     pub async fn is_connected(&self) -> bool {
         matches!(self.state().await, ConnectionState::Connected)
+    }
+
+    /// The source address the active tunnel was assigned, or the configured address.
+    #[must_use]
+    pub fn individual_address(&self) -> crate::protocol::IndividualAddress {
+        Self::active_individual_address(
+            self.connection.borrow().as_deref(),
+            self.config.individual_address,
+        )
+    }
+
+    fn active_individual_address(
+        connection: Option<&dyn Connection>,
+        fallback: crate::protocol::IndividualAddress,
+    ) -> crate::protocol::IndividualAddress {
+        connection
+            .and_then(|connection| connection.as_any().downcast_ref::<Tunnel>())
+            .and_then(Tunnel::individual_address)
+            .unwrap_or(fallback)
     }
 
     /// Get connection statistics
