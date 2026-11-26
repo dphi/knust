@@ -853,7 +853,7 @@ async fn send_udp_frame(socket: &UdpSocket, destination: SocketAddr, frame: &[u8
 }
 
 async fn receive_udp_frame(socket: &UdpSocket) -> Result<(KnxIpFrame, SocketAddr)> {
-    let mut buffer = [0; u16::MAX as usize];
+    let mut buffer = vec![0; usize::from(u16::MAX)];
     let (length, source) =
         socket
             .recv_from(&mut buffer)
@@ -869,6 +869,27 @@ async fn receive_udp_frame(socket: &UdpSocket) -> Result<(KnxIpFrame, SocketAddr
 mod tests {
     use super::*;
     use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn udp_receive_keeps_the_full_datagram_with_a_small_future() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let body = vec![0xa5; 4096];
+        let frame = KnxIpFrame::new(ServiceType::DeviceConfigurationRequest, body.clone());
+        sender
+            .send_to(&frame.serialize(), socket.local_addr().unwrap())
+            .await
+            .unwrap();
+
+        let receive = receive_udp_frame(&socket);
+        assert!(std::mem::size_of_val(&receive) < 4096);
+        let (received, source) = timeout(Duration::from_secs(1), receive)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(source, sender.local_addr().unwrap());
+        assert_eq!(received.body, body);
+    }
 
     #[tokio::test]
     async fn udp_device_management_client_reads_and_writes_properties_with_loopback_server() {
