@@ -121,6 +121,30 @@ impl Drop for ReadCallbackGuard {
 
 type ActiveConnection = tokio::sync::watch::Sender<Option<Arc<dyn Connection>>>;
 
+struct ConnectionLifecycle {
+    state: ConnectionState,
+    generation: u64,
+}
+
+struct ConnectionTransition {
+    lifecycle: Arc<std::sync::Mutex<ConnectionLifecycle>>,
+    generation: u64,
+}
+
+impl Drop for ConnectionTransition {
+    fn drop(&mut self) {
+        let mut lifecycle = self.lifecycle.lock().unwrap();
+        if lifecycle.generation == self.generation
+            && matches!(
+                lifecycle.state,
+                ConnectionState::Connecting | ConnectionState::Disconnecting
+            )
+        {
+            lifecycle.state = ConnectionState::Disconnected;
+        }
+    }
+}
+
 const CEMI_CONFIRMATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Main Knx library interface
@@ -181,8 +205,8 @@ pub struct Knx {
     /// Active connection
     connection: ActiveConnection,
 
-    /// Library state
-    state: Arc<RwLock<ConnectionState>>,
+    /// Connection state and the generation that may publish it.
+    connection_lifecycle: Arc<std::sync::Mutex<ConnectionLifecycle>>,
 
     /// Shutdown flag for graceful termination
     shutdown_flag: Arc<AtomicBool>,
@@ -232,9 +256,6 @@ pub struct Knx {
 
     /// Receiver for connection control events (wrapped in Option for taking)
     control_rx: Arc<RwLock<Option<mpsc::Receiver<ConnectionControlMessage>>>>,
-
-    /// Current communication channel ID (for tunneling connections)
-    channel_id: Arc<RwLock<Option<u8>>>,
 
     /// Receive-path rate limiter
     receive_limiter: Option<Arc<ReceiveRateLimiter>>,
@@ -375,7 +396,10 @@ impl Knx {
             #[cfg(feature = "secure")]
             data_secure_sequence: Arc::new(AtomicU64::new(data_secure_sequence)),
             connection: tokio::sync::watch::channel(None).0,
-            state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
+            connection_lifecycle: Arc::new(std::sync::Mutex::new(ConnectionLifecycle {
+                state: ConnectionState::Disconnected,
+                generation: 0,
+            })),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
             shutdown_started: Arc::new(Notify::new()),
@@ -397,7 +421,6 @@ impl Knx {
             telegram_queue,
             control_tx,
             control_rx: Arc::new(RwLock::new(Some(control_rx))),
-            channel_id: Arc::new(RwLock::new(None)),
             receive_limiter: Some(receive_limiter),
             #[cfg(feature = "dpt")]
             group_registry: Arc::new(GroupAddressRegistry::new()),
@@ -521,9 +544,8 @@ impl Knx {
         let auto_reconnect = self.config.auto_reconnect;
         let config = self.config.clone();
         let connection_arc = self.connection.clone();
-        let state = self.state.clone();
+        let lifecycle = self.connection_lifecycle.clone();
         let event_handler = self.event_handler.clone();
-        let channel_id_arc = self.channel_id.clone();
         let reconnect_task = self.reconnect_task.clone();
 
         // Take the receiver from the stored field
@@ -569,32 +591,35 @@ impl Knx {
 
                             }
                             ConnectionControlEvent::TunnelLost { channel_id, reason } => {
-                                let removed = connection_arc.send_if_modified(|active| {
-                                    if active.as_ref().is_some_and(|current| Arc::ptr_eq(current, &connection)) {
-                                        *active = None;
-                                        true
-                                    } else { false }
-                                });
-                                if !removed { continue; }
+                                let generation = {
+                                    let mut lifecycle = lifecycle.lock().unwrap();
+                                    let removed = connection_arc.send_if_modified(|active| {
+                                        if active.as_ref().is_some_and(|current| Arc::ptr_eq(current, &connection)) {
+                                            *active = None;
+                                            true
+                                        } else { false }
+                                    });
+                                    if !removed { continue; }
+                                    lifecycle.state = ConnectionState::Disconnected;
+                                    lifecycle.generation
+                                };
                                 log_application!(LogLevel::Warn, "Tunnel lost for channel {}: {}", channel_id, reason);
-
-                                // Update state to disconnected
-                                {
-                                    let mut s = state.write().await;
-                                    *s = ConnectionState::Disconnected;
-                                }
 
                                 // Notify callbacks
                                 event_handler.notify_connection_state_changed(
                                     ConnectionState::Disconnected
                                 ).await;
 
-                                *channel_id_arc.write().await = None;
                                 if let Err(e) = connection.close().await {
                                     log_application!(LogLevel::Warn, "Failed to close connection: {}", e);
                                 }
 
-                                if auto_reconnect && connection_arc.borrow().is_none() {
+                                let current = lifecycle.lock().unwrap();
+                                if auto_reconnect
+                                    && current.generation == generation
+                                    && !shutdown_flag.load(Ordering::SeqCst)
+                                    && connection_arc.borrow().is_none()
+                                {
                                     log_application!(LogLevel::Info, "Auto-reconnect enabled, starting reconnection task");
 
                                     // Check if reconnection is already in progress
@@ -603,9 +628,9 @@ impl Knx {
                                         let reconnect_handle = Self::start_reconnection_task(
                                             config.clone(),
                                             connection_arc.clone(),
-                                            state.clone(),
+                                            lifecycle.clone(),
                                             event_handler.clone(),
-                                            channel_id_arc.clone(),
+                                            generation,
                                             shutdown_flag.clone(),
                                         );
 
@@ -642,29 +667,41 @@ impl Knx {
     fn start_reconnection_task(
         config: ConnectionConfig,
         connection_arc: ActiveConnection,
-        state: Arc<RwLock<ConnectionState>>,
+        lifecycle: Arc<std::sync::Mutex<ConnectionLifecycle>>,
         event_handler: Arc<EventHandler>,
-        channel_id_arc: Arc<RwLock<Option<u8>>>,
+        generation: u64,
         shutdown_flag: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             let backoff = &config.reconnect_backoff;
             let mut delay_ms = backoff.initial_delay_ms;
             for attempt in 1..=backoff.max_attempts {
-                if shutdown_flag.load(Ordering::SeqCst) {
+                if shutdown_flag.load(Ordering::SeqCst)
+                    || lifecycle.lock().unwrap().generation != generation
+                {
                     break;
                 }
                 match Self::create_connection(&config).await {
                     Ok(connection) => {
-                        if shutdown_flag.load(Ordering::SeqCst) {
-                            break;
+                        let installed = {
+                            let mut lifecycle = lifecycle.lock().unwrap();
+                            if lifecycle.generation == generation
+                                && !shutdown_flag.load(Ordering::SeqCst)
+                            {
+                                lifecycle.state = ConnectionState::Connected;
+                                connection_arc.send_replace(Some(connection.clone()));
+                                true
+                            } else {
+                                false
+                            }
+                        };
+                        if installed {
+                            event_handler
+                                .notify_connection_state_changed(ConnectionState::Connected)
+                                .await;
+                        } else {
+                            let _ = connection.close().await;
                         }
-                        *channel_id_arc.write().await = Self::connection_channel_id(&connection);
-                        *state.write().await = ConnectionState::Connected;
-                        connection_arc.send_replace(Some(connection));
-                        event_handler
-                            .notify_connection_state_changed(ConnectionState::Connected)
-                            .await;
                         return;
                     }
                     Err(error) => {
@@ -735,73 +772,114 @@ impl Knx {
         }
     }
 
-    fn connection_channel_id(connection: &Arc<dyn Connection>) -> Option<u8> {
-        connection
-            .as_any()
-            .downcast_ref::<Tunnel>()
-            .map(Tunnel::channel_id)
+    fn begin_connection_transition(
+        &self,
+        lifecycle: &mut ConnectionLifecycle,
+        state: ConnectionState,
+    ) -> ConnectionTransition {
+        lifecycle.generation += 1;
+        lifecycle.state = state;
+        drop(self.reconnect_task.take());
+        ConnectionTransition {
+            lifecycle: self.connection_lifecycle.clone(),
+            generation: lifecycle.generation,
+        }
     }
 
     /// Connect to the configured KNX/IP network.
+    ///
+    /// Calling this on a connected client reuses its current connection.
     ///
     /// # Errors
     ///
     /// Returns configuration, handshake or transport errors for the selected connection.
     pub async fn connect(&self) -> Result<()> {
+        use crate::error::TransportError;
+
         if self.telegram_queue.is_closed().await {
-            return Err(crate::error::TransportError::QueueClosed.into());
+            return Err(TransportError::QueueClosed.into());
         }
-        *self.state.write().await = ConnectionState::Connecting;
+        let attempt = {
+            let mut lifecycle = self.connection_lifecycle.lock().unwrap();
+            if self.connection.borrow().is_some() {
+                return Ok(());
+            }
+            if matches!(
+                lifecycle.state,
+                ConnectionState::Connecting | ConnectionState::Disconnecting
+            ) {
+                return Err(TransportError::ConnectionTransitionInProgress.into());
+            }
+            self.begin_connection_transition(&mut lifecycle, ConnectionState::Connecting)
+        };
         self.notify_connection_state_changed(ConnectionState::Connecting)
             .await;
-        match Self::create_connection(&self.config).await {
-            Ok(connection) => {
-                *self.channel_id.write().await = Self::connection_channel_id(&connection);
-                *self.state.write().await = ConnectionState::Connected;
-                self.connection.send_replace(Some(connection));
-                self.notify_connection_state_changed(ConnectionState::Connected)
-                    .await;
-                Ok(())
+        if self.connection_lifecycle.lock().unwrap().generation != attempt.generation {
+            return Err(TransportError::ConnectionClosed.into());
+        }
+
+        let created = Self::create_connection(&self.config).await;
+        let stopped = self.telegram_queue.is_closed().await;
+        let state = {
+            let mut lifecycle = self.connection_lifecycle.lock().unwrap();
+            if stopped || lifecycle.generation != attempt.generation {
+                None
+            } else {
+                lifecycle.state = match &created {
+                    Ok(connection) => {
+                        self.connection.send_replace(Some(connection.clone()));
+                        ConnectionState::Connected
+                    }
+                    Err(_) => ConnectionState::Error,
+                };
+                Some(lifecycle.state)
             }
-            Err(error) => {
-                *self.state.write().await = ConnectionState::Error;
-                self.notify_connection_state_changed(ConnectionState::Error)
-                    .await;
-                Err(error)
+        };
+        if let Some(state) = state {
+            self.notify_connection_state_changed(state).await;
+            created.map(|_| ())
+        } else {
+            if let Ok(connection) = created {
+                let _ = connection.close().await;
             }
+            Err(if stopped {
+                TransportError::QueueClosed
+            } else {
+                TransportError::ConnectionClosed
+            }
+            .into())
         }
     }
 
-    /// Disconnect from the KNX/IP network
+    /// Disconnect from the KNX/IP network and cancel automatic reconnect.
     ///
     /// # Errors
-    ///
     /// Returns the underlying connection's close error, if any.
     pub async fn disconnect(&self) -> Result<()> {
-        {
-            let mut state = self.state.write().await;
-            *state = ConnectionState::Disconnecting;
-        }
+        let (transition, connection) = {
+            let mut lifecycle = self.connection_lifecycle.lock().unwrap();
+            if lifecycle.state == ConnectionState::Disconnecting {
+                return Err(crate::error::TransportError::ConnectionTransitionInProgress.into());
+            }
+            let transition =
+                self.begin_connection_transition(&mut lifecycle, ConnectionState::Disconnecting);
+            (transition, self.connection.send_replace(None))
+        };
 
-        // Notify connection state change callbacks
         self.notify_connection_state_changed(ConnectionState::Disconnecting)
             .await;
-
-        let result = match self.connection.send_replace(None) {
+        let result = match connection {
             Some(connection) => connection.close().await,
             None => Ok(()),
         };
-        *self.channel_id.write().await = None;
-
         {
-            let mut state = self.state.write().await;
-            *state = ConnectionState::Disconnected;
+            let mut lifecycle = self.connection_lifecycle.lock().unwrap();
+            if lifecycle.generation == transition.generation {
+                lifecycle.state = ConnectionState::Disconnected;
+            }
         }
-
-        // Notify connection state change callbacks
         self.notify_connection_state_changed(ConnectionState::Disconnected)
             .await;
-
         result
     }
 
@@ -1556,7 +1634,7 @@ impl Knx {
 
     /// Get the current library state
     pub async fn state(&self) -> ConnectionState {
-        *self.state.read().await
+        self.connection_lifecycle.lock().unwrap().state
     }
 
     /// Check if connected to the KNX network

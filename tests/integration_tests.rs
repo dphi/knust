@@ -143,6 +143,8 @@ async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), Kn
 
     assert_eq!(knx.state().await, ConnectionState::Connected);
     assert_eq!(knx.individual_address(), IndividualAddress::new(1, 1, 240));
+    knx.connect().await?;
+    assert_eq!(server.client_count().await, 1);
     let address: RawGroupAddress = "1/2/3".parse()?;
     #[cfg(feature = "dpt")]
     knx.group_address::<knust::protocol::dpt::DPTSwitch>(address)?

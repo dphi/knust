@@ -92,6 +92,101 @@ async fn udp_connect_uses_configured_timeout() {
     ));
 }
 
+#[tokio::test]
+async fn disconnect_invalidates_a_handshake_that_finishes_late() {
+    use crate::error::TransportError;
+    use crate::protocol::knxip::{
+        ConnectResponse, DisconnectResponse, Hpai, KnxIpFrame, ServiceType,
+    };
+
+    let gateway = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let address = gateway.local_addr().unwrap();
+    let knx = Knx::builder().tunnel(address).build().await.unwrap();
+    let client = knx.clone();
+    let connecting = tokio::spawn(async move { client.connect().await });
+    let mut buf = [0; 1024];
+    let (received, peer) = timeout(Duration::from_secs(1), gateway.recv_from(&mut buf))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        KnxIpFrame::parse(&buf[..received])
+            .unwrap()
+            .header
+            .service_type,
+        ServiceType::ConnectRequest
+    );
+    assert!(matches!(
+        knx.connect().await,
+        Err(KnxError::Transport(
+            TransportError::ConnectionTransitionInProgress
+        ))
+    ));
+    knx.disconnect().await.unwrap();
+
+    let response = ConnectResponse {
+        channel_id: 8,
+        status: ConnectResponse::STATUS_OK,
+        data_endpoint: Hpai::new(address),
+        crd: vec![4, 4, 0x11, 0x10],
+        assigned_address: Some(IndividualAddress::new(1, 1, 16)),
+    };
+    gateway
+        .send_to(
+            &KnxIpFrame::new(ServiceType::ConnectResponse, response.serialize()).serialize(),
+            peer,
+        )
+        .await
+        .unwrap();
+    let (received, cleanup_peer) = timeout(Duration::from_secs(1), gateway.recv_from(&mut buf))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cleanup_peer, peer);
+    assert_eq!(
+        KnxIpFrame::parse(&buf[..received])
+            .unwrap()
+            .header
+            .service_type,
+        ServiceType::DisconnectRequest
+    );
+    let response = DisconnectResponse::new(8, DisconnectResponse::STATUS_OK);
+    gateway
+        .send_to(
+            &KnxIpFrame::new(ServiceType::DisconnectResponse, response.serialize()).serialize(),
+            peer,
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        connecting.await.unwrap(),
+        Err(KnxError::Transport(TransportError::ConnectionClosed))
+    ));
+    assert_eq!(knx.state().await, ConnectionState::Disconnected);
+    assert!(knx.connection.borrow().is_none());
+}
+
+#[tokio::test]
+async fn dropping_a_pending_connect_restores_the_disconnected_state() {
+    let gateway = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let knx = Knx::builder()
+        .tunnel(gateway.local_addr().unwrap())
+        .build()
+        .await
+        .unwrap();
+    let client = knx.clone();
+    let connecting = tokio::spawn(async move { client.connect().await });
+    timeout(Duration::from_secs(1), gateway.recv_from(&mut [0; 1024]))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(knx.state().await, ConnectionState::Connecting);
+    connecting.abort();
+    assert!(connecting.await.unwrap_err().is_cancelled());
+    assert_eq!(knx.state().await, ConnectionState::Disconnected);
+}
+
 #[tokio::test(start_paused = true)]
 async fn sender_uses_replacement_connection() {
     let knx = knx().await;
@@ -421,6 +516,25 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
             .await
             .unwrap()
             .unwrap();
+        if value == 2 {
+            let failed = knx
+                .send_telegram_acknowledged(&Telegram::group_write(
+                    RawGroupAddress::try_from_raw(1).unwrap(),
+                    vec![0x20],
+                ))
+                .await;
+            assert!(matches!(
+                failed,
+                Err(KnxError::Transport(
+                    crate::error::TransportError::Timeout { .. }
+                ))
+            ));
+            peer = timeout(Duration::from_secs(2), connected_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(written_rx.try_recv().is_err());
+        }
         knx.send_telegram(&Telegram::group_write(
             RawGroupAddress::try_from_raw(1).unwrap(),
             vec![value],
@@ -431,12 +545,6 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
             .await
             .unwrap()
             .unwrap();
-        if sender != peer {
-            peer = timeout(Duration::from_secs(2), connected_rx.recv())
-                .await
-                .unwrap()
-                .unwrap();
-        }
         assert_eq!(sender, peer);
         assert_eq!(payload, [value]);
         let cemi = CemiFrame::new(

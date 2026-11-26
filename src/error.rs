@@ -75,6 +75,10 @@ pub enum TransportError {
     #[error("Client is not processing telegrams. Start it or use KnxBuilder::connect")]
     ClientNotRunning,
 
+    /// A connect or disconnect operation is already in progress.
+    #[error("A connection transition is already in progress")]
+    ConnectionTransitionInProgress,
+
     /// The KNX interface reported that a telegram could not be sent on the bus.
     #[error("KNX interface rejected the telegram (negative L_Data.con)")]
     NegativeConfirmation,
