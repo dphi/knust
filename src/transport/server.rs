@@ -772,11 +772,6 @@ impl TunnelServer {
             .await
             .remove(&request.communication_channel_id)
             .map_or(link, |s| s.link.clone());
-        #[cfg(feature = "secure")]
-        self.secure_sessions
-            .write()
-            .await
-            .remove(&reply_link.peer_addr());
         log_transport!(
             LogLevel::Info,
             "TunnelServer: client channel {} disconnected",
@@ -786,12 +781,19 @@ impl TunnelServer {
             request.communication_channel_id,
             DisconnectResponse::STATUS_OK,
         );
-        self.send_reply(
-            ServiceType::DisconnectResponse,
-            &response.serialize(),
-            &reply_link,
-        )
-        .await
+        let result = self
+            .send_reply(
+                ServiceType::DisconnectResponse,
+                &response.serialize(),
+                &reply_link,
+            )
+            .await;
+        #[cfg(feature = "secure")]
+        self.secure_sessions
+            .write()
+            .await
+            .remove(&reply_link.peer_addr());
+        result
     }
 
     async fn send_reply(
@@ -1550,6 +1552,11 @@ mod tests {
         let (send_result, ()) =
             tokio::join!(server.send(test_telegram(6)), client_ack_next(&tunnel));
         send_result.unwrap();
+
+        let received_before_disconnect = tunnel.stats().frames_received;
+        tunnel.send_disconnect().await.unwrap();
+        assert_eq!(server.client_count().await, 0);
+        assert!(tunnel.stats().frames_received > received_before_disconnect);
     }
 
     #[cfg(feature = "secure")]

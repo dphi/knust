@@ -685,22 +685,21 @@ impl Tunnel {
     }
 
     async fn send_disconnect_request(&self) -> Result<()> {
-        let transport = self.transport()?;
         let req = DisconnectRequest::new(self.channel_id, self.local_hpai.clone());
         let frame = KnxIpFrame::new(ServiceType::DisconnectRequest, req.serialize());
-        transport.send_frame(&frame.serialize()).await?;
+        self.send_frame(&frame.serialize()).await?;
 
         // Spec allows no response (gateway may close the socket first), so timeout is not an error.
         // Other frame types may arrive before the DisconnectResponse, so loop until we see it.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
         // timeout or recv error: spec allows no response, so `while let` exits cleanly.
-        while let Ok(Ok(data)) = timeout_at(deadline, transport.recv_frame()).await {
+        while let Ok(Ok(data)) = timeout_at(deadline, self.recv_frame()).await {
             if let Ok(f) = KnxIpFrame::parse(&data)
                 && f.header.service_type == ServiceType::DisconnectResponse
+                && let Ok(resp) = DisconnectResponse::parse(&f.body)
+                && resp.communication_channel_id == self.channel_id
             {
-                if let Ok(resp) = DisconnectResponse::parse(&f.body)
-                    && !resp.is_success()
-                {
+                if !resp.is_success() {
                     return Err(ProtocolError::InvalidFrame {
                         details: format!("disconnect rejected: status 0x{:02X}", resp.status),
                     }
