@@ -74,6 +74,22 @@ async fn builder_validates_the_selected_connection_mode() {
     assert_eq!(tcp.config().timeout, short_timeout);
 }
 
+#[cfg(not(feature = "secure"))]
+#[tokio::test]
+async fn secure_connection_requires_the_secure_feature() {
+    let config = ConnectionConfig {
+        connection_type: ConnectionType::SecureTunneling,
+        gateway: Some("127.0.0.1:3671".parse().unwrap()),
+        security: Some(knust::transport::SecurityConfig::new("fixture", "fixture")),
+        ..Default::default()
+    };
+    assert!(matches!(
+        Knx::new(config).await,
+        Err(KnxError::Configuration(knust::error::ConfigurationError::ValidationError { details }))
+            if details.contains("requires the `secure` feature")
+    ));
+}
+
 #[cfg(feature = "server")]
 #[tokio::test]
 async fn tunnel_builders_honor_the_local_bind_ip() -> Result<(), KnxError> {

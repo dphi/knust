@@ -212,8 +212,7 @@ async fn typed_write_waits_for_its_confirmation_and_reports_rejection() {
     confirmation.message_code = MessageCode::LDataCon;
     let mut unrelated = confirmation.clone();
     unrelated.apci_data = vec![0x80];
-    let mut sequence = 0;
-    for frame in [&unrelated, &confirmation] {
+    for (sequence, frame) in [0_u8, 1].into_iter().zip([&unrelated, &confirmation]) {
         let mut frame = frame.clone();
         frame.control_field.confirm = sequence == 1;
         let response = TunnellingRequest::new(7, sequence, frame.serialize().unwrap());
@@ -227,7 +226,6 @@ async fn typed_write_waits_for_its_confirmation_and_reports_rejection() {
             receive(&peer).await.header.service_type,
             ServiceType::TunnellingAck
         );
-        sequence += 1;
     }
 
     assert!(matches!(

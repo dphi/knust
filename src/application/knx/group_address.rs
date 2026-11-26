@@ -404,7 +404,6 @@ impl Knx {
     /// every use — they start erroring once unregistered, and error rather
     /// than silently using their original DPT if `address` is rebound to a
     /// different one.
-    #[must_use]
     ///
     /// # Errors
     /// Returns a DPT error while a typed write is queued or in flight.

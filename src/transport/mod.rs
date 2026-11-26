@@ -225,9 +225,11 @@ pub struct SecurityConfig {
     /// device authentication password set via ETS. Derived via PBKDF2 the
     /// same way as `user_password` — pass the password as-is, not pre-derived
     /// key bytes.
+    #[cfg_attr(not(feature = "secure"), allow(dead_code))]
     device_auth_password: String,
 
     /// User password (plaintext).
+    #[cfg_attr(not(feature = "secure"), allow(dead_code))]
     user_password: String,
 
     user_id: u8,
