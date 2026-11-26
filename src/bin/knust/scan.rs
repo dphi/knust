@@ -8,6 +8,16 @@ pub(super) async fn run(
     local_ip: Option<Ipv4Addr>,
     timeout: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    for gateway in discover(local_ip, timeout).await? {
+        print_gateway(&gateway);
+    }
+    Ok(())
+}
+
+pub(super) async fn discover(
+    local_ip: Option<Ipv4Addr>,
+    timeout: Duration,
+) -> Result<Vec<GatewayInfo>, Box<dyn std::error::Error>> {
     let interfaces = match local_ip {
         Some(ip) => BTreeSet::from([ip]),
         None => if_addrs::get_if_addrs()?
@@ -53,10 +63,7 @@ pub(super) async fn run(
         }
         return Err("no gateways found".into());
     }
-    for gateway in gateways.values() {
-        print_gateway(gateway);
-    }
-    Ok(())
+    Ok(gateways.into_values().collect())
 }
 
 fn print_gateway(gateway: &GatewayInfo) {

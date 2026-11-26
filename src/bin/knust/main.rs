@@ -3,6 +3,7 @@ use std::net::Ipv4Addr;
 use std::process::ExitCode;
 use std::time::Duration;
 
+mod group;
 mod scan;
 
 #[derive(Parser)]
@@ -17,18 +18,21 @@ enum Command {
     /// Discover KNX/IP gateways.
     Scan {
         /// Scan only this local IPv4 interface.
-        #[arg(long)]
+        #[arg(long, env = "KNX_LOCAL_IP")]
         local_ip: Option<Ipv4Addr>,
         /// Discovery timeout in seconds.
         #[arg(long, default_value = "3", value_parser = positive_seconds)]
         timeout: Duration,
     },
+    /// Read or write group addresses on the KNX bus.
+    Group(group::Options),
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let result = match Options::parse().command {
         Command::Scan { local_ip, timeout } => scan::run(local_ip, timeout).await,
+        Command::Group(options) => group::run(options).await,
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

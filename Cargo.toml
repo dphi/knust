@@ -26,7 +26,7 @@ ets = ["dep:strum", "dpt", "tokio/fs"]
 server = []
 
 # The standalone gateway and bus command line tool.
-cli = ["dep:clap", "dep:if-addrs"]
+cli = ["dep:clap", "dep:if-addrs", "dpt"]
 
 # KNX IP Secure + KNX Data Security: session handshake, group encryption,
 # keyring (.knxkeys) parsing, and the secure TunnelServer path. Pulls in the
@@ -49,7 +49,7 @@ async-trait = "0.1"
 rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 strum = { version = "0.28", default-features = false, features = ["derive"], optional = true }
-clap = { version = "4.6", features = ["derive"], optional = true }
+clap = { version = "4.6", features = ["derive", "env"], optional = true }
 if-addrs = { version = "0.15", optional = true }
 
 # secure feature only
