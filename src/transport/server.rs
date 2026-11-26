@@ -429,11 +429,6 @@ impl TunnelServer {
                 Ok(None)
             }
             #[cfg(feature = "secure")]
-            ServiceType::SessionAuthenticate => {
-                self.handle_session_authenticate(&frame.body, link).await?;
-                Ok(None)
-            }
-            #[cfg(feature = "secure")]
             ServiceType::SecureWrapper => self.handle_secure_wrapper(data, link).await,
             _ => self.dispatch_plain_frame(frame, link, false).await,
         }
@@ -1576,10 +1571,12 @@ mod tests {
 
         let mut tunnel = Tunnel::new_udp(server.local_addr());
         let result = tunnel.connect_secure(&client_security).await;
-        assert!(
-            result.is_err(),
-            "connect_secure must fail when the user password doesn't match"
-        );
+        assert!(matches!(
+            result,
+            Err(crate::error::KnxError::Security(
+                crate::error::SecurityError::AuthenticationFailed { .. }
+            ))
+        ));
     }
 
     #[cfg(feature = "secure")]

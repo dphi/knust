@@ -83,27 +83,16 @@ impl TunnelServer {
         Ok(())
     }
 
-    pub(super) async fn handle_session_authenticate(
+    async fn handle_session_authenticate(
         &self,
         body: &[u8],
         link: ClientLink,
+        entry: &SecureSessionEntry,
     ) -> Result<()> {
         let auth = SessionAuthenticate::parse(body)?;
         let peer = link.peer_addr();
-        let entry = self.secure_sessions.read().await.get(&peer).cloned();
-        let Some(entry) = entry else {
-            log_transport!(
-                LogLevel::Warn,
-                "TunnelServer: SessionAuthenticate from {} with no pending secure session",
-                peer
-            );
-            return Ok(());
-        };
-
-        let ok = entry
-            .session
-            .lock()
-            .await
+        let mut session = entry.session.lock().await;
+        let ok = session
             .verify_authenticate_mac(&entry.client_public_key, auth.user_id, &auth.mac)
             .await?;
 
@@ -113,10 +102,10 @@ impl TunnelServer {
             SessionStatus::STATUS_AUTH_FAILED
         };
         let response = SessionStatus { status };
-        link.send_frame(
-            &KnxIpFrame::new(ServiceType::SessionStatus, response.serialize()).serialize(),
-        )
-        .await?;
+        let frame = KnxIpFrame::new(ServiceType::SessionStatus, response.serialize()).serialize();
+        link.send_frame(&session.encrypt_frame(&frame).await?)
+            .await?;
+        drop(session);
 
         if ok {
             log_transport!(
@@ -160,14 +149,17 @@ impl TunnelServer {
             );
             return Ok(None);
         };
-        // The session key is already usable for encrypt/decrypt as
-        // soon as the ECDH exchange completes (SessionRequest/
-        // Response) — that alone proves nothing about the client,
-        // since key *agreement* needs no shared secret. Only a
-        // successful SessionAuthenticate (verified MAC over the user
-        // password) proves the client is who it claims to be, so
-        // frames must be rejected until that's actually happened.
-        if !entry.session.lock().await.is_authenticated().await {
+        let session = entry.session.lock().await;
+        let plaintext = session.decrypt_frame(data).await?;
+        let authenticated = session.is_authenticated().await;
+        drop(session);
+        let inner = KnxIpFrame::parse(&plaintext)?;
+        if !authenticated {
+            if inner.header.service_type == ServiceType::SessionAuthenticate {
+                self.handle_session_authenticate(&inner.body, link, &entry)
+                    .await?;
+                return Ok(None);
+            }
             log_transport!(
                 LogLevel::Warn,
                 "TunnelServer: SecureWrapper from {} rejected — session not yet authenticated",
@@ -175,8 +167,6 @@ impl TunnelServer {
             );
             return Ok(None);
         }
-        let decrypted = entry.session.lock().await.decrypt_frame(data).await?;
-        let inner = KnxIpFrame::parse(&decrypted)?;
         self.dispatch_plain_frame(inner, link, true).await
     }
 }

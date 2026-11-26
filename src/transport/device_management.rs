@@ -260,11 +260,9 @@ async fn secure_management_transport(
                 details: "SessionAuthenticate MAC was not 16 bytes".into(),
             })?,
     };
+    let frame = KnxIpFrame::new(ServiceType::SessionAuthenticate, auth.serialize()).serialize();
     transport
-        .send(
-            gateway,
-            &KnxIpFrame::new(ServiceType::SessionAuthenticate, auth.serialize()).serialize(),
-        )
+        .send(gateway, &session.encrypt_frame(&frame).await?)
         .await?;
 
     let status = loop {
@@ -274,8 +272,13 @@ async fn secure_management_transport(
                 timeout_ms: timeout.as_millis() as u64,
             })??;
         if source.is_some_and(|source| source != gateway)
-            || frame.header.service_type != ServiceType::SessionStatus
+            || frame.header.service_type != ServiceType::SecureWrapper
         {
+            continue;
+        }
+        let plain = session.decrypt_frame(&frame.serialize()).await?;
+        let frame = KnxIpFrame::parse(&plain)?;
+        if frame.header.service_type != ServiceType::SessionStatus {
             continue;
         }
         break SessionStatus::parse(&frame.body)?;
@@ -1456,10 +1459,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let (frame, _) = timeout(Duration::from_secs(3), transport.receive())
-                .await
-                .unwrap()
-                .unwrap();
+            let (frame, _) = receive_secure(&transport, &session).await;
             assert_eq!(frame.header.service_type, ServiceType::SessionAuthenticate);
             let auth = SessionAuthenticate::parse(&frame.body).unwrap();
             assert!(
@@ -1471,13 +1471,14 @@ mod tests {
             let status = SessionStatus {
                 status: SessionStatus::STATUS_OK,
             };
-            transport
-                .send(
-                    peer,
-                    &KnxIpFrame::new(ServiceType::SessionStatus, status.serialize()).serialize(),
-                )
-                .await
-                .unwrap();
+            send_secure(
+                &transport,
+                peer,
+                &session,
+                ServiceType::SessionStatus,
+                status.serialize(),
+            )
+            .await;
 
             let (frame, _) = receive_secure(&transport, &session).await;
             assert_eq!(frame.header.service_type, ServiceType::ConnectRequest);

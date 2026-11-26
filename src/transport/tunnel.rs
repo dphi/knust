@@ -34,12 +34,12 @@ use crate::error::{ProtocolError, Result, TransportError};
 use crate::log_transport;
 use crate::logging::LogLevel;
 use crate::protocol::address::IndividualAddress;
-#[cfg(feature = "secure")]
-use crate::protocol::knxip::SessionStatus;
 use crate::protocol::knxip::{
     ConnectRequest, ConnectResponse, ConnectionstateRequest, ConnectionstateResponse,
     DisconnectRequest, DisconnectResponse, Hpai, KnxIpFrame, ServiceType, TunnellingAck,
 };
+#[cfg(feature = "secure")]
+use crate::protocol::knxip::{SessionAuthenticate, SessionRequest, SessionResponse, SessionStatus};
 #[cfg(feature = "secure")]
 use crate::security::{SecureSession, SessionConfig};
 
@@ -501,52 +501,67 @@ impl Tunnel {
                 .clamp(1, IP_SECURE_KEEPALIVE_INTERVAL.as_secs() as u32),
         };
         let mut session = SecureSession::new(&config);
-        let public_key = session.initialize().await;
-
-        // SESSION_REQUEST: header(6) + HPAI(8) + public_key(32)
-        let mut request_frame = vec![0x06, 0x10, 0x09, 0x51, 0x00, 0x2E];
-        request_frame.extend_from_slice(&self.local_hpai.serialize());
-        request_frame.extend_from_slice(&public_key);
-        transport.send_frame(&request_frame).await?;
+        let request = SessionRequest {
+            control_endpoint: self.local_hpai.clone(),
+            public_key: session.initialize().await.try_into().map_err(|_| {
+                TransportError::InvalidConfiguration {
+                    details: "ECDH public key was not 32 bytes".into(),
+                }
+            })?,
+        };
+        let frame = KnxIpFrame::new(ServiceType::SessionRequest, request.serialize()).serialize();
+        transport.send_frame(&frame).await?;
 
         let response_data = timeout(self.connection_timeout, transport.recv_frame())
             .await
             .map_err(|_| TransportError::Timeout {
                 timeout_ms: self.connection_timeout.as_millis() as u64,
             })??;
-        if response_data.len() < 56 {
+        let response = KnxIpFrame::parse(&response_data)?;
+        if response.header.service_type != ServiceType::SessionResponse {
             return Err(TransportError::InvalidConfiguration {
-                details: "SessionResponse too short".to_string(),
+                details: "Expected SessionResponse during IP Secure handshake".into(),
             }
             .into());
         }
-        let session_id = u16::from_be_bytes([response_data[6], response_data[7]]);
-        let mut server_public_key = [0u8; 32];
-        server_public_key.copy_from_slice(&response_data[8..40]);
-        let server_mac = &response_data[40..56];
+        let response = SessionResponse::parse(&response.body)?;
         let auth_mac = session
-            .process_session_response(session_id, &server_public_key, server_mac)
+            .process_session_response(response.session_id, &response.public_key, &response.mac)
             .await?;
-
-        // SESSION_AUTHENTICATE: header(6) + reserved(1) + user_id(1) + MAC(16)
-        let mut auth_frame = vec![0x06, 0x10, 0x09, 0x53, 0x00, 0x18];
-        auth_frame.push(0x00);
-        auth_frame.push(config.user_id);
-        auth_frame.extend_from_slice(&auth_mac);
-        transport.send_frame(&auth_frame).await?;
+        let auth = SessionAuthenticate {
+            user_id: config.user_id,
+            mac: auth_mac
+                .try_into()
+                .map_err(|_| TransportError::InvalidConfiguration {
+                    details: "SessionAuthenticate MAC was not 16 bytes".into(),
+                })?,
+        };
+        let frame = KnxIpFrame::new(ServiceType::SessionAuthenticate, auth.serialize()).serialize();
+        transport
+            .send_frame(&session.encrypt_frame(&frame).await?)
+            .await?;
 
         let status_data = timeout(self.connection_timeout, transport.recv_frame())
             .await
             .map_err(|_| TransportError::Timeout {
                 timeout_ms: self.connection_timeout.as_millis() as u64,
             })??;
-        if status_data.len() < 8 {
+        let wrapper = KnxIpFrame::parse(&status_data)?;
+        if wrapper.header.service_type != ServiceType::SecureWrapper {
             return Err(TransportError::InvalidConfiguration {
-                details: "SessionStatus too short".to_string(),
+                details: "Expected wrapped SessionStatus during IP Secure handshake".into(),
             }
             .into());
         }
-        let status = SessionStatus::parse(&status_data[6..])?;
+        let plaintext = session.decrypt_frame(&status_data).await?;
+        let frame = KnxIpFrame::parse(&plaintext)?;
+        if frame.header.service_type != ServiceType::SessionStatus {
+            return Err(TransportError::InvalidConfiguration {
+                details: "Expected SessionStatus during IP Secure handshake".into(),
+            }
+            .into());
+        }
+        let status = SessionStatus::parse(&frame.body)?;
         session.complete_authentication(status.status).await?;
 
         self.secure_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
