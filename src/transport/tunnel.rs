@@ -80,6 +80,7 @@ pub struct Tunnel {
     kind: TransportKind,
     transport: std::sync::Mutex<Option<Arc<dyn FrameTransport>>>,
     gateway_addr: SocketAddr,
+    local_ip: Option<std::net::IpAddr>,
     local_addr: std::sync::Mutex<Option<SocketAddr>>,
     local_hpai: Hpai,
     channel_id: u8,
@@ -169,6 +170,7 @@ impl Tunnel {
             kind,
             transport: std::sync::Mutex::new(None),
             gateway_addr,
+            local_ip: None,
             local_addr: std::sync::Mutex::new(None),
             local_hpai,
             channel_id: 0,
@@ -264,12 +266,17 @@ impl Tunnel {
     async fn establish_transport(&self) -> Result<Arc<dyn FrameTransport>> {
         let (transport, local): (Arc<dyn FrameTransport>, SocketAddr) = match self.kind {
             TransportKind::Udp => {
-                let (t, l) = UdpFrameTransport::connect(self.gateway_addr).await?;
+                let (t, l) =
+                    UdpFrameTransport::connect_from(self.gateway_addr, self.local_ip).await?;
                 (Arc::new(t), l)
             }
             TransportKind::Tcp => {
-                let (t, l) =
-                    TcpFrameTransport::connect(self.gateway_addr, self.connection_timeout).await?;
+                let (t, l) = TcpFrameTransport::connect_from(
+                    self.gateway_addr,
+                    self.connection_timeout,
+                    self.local_ip,
+                )
+                .await?;
                 (Arc::new(t), l)
             }
         };
@@ -283,6 +290,11 @@ impl Tunnel {
             self.gateway_addr
         );
         Ok(transport)
+    }
+
+    pub(crate) fn bind_to(mut self, local_ip: Option<std::net::IpAddr>) -> Self {
+        self.local_ip = local_ip;
+        self
     }
 
     /// Establish the KNX tunnel (ConnectRequest/Response handshake).

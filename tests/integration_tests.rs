@@ -72,6 +72,49 @@ async fn builder_validates_the_selected_connection_mode() {
 
 #[cfg(feature = "server")]
 #[tokio::test]
+async fn tunnel_builders_honor_the_local_bind_ip() -> Result<(), KnxError> {
+    use knust::error::TransportError;
+    use knust::transport::TunnelServer;
+    use std::io::ErrorKind;
+    use std::net::Ipv4Addr;
+
+    let server = TunnelServer::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        IndividualAddress::new(1, 1, 240),
+    )
+    .await?;
+    let gateway = server.local_addr();
+    for builder in [
+        Knx::builder().tunnel(gateway),
+        Knx::builder().tcp_tunnel(gateway),
+    ] {
+        let client = builder
+            .local_ip(Ipv4Addr::LOCALHOST.into())
+            .connect()
+            .await?;
+        client.shutdown().await?;
+    }
+    for builder in [
+        Knx::builder().tunnel(gateway),
+        Knx::builder().tcp_tunnel(gateway),
+    ] {
+        // TEST-NET-3 has no interface on the test host.
+        let result = builder
+            .local_ip(Ipv4Addr::new(203, 0, 113, 42).into())
+            .connect()
+            .await;
+        assert!(matches!(
+            result,
+            Err(KnxError::Transport(TransportError::SocketError { operation, source }))
+                if operation == "bind" && source.kind() == ErrorKind::AddrNotAvailable
+        ));
+    }
+    server.shutdown();
+    Ok(())
+}
+
+#[cfg(feature = "server")]
+#[tokio::test]
 async fn connection_state_and_callbacks_share_the_public_type() -> Result<(), KnxError> {
     use knust::ConnectionState;
     use knust::application::callbacks::ConnectionCallbackFn;

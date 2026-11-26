@@ -10,13 +10,13 @@
 //! [`FrameTransport`] hides that difference so a single `Tunnel` implementation
 //! can drive both.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::{TcpSocket, TcpStream, UdpSocket};
 use tokio::time::timeout;
 
 use crate::error::{Result, TransportError};
@@ -83,13 +83,23 @@ impl UdpFrameTransport {
     /// Returns [`TransportError::SocketError`] if binding, connecting, or
     /// querying the local address of the UDP socket fails.
     pub async fn connect(gateway_addr: SocketAddr) -> Result<(Self, SocketAddr)> {
-        let socket =
-            UdpSocket::bind("0.0.0.0:0")
-                .await
-                .map_err(|e| TransportError::SocketError {
-                    operation: "bind".to_string(),
-                    source: e,
-                })?;
+        Self::connect_from(gateway_addr, None).await
+    }
+
+    pub(super) async fn connect_from(
+        gateway_addr: SocketAddr,
+        local_ip: Option<IpAddr>,
+    ) -> Result<(Self, SocketAddr)> {
+        let local_ip = local_ip.unwrap_or_else(|| match gateway_addr {
+            SocketAddr::V4(_) => Ipv4Addr::UNSPECIFIED.into(),
+            SocketAddr::V6(_) => Ipv6Addr::UNSPECIFIED.into(),
+        });
+        let socket = UdpSocket::bind(SocketAddr::new(local_ip, 0))
+            .await
+            .map_err(|source| TransportError::SocketError {
+                operation: "bind".to_owned(),
+                source,
+            })?;
         socket
             .connect(gateway_addr)
             .await
@@ -168,7 +178,29 @@ impl TcpFrameTransport {
         gateway_addr: SocketAddr,
         connect_timeout: Duration,
     ) -> Result<(Self, SocketAddr)> {
-        let stream = timeout(connect_timeout, TcpStream::connect(gateway_addr))
+        Self::connect_from(gateway_addr, connect_timeout, None).await
+    }
+
+    pub(super) async fn connect_from(
+        gateway_addr: SocketAddr,
+        connect_timeout: Duration,
+        local_ip: Option<IpAddr>,
+    ) -> Result<(Self, SocketAddr)> {
+        let socket = match gateway_addr {
+            SocketAddr::V4(_) => TcpSocket::new_v4(),
+            SocketAddr::V6(_) => TcpSocket::new_v6(),
+        }
+        .and_then(|socket| {
+            if let Some(ip) = local_ip {
+                socket.bind(SocketAddr::new(ip, 0))?;
+            }
+            Ok(socket)
+        })
+        .map_err(|source| TransportError::SocketError {
+            operation: "bind".to_owned(),
+            source,
+        })?;
+        let stream = timeout(connect_timeout, socket.connect(gateway_addr))
             .await
             .map_err(|_| TransportError::Timeout {
                 timeout_ms: connect_timeout.as_millis() as u64,

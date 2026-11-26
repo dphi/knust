@@ -695,7 +695,8 @@ impl Knx {
                 let mut tunneling_conn = Tunnel::new_udp_with_timeout(
                     gateway_addr,
                     std::time::Duration::from_millis(config.timeout_ms),
-                );
+                )
+                .bind_to(config.local_ip);
 
                 if config.connection_type == ConnectionType::SecureTunneling {
                     #[cfg(feature = "secure")]
@@ -727,7 +728,8 @@ impl Knx {
                 let mut tcp_conn = Tunnel::new_tcp_with_timeout(
                     gateway_addr,
                     std::time::Duration::from_millis(config.tcp_config.connect_timeout_ms),
-                );
+                )
+                .bind_to(config.local_ip);
 
                 // Establish the TCP connection
                 tcp_conn.connect().await?;
