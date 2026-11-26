@@ -58,11 +58,17 @@ impl TunnelServer {
             source,
         })?;
 
-        let server = self.clone();
+        let server = Arc::downgrade(self);
+        let mut shutdown = self.shutdown.subscribe();
         *discovery = Some(tokio::spawn(async move {
             let mut buf = [0; 1024];
             loop {
-                let (len, peer_addr) = match socket.recv_from(&mut buf).await {
+                let received = tokio::select! {
+                    biased;
+                    _ = shutdown.wait_for(|closed| *closed) => break,
+                    received = socket.recv_from(&mut buf) => received,
+                };
+                let (len, peer_addr) = match received {
                     Ok(packet) => packet,
                     Err(error) => {
                         log_transport!(
@@ -82,6 +88,9 @@ impl TunnelServer {
                 ) {
                     continue;
                 }
+                let Some(server) = server.upgrade() else {
+                    break;
+                };
                 let link = ClientLink::Udp {
                     socket: server.socket.clone(),
                     peer_addr,

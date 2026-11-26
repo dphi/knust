@@ -16,14 +16,14 @@ use std::collections::HashMap;
 #[cfg(test)]
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
-use std::sync::Arc;
 #[cfg(feature = "secure")]
 use std::sync::atomic::AtomicU16;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::{RwLock, broadcast, oneshot};
+use tokio::sync::{RwLock, broadcast, oneshot, watch};
 
 use crate::error::{Result, TransportError};
 use crate::log_transport;
@@ -70,7 +70,7 @@ const ACK_TIMEOUT: Duration = Duration::from_secs(1);
 #[derive(Clone)]
 enum ClientLink {
     Udp {
-        socket: Arc<UdpSocket>,
+        socket: Weak<UdpSocket>,
         peer_addr: SocketAddr,
     },
     Tcp {
@@ -83,6 +83,7 @@ impl ClientLink {
     async fn send_frame(&self, frame: &[u8]) -> Result<()> {
         match self {
             ClientLink::Udp { socket, peer_addr } => {
+                let socket = socket.upgrade().ok_or(TransportError::ConnectionClosed)?;
                 socket.send_to(frame, *peer_addr).await.map_err(|e| {
                     TransportError::SocketError {
                         operation: "send_to".to_string(),
@@ -158,9 +159,9 @@ impl ClientSession {
 }
 
 /// A KNXnet/IP tunneling server bound to one UDP socket and one TCP listener
-/// on the same address.
+/// on the same address. Dropping the last handle stops the server.
 pub struct TunnelServer {
-    socket: Arc<UdpSocket>,
+    socket: Weak<UdpSocket>,
     local_addr: SocketAddr,
     individual_address: IndividualAddress,
     sessions: RwLock<HashMap<u8, Arc<ClientSession>>>,
@@ -179,12 +180,8 @@ pub struct TunnelServer {
     #[cfg(feature = "secure")]
     next_secure_session_id: AtomicU16,
     telegram_tx: broadcast::Sender<Telegram>,
-    shutdown: AtomicBool,
-    shutdown_notify: Arc<tokio::sync::Notify>,
-    dispatch_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    shutdown: watch::Sender<bool>,
     discovery_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
-    tcp_accept_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
-    sweep_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl TunnelServer {
@@ -237,8 +234,9 @@ impl TunnelServer {
                 })?;
         let (telegram_tx, _) = broadcast::channel(1024);
 
+        let socket = Arc::new(socket);
         let server = Arc::new(Self {
-            socket: Arc::new(socket),
+            socket: Arc::downgrade(&socket),
             local_addr,
             individual_address,
             sessions: RwLock::new(HashMap::new()),
@@ -250,16 +248,12 @@ impl TunnelServer {
             #[cfg(feature = "secure")]
             next_secure_session_id: AtomicU16::new(1),
             telegram_tx,
-            shutdown: AtomicBool::new(false),
-            shutdown_notify: Arc::new(tokio::sync::Notify::new()),
-            dispatch_handle: std::sync::Mutex::new(None),
+            shutdown: watch::Sender::new(false),
             discovery_handle: std::sync::Mutex::new(None),
-            tcp_accept_handle: std::sync::Mutex::new(None),
-            sweep_handle: std::sync::Mutex::new(None),
         });
-        server.clone().spawn_dispatch_loop();
-        server.clone().spawn_tcp_accept_loop(tcp_listener);
-        server.clone().spawn_sweep_loop();
+        server.spawn_dispatch_loop(socket);
+        server.spawn_tcp_accept_loop(tcp_listener);
+        server.spawn_sweep_loop();
         log_transport!(
             LogLevel::Info,
             "TunnelServer listening on {} (udp+tcp)",
@@ -277,23 +271,25 @@ impl TunnelServer {
         self.sessions.read().await.len()
     }
 
-    fn spawn_dispatch_loop(self: Arc<Self>) {
-        let server = self.clone();
-        let handle = tokio::spawn(async move {
+    fn spawn_dispatch_loop(self: &Arc<Self>, socket: Arc<UdpSocket>) {
+        let server = Arc::downgrade(self);
+        let mut shutdown = self.shutdown.subscribe();
+        tokio::spawn(async move {
             let mut buf = vec![0u8; 1024];
             loop {
-                if server.is_shutdown() {
-                    break;
-                }
                 let (len, peer_addr) = tokio::select! {
-                    result = server.socket.recv_from(&mut buf) => match result {
+                    biased;
+                    _ = shutdown.wait_for(|closed| *closed) => break,
+                    result = socket.recv_from(&mut buf) => match result {
                         Ok(v) => v,
                         Err(e) => {
                             log_transport!(LogLevel::Warn, "TunnelServer: recv error: {}", e);
                             continue;
                         }
                     },
-                    () = server.shutdown_notify.notified() => break,
+                };
+                let Some(server) = server.upgrade() else {
+                    break;
                 };
                 let link = ClientLink::Udp {
                     socket: server.socket.clone(),
@@ -308,21 +304,25 @@ impl TunnelServer {
                     );
                 }
             }
+            if let Some(server) = server.upgrade() {
+                server.sessions.write().await.clear();
+                #[cfg(feature = "secure")]
+                server.secure_sessions.write().await.clear();
+            }
         });
-        *self.dispatch_handle.lock().unwrap() = Some(handle);
     }
 
     /// Accept TCP tunneling connections; each accepted stream gets its own
     /// task doing its own re-framed `recv_frame()` loop, feeding the same
     /// `handle_frame` dispatch the UDP loop uses.
-    fn spawn_tcp_accept_loop(self: Arc<Self>, listener: TcpListener) {
-        let server = self.clone();
-        let handle = tokio::spawn(async move {
+    fn spawn_tcp_accept_loop(self: &Arc<Self>, listener: TcpListener) {
+        let server = Arc::downgrade(self);
+        let mut shutdown = self.shutdown.subscribe();
+        tokio::spawn(async move {
             loop {
-                if server.is_shutdown() {
-                    break;
-                }
                 let (stream, peer_addr) = tokio::select! {
+                    biased;
+                    _ = shutdown.wait_for(|closed| *closed) => break,
                     result = listener.accept() => match result {
                         Ok(v) => v,
                         Err(e) => {
@@ -330,9 +330,9 @@ impl TunnelServer {
                             continue;
                         }
                     },
-                    () = server.shutdown_notify.notified() => break,
                 };
                 let server = server.clone();
+                let mut shutdown = shutdown.clone();
                 tokio::spawn(async move {
                     let transport = Arc::new(TcpFrameTransport::from_accepted_stream(stream));
                     let link = ClientLink::Tcp {
@@ -341,10 +341,15 @@ impl TunnelServer {
                     };
                     let mut assigned_channel: Option<u8> = None;
                     loop {
-                        if server.is_shutdown() {
+                        let received = tokio::select! {
+                            biased;
+                            _ = shutdown.wait_for(|closed| *closed) => break,
+                            received = transport.recv_frame() => received,
+                        };
+                        let Some(server) = server.upgrade() else {
                             break;
-                        }
-                        match transport.recv_frame().await {
+                        };
+                        match received {
                             Ok(data) => match server.handle_frame(&data, link.clone()).await {
                                 Ok(Some(id)) => assigned_channel = Some(id),
                                 Ok(None) => {}
@@ -358,6 +363,9 @@ impl TunnelServer {
                             Err(_) => break,
                         }
                     }
+                    let Some(server) = server.upgrade() else {
+                        return;
+                    };
                     if let Some(id) = assigned_channel {
                         server.sessions.write().await.remove(&id);
                         log_transport!(
@@ -372,20 +380,20 @@ impl TunnelServer {
                 });
             }
         });
-        *self.tcp_accept_handle.lock().unwrap() = Some(handle);
     }
 
-    fn spawn_sweep_loop(self: Arc<Self>) {
-        let server = self.clone();
-        let handle = tokio::spawn(async move {
+    fn spawn_sweep_loop(self: &Arc<Self>) {
+        let server = Arc::downgrade(self);
+        let mut shutdown = self.shutdown.subscribe();
+        tokio::spawn(async move {
             loop {
                 tokio::select! {
                     () = tokio::time::sleep(SWEEP_INTERVAL) => {}
-                    () = server.shutdown_notify.notified() => break,
+                    _ = shutdown.wait_for(|closed| *closed) => break,
                 }
-                if server.is_shutdown() {
+                let Some(server) = server.upgrade() else {
                     break;
-                }
+                };
                 let stale: Vec<u8> = {
                     let sessions = server.sessions.read().await;
                     sessions
@@ -407,7 +415,6 @@ impl TunnelServer {
                 }
             }
         });
-        *self.sweep_handle.lock().unwrap() = Some(handle);
     }
 
     /// Dispatch one received frame. Returns `Some(channel_id)` when this
@@ -899,18 +906,17 @@ impl TunnelServer {
 
     /// Signal the server and all of its connection loops to shut down.
     pub fn shutdown(&self) {
-        self.shutdown.store(true, Ordering::SeqCst);
+        self.shutdown.send_replace(true);
         if let Some(discovery) = self.discovery_handle.lock().unwrap().take() {
             discovery.abort();
         }
-        self.shutdown_notify.notify_waiters();
         log_transport!(LogLevel::Info, "TunnelServer shutdown requested");
     }
 
     /// Return whether shutdown has been requested.
     #[must_use]
     pub fn is_shutdown(&self) -> bool {
-        self.shutdown.load(Ordering::SeqCst)
+        *self.shutdown.borrow()
     }
 }
 
@@ -973,6 +979,45 @@ mod tests {
         server.shutdown();
 
         assert!(server.is_shutdown());
+    }
+
+    #[tokio::test]
+    async fn stopping_server_releases_sockets_and_idle_streams() {
+        for explicit_shutdown in [true, false] {
+            let server = bind_server().await;
+            let addr = server.local_addr();
+            let tcp = connected_tcp_client(addr).await;
+            let _udp = connected_client(addr).await;
+            assert_eq!(server.client_count().await, 2);
+
+            let retained = if explicit_shutdown {
+                server.shutdown();
+                Some(server)
+            } else {
+                drop(server);
+                None
+            };
+            assert!(
+                timeout(Duration::from_secs(1), tcp.recv_frame())
+                    .await
+                    .unwrap()
+                    .is_err()
+            );
+            timeout(Duration::from_secs(2), async {
+                loop {
+                    if let Ok(rebound) = TunnelServer::bind(addr, Ia::new(1, 1, 240)).await {
+                        rebound.shutdown();
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("both listener sockets should be reusable");
+            if let Some(server) = retained {
+                assert_eq!(server.client_count().await, 0);
+            }
+        }
     }
 
     #[tokio::test]
