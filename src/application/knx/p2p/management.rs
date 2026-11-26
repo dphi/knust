@@ -229,7 +229,7 @@ impl P2pConnection {
             .into());
         }
         let element_count = usize::from(request.count);
-        if request.data.is_empty() || request.data.len() % element_count != 0 {
+        if request.data.is_empty() || !request.data.len().is_multiple_of(element_count) {
             return Err(crate::error::ProtocolError::InvalidFrame {
                 details:
                     "Property write data must contain an equal, nonzero byte count per element"

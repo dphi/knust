@@ -73,16 +73,16 @@ impl std::str::FromStr for KnxVersion {
         let mut parts = value.split('.');
         let mut next = || parts.next().and_then(|part| part.parse::<u8>().ok());
         let components = (next(), next(), next());
-        if let (Some(magic_number), Some(version_number), Some(revision_number)) = components {
-            if parts.next().is_none() {
-                let version = Self {
-                    magic_number,
-                    version_number,
-                    revision_number,
-                };
-                version.encode()?;
-                return Ok(version);
-            }
+        if let (Some(magic_number), Some(version_number), Some(revision_number)) = components
+            && parts.next().is_none()
+        {
+            let version = Self {
+                magic_number,
+                version_number,
+                revision_number,
+            };
+            version.encode()?;
+            return Ok(version);
         }
         Err(ProtocolError::DptError {
             dpt_type: "217.001".to_string(),

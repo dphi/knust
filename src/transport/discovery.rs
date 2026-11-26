@@ -375,15 +375,15 @@ impl GatewayScanner {
                     }
                 }
                 0x02 => {
-                    for family in dib[2..].chunks_exact(2) {
-                        let service = match family[0] {
+                    for &[family, version] in dib[2..].as_chunks::<2>().0 {
+                        let service = match family {
                             0x02 => {
-                                core_version = core_version.max(family[1]);
+                                core_version = core_version.max(version);
                                 continue;
                             }
                             0x03 => ServiceFamily::DeviceManagement,
                             0x04 => {
-                                tunneling_version = tunneling_version.max(family[1]);
+                                tunneling_version = tunneling_version.max(version);
                                 ServiceFamily::Tunneling
                             }
                             0x05 => ServiceFamily::Routing,
@@ -391,7 +391,7 @@ impl GatewayScanner {
                             0x07 => ServiceFamily::RemoteConfiguration,
                             0x08 => ServiceFamily::ObjectServer,
                             0x09 => {
-                                supports_secure |= family[1] >= 1;
+                                supports_secure |= version >= 1;
                                 continue;
                             }
                             _ => continue,
@@ -409,11 +409,12 @@ impl GatewayScanner {
                         );
                     }
                     let slots = dib[4..]
-                        .chunks_exact(4)
-                        .map(|slot| {
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|&[high, low, _, status]| {
                             let address =
-                                IndividualAddress::from_raw(u16::from_be_bytes([slot[0], slot[1]]));
-                            let status = slot[3];
+                                IndividualAddress::from_raw(u16::from_be_bytes([high, low]));
                             (
                                 address,
                                 TunnelingSlotStatus {
@@ -434,8 +435,13 @@ impl GatewayScanner {
         }
 
         let requires_secure = |family| {
-            secured_services
-                .map(|services| services.chunks_exact(2).any(|entry| entry[0] == family))
+            secured_services.map(|services| {
+                services
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .any(|entry| entry[0] == family)
+            })
         };
         let supports_tunneling = supported_families.contains(&ServiceFamily::Tunneling);
         let supports_routing = supported_families.contains(&ServiceFamily::Routing);

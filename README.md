@@ -429,7 +429,7 @@ Knx is designed for high performance:
 ## Compatibility
 
 - **Rust Edition**: 2024
-- **MSRV**: 1.85.1
+- **MSRV**: 1.88
 - **KNX Standards**: KNX/IP, KNX IP Secure; KNX Data Security is experimental (see crate docs)
 - **Platforms**: Linux, macOS, Windows
 - **Async Runtime**: tokio

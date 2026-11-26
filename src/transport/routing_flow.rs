@@ -14,13 +14,13 @@ pub(super) struct FlowControl {
 
 impl FlowControl {
     fn decay(&mut self, now: Instant) {
-        if let Some(at) = self.decay_at {
-            if let Some(elapsed) = now.checked_duration_since(at) {
-                let steps = (elapsed.as_millis() / 5 + 1).min(u128::from(self.busy_count)) as u32;
-                self.busy_count -= steps;
-                self.decay_at =
-                    (self.busy_count > 0).then(|| at + Duration::from_millis(u64::from(steps) * 5));
-            }
+        if let Some(at) = self.decay_at
+            && let Some(elapsed) = now.checked_duration_since(at)
+        {
+            let steps = (elapsed.as_millis() / 5 + 1).min(u128::from(self.busy_count)) as u32;
+            self.busy_count -= steps;
+            self.decay_at =
+                (self.busy_count > 0).then(|| at + Duration::from_millis(u64::from(steps) * 5));
         }
     }
 

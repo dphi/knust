@@ -260,12 +260,12 @@ fn parse_number(s: &str, dpt: DptType) -> Option<f64> {
 /// Split a trailing `" (Weekday)"` suffix off, returning the day-of-week
 /// number (0 if absent or unrecognized).
 fn split_weekday_suffix(s: &str) -> (&str, u8) {
-    if let Some(open) = s.rfind('(') {
-        if let Some(close_offset) = s[open..].find(')') {
-            let name = s[open + 1..open + close_offset].trim();
-            if let Some(day) = weekday_number(name) {
-                return (s[..open].trim(), day);
-            }
+    if let Some(open) = s.rfind('(')
+        && let Some(close_offset) = s[open..].find(')')
+    {
+        let name = s[open + 1..open + close_offset].trim();
+        if let Some(day) = weekday_number(name) {
+            return (s[..open].trim(), day);
         }
     }
     (s.trim(), 0)
