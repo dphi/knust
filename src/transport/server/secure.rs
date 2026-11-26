@@ -127,19 +127,24 @@ impl TunnelServer {
         Ok(())
     }
 
-    /// Encrypt `frame` for `peer` if it has an established secure session,
-    /// otherwise return it unchanged.
-    pub(super) async fn maybe_encrypt(&self, frame: Vec<u8>, link: &ClientLink) -> Result<Vec<u8>> {
+    /// Serialize secure sequence assignment and delivery on each session.
+    pub(super) async fn send_session_frame(&self, frame: &[u8], link: &ClientLink) -> Result<()> {
+        if self.secure_config.is_none() {
+            return link.send_frame(frame).await;
+        }
         let entry = self
             .secure_sessions
             .read()
             .await
             .get(&link.session_peer())
-            .cloned();
-        match entry {
-            Some(entry) => entry.session.lock().await.encrypt_frame(&frame).await,
-            None => Ok(frame),
+            .cloned()
+            .ok_or(TransportError::ConnectionClosed)?;
+        let session = entry.session.lock().await;
+        if !session.is_authenticated().await {
+            return Err(TransportError::ConnectionClosed.into());
         }
+        let wrapped = session.encrypt_frame(frame).await?;
+        link.send_frame(&wrapped).await
     }
 
     pub(super) async fn handle_secure_wrapper(

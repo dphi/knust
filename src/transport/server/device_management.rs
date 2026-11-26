@@ -155,12 +155,10 @@ impl TunnelServer {
         let request = TunnellingRequest::new(session.channel_id, sequence, cemi.to_vec());
         let frame = KnxIpFrame::new(ServiceType::DeviceConfigurationRequest, request.serialize())
             .serialize();
-        let frame = self.maybe_encrypt(frame, &session.link).await?;
-
         for attempt in 0..2u8 {
             let (tx, rx) = oneshot::channel();
             *session.pending_ack.lock().unwrap() = Some((sequence, tx));
-            session.link.send_frame(&frame).await?;
+            self.send_session_frame(&frame, &session.link).await?;
             match tokio::time::timeout(ACK_TIMEOUT, rx).await {
                 Ok(Ok(ack)) if ack.status_code == TunnellingAck::STATUS_OK => {
                     if session.send_seq.load(Ordering::SeqCst) == sequence {

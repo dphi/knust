@@ -515,10 +515,9 @@ impl TunnelServer {
         }
     }
 
-    /// Without the `secure` feature there are no sessions to encrypt for.
     #[cfg(not(feature = "secure"))]
-    async fn maybe_encrypt(&self, frame: Vec<u8>, _link: &ClientLink) -> Result<Vec<u8>> {
-        Ok(frame)
+    async fn send_session_frame(&self, frame: &[u8], link: &ClientLink) -> Result<()> {
+        link.send_frame(frame).await
     }
 
     /// Route-back (`0.0.0.0:0` / port 0) means "reply to the packet's source
@@ -883,8 +882,7 @@ impl TunnelServer {
         link: &ClientLink,
     ) -> Result<()> {
         let frame = KnxIpFrame::new(service_type, body.to_vec()).serialize();
-        let frame = self.maybe_encrypt(frame, link).await?;
-        link.send_frame(&frame).await
+        self.send_session_frame(&frame, link).await
     }
 
     async fn send_to_session(
@@ -903,10 +901,8 @@ impl TunnelServer {
         let request = TunnellingRequest::new(session.channel_id, seq, cemi.to_vec());
         let frame =
             KnxIpFrame::new(ServiceType::TunnellingRequest, request.serialize()).serialize();
-        let frame = self.maybe_encrypt(frame, &session.link).await?;
-
         if matches!(session.link, ClientLink::Tcp { .. }) {
-            session.link.send_frame(&frame).await?;
+            self.send_session_frame(&frame, &session.link).await?;
             session
                 .send_seq
                 .store(seq.wrapping_add(1), Ordering::SeqCst);
@@ -916,7 +912,7 @@ impl TunnelServer {
         for attempt in 0..2u8 {
             let (tx, rx) = oneshot::channel();
             *session.pending_ack.lock().unwrap() = Some((seq, tx));
-            session.link.send_frame(&frame).await?;
+            self.send_session_frame(&frame, &session.link).await?;
 
             match tokio::time::timeout(ACK_TIMEOUT, rx).await {
                 Ok(Ok(ack)) if ack.status_code == TunnellingAck::STATUS_OK => {
@@ -1730,11 +1726,38 @@ mod tests {
             KnxIpFrame::parse(&ack_data).unwrap().header.service_type,
             ServiceType::TunnellingAck
         );
+        // Acknowledge the cEMI confirmation for the write before reading broadcasts.
+        client_ack_next(&tunnel).await;
 
         // Server -> client.
         let (send_result, ()) =
             tokio::join!(server.send(test_telegram(6)), client_ack_next(&tunnel));
         send_result.unwrap();
+
+        // A UDP retry keeps the tunnel sequence, with a fresh secure wrapper.
+        let (retry_result, ()) = tokio::join!(server.send(test_telegram(7)), async {
+            let first = timeout(Duration::from_secs(2), tunnel.recv_frame())
+                .await
+                .unwrap()
+                .unwrap();
+            let retry = timeout(Duration::from_secs(2), tunnel.recv_frame())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(retry, first);
+            let frame = KnxIpFrame::parse(&retry).unwrap();
+            let request = TunnellingRequest::parse(&frame.body).unwrap();
+            tunnel
+                .send_tunnelling_ack(
+                    request.communication_channel_id,
+                    request.sequence_counter,
+                    TunnellingAck::STATUS_OK,
+                )
+                .await
+                .unwrap();
+        });
+        retry_result.unwrap();
+        assert_eq!(server.client_count().await, 1);
 
         let received_before_disconnect = tunnel.stats().frames_received;
         tunnel.send_disconnect().await.unwrap();
