@@ -883,11 +883,14 @@ impl Knx {
         let operation = async {
             let mut read = Telegram::group_read(address);
             read.source = self.config.individual_address;
-            let (sent, completed) = self.telegram_queue.enqueue_outgoing_tracked(read).await?;
+            let (sent, mut completed) = self.telegram_queue.enqueue_outgoing_tracked(read).await?;
             tokio::time::timeout(std::time::Duration::from_secs(10), async {
                 tokio::select! {
-                    sent = sent => sent.map_err(|_| crate::error::TransportError::QueueClosed.into()),
-                    result = completed => result.map_err(|_| crate::error::TransportError::QueueClosed)?,
+                    sent = sent => match sent {
+                        Ok(()) => Ok(()),
+                        Err(_) => completed.await.map_err(|_| crate::error::TransportError::QueueClosed)?,
+                    },
+                    result = &mut completed => result.map_err(|_| crate::error::TransportError::QueueClosed)?,
                 }
             }).await.map_err(|_| crate::error::TransportError::QueueTimeout { timeout_ms: 10_000 })??;
             match tokio::time::timeout(timeout_duration, rx.recv()).await {
@@ -1198,14 +1201,50 @@ impl Knx {
                 }
 
                 // Dequeue outgoing telegram for sending
-                if let Some(mut job) = telegram_queue.dequeue_outgoing_job().await {
+                if let Some((mut job, enqueued_at)) = telegram_queue.dequeue_outgoing_job().await {
                     let telegram = &job.telegram;
                     let mut receipt = job.receipt.take();
                     if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
                         continue;
                     }
-                    // Acquire rate limiter token before sending
-                    telegram_queue.acquire_send_token().await;
+                    let max_age = telegram_queue.max_outgoing_age();
+                    let acquired = tokio::time::timeout(max_age.saturating_sub(enqueued_at.elapsed()), async {
+                        telegram_queue.acquire_send_token().await;
+                        loop {
+                            if let Some(connection) = active.borrow_and_update().clone() {
+                                break Some(connection);
+                            }
+                            if shutdown_flag.load(Ordering::SeqCst)
+                                || receipt.as_ref().is_some_and(|receipt| receipt.is_closed())
+                            {
+                                break None;
+                            }
+                            tokio::select! {
+                                _ = active.changed() => {}
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                            }
+                        }
+                    }).await;
+                    let connection = match acquired {
+                        Ok(Some(connection)) if enqueued_at.elapsed() < max_age => connection,
+                        Ok(None) => continue,
+                        _ => {
+                            drop(job);
+                            if let Some(receipt) = receipt {
+                                let _ = receipt
+                                    .completed
+                                    .send(Err(telegram_queue.outgoing_timeout_error()));
+                            }
+                            log_application!(
+                                LogLevel::Warn,
+                                "Outgoing telegram expired while waiting to send"
+                            );
+                            continue;
+                        }
+                    };
+                    if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
+                        continue;
+                    }
 
                     send_count += 1;
                     let send_timer = std::time::Instant::now();
@@ -1222,22 +1261,6 @@ impl Knx {
                         telegram.priority
                     );
 
-                    let connection = loop {
-                        let connection = active.borrow_and_update().clone();
-                        if let Some(connection) = connection {
-                            break connection;
-                        }
-                        if shutdown_flag.load(Ordering::SeqCst) {
-                            return;
-                        }
-                        tokio::select! {
-                            _ = active.changed() => {}
-                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
-                        }
-                    };
-                    if receipt.as_ref().is_some_and(|receipt| receipt.is_closed()) {
-                        continue;
-                    }
                     #[cfg(feature = "secure")]
                     let frame_result = Self::build_outgoing_frame_with_security(
                         telegram,

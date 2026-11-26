@@ -150,6 +150,7 @@ Use a running client from `Knx::builder().connect().await?` for typed I/O.
 confirmation. Use `enqueue_write().await` when queue acceptance is sufficient.
 After a connection failure, automatic reconnect resumes with the next queued
 telegram. The error from an interrupted write can leave its delivery uncertain.
+Queued telegrams expire after 30 seconds if their first send has yet to start.
 
 ```rust
 use std::time::Duration;

@@ -15,8 +15,8 @@ use crate::logging::LogLevel;
 /// Maximum queue size before backpressure kicks in
 const DEFAULT_MAX_QUEUE_SIZE: usize = 1000;
 
-/// Default processing timeout for telegrams
-const DEFAULT_PROCESSING_TIMEOUT: Duration = Duration::from_secs(30);
+/// Default maximum age of an outgoing telegram before transmission.
+const DEFAULT_MAX_OUTGOING_AGE: Duration = Duration::from_secs(30);
 
 /// Telegram queue with async processing and priority support
 pub struct TelegramQueue {
@@ -129,11 +129,8 @@ pub struct QueueConfig {
     /// Maximum number of telegrams in queue
     pub max_size: usize,
 
-    /// Processing timeout for telegrams
-    pub processing_timeout: Duration,
-
-    /// Enable strict ordering for incoming telegrams
-    pub strict_incoming_order: bool,
+    /// Maximum time an outgoing telegram can wait for its first send attempt.
+    pub max_outgoing_age: Duration,
 
     /// Enable priority processing for outgoing telegrams
     pub priority_processing: bool,
@@ -143,8 +140,7 @@ impl Default for QueueConfig {
     fn default() -> Self {
         Self {
             max_size: DEFAULT_MAX_QUEUE_SIZE,
-            processing_timeout: DEFAULT_PROCESSING_TIMEOUT,
-            strict_incoming_order: true,
+            max_outgoing_age: DEFAULT_MAX_OUTGOING_AGE,
             priority_processing: true,
         }
     }
@@ -165,7 +161,7 @@ pub struct QueueStats {
     /// Peak queue size
     pub peak_size: usize,
 
-    /// Number of dropped telegrams due to backpressure
+    /// Number of telegrams rejected or discarded while queued.
     pub dropped_count: u64,
 
     /// Average processing time
@@ -348,12 +344,14 @@ impl TelegramQueue {
 
     /// Dequeue the next outgoing telegram (priority-based).
     ///
-    /// Returns `None` once the queue is closed and drained.
+    /// Discards expired telegrams. Returns `None` once the queue is closed and drained.
     pub async fn dequeue_outgoing(&self) -> Option<Telegram> {
-        self.dequeue_outgoing_job().await.map(|job| job.telegram)
+        self.dequeue_outgoing_job()
+            .await
+            .map(|(job, _)| job.telegram)
     }
 
-    pub(crate) async fn dequeue_outgoing_job(&self) -> Option<OutgoingTelegram> {
+    pub(crate) async fn dequeue_outgoing_job(&self) -> Option<(OutgoingTelegram, Instant)> {
         loop {
             let changed = self.notify.notified();
             let mut state = self.state.lock().await;
@@ -371,7 +369,17 @@ impl TelegramQueue {
                     processing_time,
                     state.outgoing.len()
                 );
-                return Some(priority_telegram.job);
+                if processing_time >= self.config.max_outgoing_age {
+                    state.stats.dropped_count += 1;
+                    let mut job = priority_telegram.job;
+                    let receipt = job.receipt.take();
+                    drop(job);
+                    if let Some(receipt) = receipt {
+                        let _ = receipt.completed.send(Err(self.outgoing_timeout_error()));
+                    }
+                    continue;
+                }
+                return Some((priority_telegram.job, priority_telegram.enqueued_at));
             }
 
             if state.closed {
@@ -381,6 +389,17 @@ impl TelegramQueue {
             drop(state);
             changed.await;
         }
+    }
+
+    pub(crate) fn max_outgoing_age(&self) -> Duration {
+        self.config.max_outgoing_age
+    }
+
+    pub(crate) fn outgoing_timeout_error(&self) -> crate::error::KnxError {
+        TransportError::QueueTimeout {
+            timeout_ms: u64::try_from(self.config.max_outgoing_age.as_millis()).unwrap_or(u64::MAX),
+        }
+        .into()
     }
 
     /// Dequeue the next incoming telegram (FIFO order).

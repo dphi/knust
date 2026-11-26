@@ -180,6 +180,46 @@ async fn a_write_that_may_have_reached_the_peer_is_not_replayed_after_reconnect(
 }
 
 #[tokio::test(start_paused = true)]
+async fn outgoing_telegrams_expire_during_an_outage_and_in_the_backlog() {
+    let knx = knx().await;
+    let address = RawGroupAddress::try_from_raw(1).unwrap();
+    let telegram = Telegram::group_write(address, vec![1]);
+    let (_first_sent, first_result) = knx
+        .telegram_queue
+        .enqueue_outgoing_tracked(telegram.clone())
+        .await
+        .unwrap();
+    let (_second_sent, second_result) = knx
+        .telegram_queue
+        .enqueue_outgoing_tracked(telegram.clone())
+        .await
+        .unwrap();
+    knx.sending_task.replace(knx.start_telegram_sending_task());
+    tokio::task::yield_now().await;
+    tokio::time::advance(knx.telegram_queue.max_outgoing_age()).await;
+
+    for result in [first_result, second_result] {
+        assert!(matches!(
+            timeout(Duration::from_secs(1), result)
+                .await
+                .unwrap()
+                .unwrap(),
+            Err(KnxError::Transport(
+                crate::error::TransportError::QueueTimeout { .. }
+            ))
+        ));
+    }
+
+    let (replacement, _incoming, mut sent) = peer();
+    knx.connection.send_replace(Some(replacement));
+    assert!(sent.try_recv().is_err());
+    knx.send_telegram_acknowledged(&telegram).await.unwrap();
+    assert!(sent.try_recv().is_ok());
+    assert!(sent.try_recv().is_err());
+    knx.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn receiver_uses_replacement_and_keeps_queue_open_after_socket_failure() {
     let knx = knx().await;
     let (old, old_tx, _old_sent) = peer();
