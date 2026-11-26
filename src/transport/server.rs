@@ -885,15 +885,6 @@ impl TunnelServer {
         self.send_session_frame(&frame, link).await
     }
 
-    async fn send_to_session(
-        &self,
-        session: &Arc<ClientSession>,
-        telegram: &Telegram,
-    ) -> Result<()> {
-        let cemi = CemiFrame::from_telegram(telegram, MessageCode::LDataInd).serialize()?;
-        self.send_cemi_to_session(session, &cemi).await
-    }
-
     /// Send one CEMI frame, retrying UDP once after an ACK timeout.
     async fn send_cemi_to_session(&self, session: &Arc<ClientSession>, cemi: &[u8]) -> Result<()> {
         let _guard = session.send_lock.lock().await;
@@ -949,20 +940,33 @@ impl TunnelServer {
     ///
     /// # Errors
     ///
-    /// Per-client send failures are logged and the failed session is removed;
-    /// the broadcast operation otherwise returns `Ok(())`.
+    /// Returns an error if the telegram cannot be serialized. Transport failures
+    /// are logged and the failed tunnel session is removed.
     pub async fn send(&self, telegram: Telegram) -> Result<()> {
-        let sessions: Vec<Arc<ClientSession>> =
-            self.sessions.read().await.values().cloned().collect();
+        let cemi = CemiFrame::from_telegram(&telegram, MessageCode::LDataInd).serialize()?;
+        let sessions: Vec<_> = self
+            .sessions
+            .read()
+            .await
+            .values()
+            .filter(|session| session.kind == ClientSessionKind::Tunnel)
+            .cloned()
+            .collect();
         for session in &sessions {
-            if let Err(e) = self.send_to_session(session, &telegram).await {
+            if let Err(e) = self.send_cemi_to_session(session, &cemi).await {
                 log_transport!(
                     LogLevel::Warn,
                     "TunnelServer: send to {} failed: {}",
                     session.link.peer_addr(),
                     e
                 );
-                self.sessions.write().await.remove(&session.channel_id);
+                let mut sessions = self.sessions.write().await;
+                if sessions
+                    .get(&session.channel_id)
+                    .is_some_and(|current| Arc::ptr_eq(current, session))
+                {
+                    sessions.remove(&session.channel_id);
+                }
             }
         }
         Ok(())
@@ -1507,7 +1511,15 @@ mod tests {
     async fn tcp_server_send_reaches_connected_client() {
         let server = bind_server().await;
         let tunnel = connected_tcp_client(server.local_addr()).await;
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        let mut invalid = test_telegram(11);
+        invalid.payload.resize(256, 11);
+        assert!(matches!(
+            server.send(invalid).await,
+            Err(crate::error::KnxError::Protocol(
+                crate::error::ProtocolError::InvalidFrame { .. }
+            ))
+        ));
+        assert_eq!(server.client_count().await, 1);
 
         timeout(Duration::from_millis(500), server.send(test_telegram(11)))
             .await
@@ -1617,6 +1629,10 @@ mod tests {
                 number_of_elements: 1,
                 start_index: 1,
             };
+            timeout(Duration::from_millis(500), server.send(test_telegram(11)))
+                .await
+                .unwrap()
+                .unwrap();
             assert_eq!(
                 connection
                     .read_property(property, Duration::from_secs(2))
