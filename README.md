@@ -25,6 +25,8 @@ knust is a high-performance, memory-safe implementation of the KNX/IP protocol f
 - `ets` (off) — ETS CSV group-address import (`parse_ets_csv`). Implies `dpt`.
 - `server` (off) — act as a KNXnet/IP tunneling server (`TunnelServer::bind`).
   Most consumers are clients and don't need it — see [Server](#server) below.
+- `cli` (off) — install the `knust` command for discovery, reads, writes, and
+  monitoring. Enables `dpt`.
 - `secure` (off) — KNX IP Secure, Data Secure group encryption and replay
   protection, and ETS keyring (`.knxkeys`) parsing. Implies `ets`.
 
@@ -34,7 +36,7 @@ Add Knx to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-knust = "0.1.0"
+knust = "0.3"
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
 ```
 
