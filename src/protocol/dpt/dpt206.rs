@@ -21,8 +21,7 @@ impl ModeNext {
         }
         let mode = match (sub, self.mode) {
             (100 | 102, None) => 0,
-            (100 | 102, Some(value @ 1..=4)) => value,
-            (104 | 105, Some(value @ 0..=2)) => value,
+            (100 | 102, Some(value @ 1..=4)) | (104 | 105, Some(value @ 0..=2)) => value,
             _ => return Err(bad()),
         };
         let time = self.delay_time.unwrap_or(0).to_be_bytes();
@@ -73,6 +72,10 @@ macro_rules! mode {
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub struct $name([u8; 3]);
         impl $name {
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the value is outside the valid range or cannot be encoded.
             pub fn new(value: ModeNext) -> Result<Self> {
                 Ok(Self(value.encode($sub)?))
             }
@@ -116,6 +119,10 @@ mode!(DPTBuildingModeNext, 105, "206.105", "building_mode_next");
 pub struct ModeNextView<'a>(pub(super) &'a [u8], pub(super) u16);
 impl<'a> ModeNextView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> ModeNext {
         ModeNext::decode([self.0[0], self.0[1], self.0[2]], self.1).expect("validated mode")
     }

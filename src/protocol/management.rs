@@ -128,6 +128,7 @@ pub struct IndividualAddressSerialResponse {
 }
 
 impl IndividualAddressSerialResponse {
+    #[must_use]
     pub fn encode(self) -> Vec<u8> {
         [
             APCI_INDIVIDUAL_ADDRESS_SERIAL_RESPONSE.as_slice(),
@@ -138,6 +139,10 @@ impl IndividualAddressSerialResponse {
         .concat()
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         if apci_bytes.len() != 12 || apci_bytes[..2] != APCI_INDIVIDUAL_ADDRESS_SERIAL_RESPONSE {
             return Err(ProtocolError::InvalidFrame {
@@ -149,9 +154,14 @@ impl IndividualAddressSerialResponse {
             .into());
         }
         Ok(Self {
-            serial: apci_bytes[2..8]
-                .try_into()
-                .expect("validated serial length"),
+            serial: [
+                apci_bytes[2],
+                apci_bytes[3],
+                apci_bytes[4],
+                apci_bytes[5],
+                apci_bytes[6],
+                apci_bytes[7],
+            ],
             address: crate::protocol::IndividualAddress::from_raw(u16::from_be_bytes([
                 apci_bytes[8],
                 apci_bytes[9],
@@ -246,6 +256,10 @@ pub enum FunctionPropertyService {
 
 impl FunctionPropertyService {
     /// Decode one function-property APDU by its APCI service code.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         match apci_bytes.get(..2) {
             Some(code) if code == APCI_FUNCTION_PROPERTY_COMMAND => {
@@ -620,12 +634,17 @@ fn decode_user_memory(apdu: &[u8], service: u8, read: bool) -> Result<(u32, u8, 
 }
 
 impl AuthorizeRequest {
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut apdu = vec![0x03, 0xD1, 0];
         apdu.extend_from_slice(&self.key.to_be_bytes());
         apdu
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apdu: &[u8]) -> Result<Self> {
         if apdu.len() != 7 || apdu[..2] != [0x03, 0xD1] {
             return Err(ProtocolError::InvalidFrame {
@@ -640,10 +659,15 @@ impl AuthorizeRequest {
 }
 
 impl AuthorizeResponse {
+    #[must_use]
     pub fn encode(self) -> Vec<u8> {
         vec![0x03, 0xD2, self.level]
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apdu: &[u8]) -> Result<Self> {
         if apdu.len() != 3 || apdu[..2] != [0x03, 0xD2] {
             return Err(ProtocolError::InvalidFrame {
@@ -656,10 +680,15 @@ impl AuthorizeResponse {
 }
 
 impl RestartMasterReset {
+    #[must_use]
     pub fn encode(self) -> Vec<u8> {
         vec![0x03, 0x81, self.erase_code, self.channel_number]
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apdu: &[u8]) -> Result<Self> {
         if apdu.len() != 4 || apdu[..2] != [0x03, 0x81] {
             return Err(ProtocolError::InvalidFrame {
@@ -675,6 +704,7 @@ impl RestartMasterReset {
 }
 
 impl RestartMasterResetResponse {
+    #[must_use]
     pub fn encode(self) -> Vec<u8> {
         vec![
             0x03,
@@ -685,6 +715,10 @@ impl RestartMasterResetResponse {
         ]
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apdu: &[u8]) -> Result<Self> {
         if apdu.len() != 5 || apdu[..2] != [0x03, 0xA1] {
             return Err(ProtocolError::InvalidFrame {
@@ -700,10 +734,18 @@ impl RestartMasterResetResponse {
 }
 
 impl MemoryRead {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(self) -> Result<Vec<u8>> {
         encode_memory(APCI_MEMORY_READ, self.address, self.count, &[])
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apdu: &[u8]) -> Result<Self> {
         let (address, count, _) = decode_memory(apdu, APCI_MEMORY_READ, true)?;
         Ok(Self { address, count })
@@ -711,10 +753,18 @@ impl MemoryRead {
 }
 
 impl MemoryResponse {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         encode_memory(APCI_MEMORY_RESPONSE, self.address, self.count, &self.data)
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apdu: &[u8]) -> Result<Self> {
         let (address, count, data) = decode_memory(apdu, APCI_MEMORY_RESPONSE, false)?;
         Ok(Self {
@@ -726,10 +776,18 @@ impl MemoryResponse {
 }
 
 impl MemoryWrite {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         encode_memory(APCI_MEMORY_WRITE, self.address, self.count, &self.data)
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apdu: &[u8]) -> Result<Self> {
         let (address, count, data) = decode_memory(apdu, APCI_MEMORY_WRITE, false)?;
         Ok(Self {
@@ -741,10 +799,18 @@ impl MemoryWrite {
 }
 
 impl UserMemoryRead {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(self) -> Result<Vec<u8>> {
         encode_user_memory(APCI_USER_MEMORY_READ, self.address, self.count, &[])
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apdu: &[u8]) -> Result<Self> {
         let (address, count, _) = decode_user_memory(apdu, APCI_USER_MEMORY_READ, true)?;
         Ok(Self { address, count })
@@ -752,6 +818,10 @@ impl UserMemoryRead {
 }
 
 impl UserMemoryResponse {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         encode_user_memory(
             APCI_USER_MEMORY_RESPONSE,
@@ -761,6 +831,10 @@ impl UserMemoryResponse {
         )
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apdu: &[u8]) -> Result<Self> {
         let (address, count, data) = decode_user_memory(apdu, APCI_USER_MEMORY_RESPONSE, false)?;
         Ok(Self {
@@ -772,10 +846,18 @@ impl UserMemoryResponse {
 }
 
 impl UserMemoryWrite {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         encode_user_memory(APCI_USER_MEMORY_WRITE, self.address, self.count, &self.data)
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apdu: &[u8]) -> Result<Self> {
         let (address, count, data) = decode_user_memory(apdu, APCI_USER_MEMORY_WRITE, false)?;
         Ok(Self {
@@ -839,6 +921,10 @@ fn decode_property_value(apci_bytes: &[u8], service: u8) -> Result<(u8, u8, u8, 
 
 impl PropertyValueRead {
     /// Encode the request as APCI bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(self) -> Result<Vec<u8>> {
         encode_property_value(
             APCI_PROPERTY_VALUE_READ,
@@ -851,6 +937,10 @@ impl PropertyValueRead {
     }
 
     /// Decode a property value read request from APCI bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         let (object_index, property_id, count, start_index, data) =
             decode_property_value(apci_bytes, APCI_PROPERTY_VALUE_READ)?;
@@ -871,6 +961,10 @@ impl PropertyValueRead {
 
 impl PropertyValueResponse {
     /// Encode the response as APCI bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         encode_property_value(
             APCI_PROPERTY_VALUE_RESPONSE,
@@ -883,6 +977,10 @@ impl PropertyValueResponse {
     }
 
     /// Decode a property value response from APCI bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         let (object_index, property_id, count, start_index, data) =
             decode_property_value(apci_bytes, APCI_PROPERTY_VALUE_RESPONSE)?;
@@ -898,6 +996,10 @@ impl PropertyValueResponse {
 
 impl PropertyValueWrite {
     /// Encode the request as APCI bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         encode_property_value(
             APCI_PROPERTY_VALUE_WRITE,
@@ -910,6 +1012,10 @@ impl PropertyValueWrite {
     }
 
     /// Decode a property value write from APCI bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         let (object_index, property_id, count, start_index, data) =
             decode_property_value(apci_bytes, APCI_PROPERTY_VALUE_WRITE)?;
@@ -924,6 +1030,7 @@ impl PropertyValueWrite {
 }
 
 impl FunctionPropertyCommand {
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut result = APCI_FUNCTION_PROPERTY_COMMAND.to_vec();
         result.extend_from_slice(&[self.object_index, self.property_id]);
@@ -931,6 +1038,10 @@ impl FunctionPropertyCommand {
         result
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         if apci_bytes.len() < 4 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_COMMAND {
             return Err(ProtocolError::InvalidFrame {
@@ -950,6 +1061,7 @@ impl FunctionPropertyCommand {
 }
 
 impl FunctionPropertyStateRead {
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut result = APCI_FUNCTION_PROPERTY_STATE_READ.to_vec();
         result.extend_from_slice(&[self.object_index, self.property_id]);
@@ -957,6 +1069,10 @@ impl FunctionPropertyStateRead {
         result
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         if apci_bytes.len() < 4 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_STATE_READ {
             return Err(ProtocolError::InvalidFrame {
@@ -976,6 +1092,10 @@ impl FunctionPropertyStateRead {
 }
 
 impl FunctionPropertyExtCommand {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let header = encode_function_property_ext_header(
             self.interface_object_type,
@@ -988,6 +1108,10 @@ impl FunctionPropertyExtCommand {
         Ok(result)
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         if apci_bytes.len() < 7 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_EXT_COMMAND {
             return Err(ProtocolError::InvalidFrame {
@@ -1010,6 +1134,10 @@ impl FunctionPropertyExtCommand {
 }
 
 impl FunctionPropertyExtStateRead {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let header = encode_function_property_ext_header(
             self.interface_object_type,
@@ -1022,6 +1150,10 @@ impl FunctionPropertyExtStateRead {
         Ok(result)
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         if apci_bytes.len() < 7 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_EXT_STATE_READ {
             return Err(ProtocolError::InvalidFrame {
@@ -1044,7 +1176,11 @@ impl FunctionPropertyExtStateRead {
 }
 
 impl FunctionPropertyStateResponse {
-    /// Encode A_FunctionPropertyState_Response.
+    /// Encode `A_FunctionPropertyState_Response`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let Some(return_code) = self.return_code else {
             if !self.data.is_empty() {
@@ -1071,7 +1207,11 @@ impl FunctionPropertyStateResponse {
         Ok(result)
     }
 
-    /// Decode A_FunctionPropertyState_Response; a four-byte response has no return code.
+    /// Decode `A_FunctionPropertyState_Response`; a four-byte response has no return code.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         if apci_bytes.len() < 4 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_STATE_RESPONSE {
             return Err(ProtocolError::InvalidFrame {
@@ -1097,7 +1237,11 @@ impl FunctionPropertyStateResponse {
 }
 
 impl FunctionPropertyExtStateResponse {
-    /// Encode A_FunctionPropertyExtState_Response.
+    /// Encode `A_FunctionPropertyExtState_Response`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let header = encode_function_property_ext_header(
             self.interface_object_type,
@@ -1111,7 +1255,11 @@ impl FunctionPropertyExtStateResponse {
         Ok(result)
     }
 
-    /// Decode A_FunctionPropertyExtState_Response, preserving function-specific return codes.
+    /// Decode `A_FunctionPropertyExtState_Response`, preserving function-specific return codes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(apci_bytes: &[u8]) -> Result<Self> {
         if apci_bytes.len() < 8 || apci_bytes[..2] != APCI_FUNCTION_PROPERTY_EXT_STATE_RESPONSE {
             return Err(ProtocolError::InvalidFrame {

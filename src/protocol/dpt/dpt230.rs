@@ -106,6 +106,10 @@ impl WriteValue<DPTMBusAddress> for MBusAddress {
 pub struct MBusAddressView<'a>(pub(super) &'a [u8]);
 impl<'a> MBusAddressView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> MBusAddress {
         MBusAddress::decode(self.0.try_into().expect("validated length"))
     }

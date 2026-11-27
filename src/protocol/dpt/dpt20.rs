@@ -101,6 +101,10 @@ impl DPTErrorClassSystem {
     }
 
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(self) -> ErrorClassSystem {
         ErrorClassSystem::try_from(self.0[0]).expect("validated DPT 20.011 value")
     }
@@ -336,6 +340,10 @@ impl DPTHVACStatus {
     }
 
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> HVACStatus {
         let raw = self.0[0];
         let mode = if raw & 0x01 != 0 {

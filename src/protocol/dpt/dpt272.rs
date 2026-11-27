@@ -93,10 +93,18 @@ impl std::str::FromStr for ConverterInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTConverterInfo([u8; 7]);
 impl DPTConverterInfo {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: ConverterInfo) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> ConverterInfo {
         ConverterInfo::decode(self.0).expect("validated information")
     }
@@ -130,6 +138,10 @@ impl WriteValue<DPTConverterInfo> for ConverterInfo {
 pub struct ConverterInfoView<'a>(pub(super) &'a [u8]);
 impl<'a> ConverterInfoView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> ConverterInfo {
         ConverterInfo::decode(self.0.try_into().expect("validated length"))
             .expect("validated information")

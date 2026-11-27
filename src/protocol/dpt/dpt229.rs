@@ -26,7 +26,11 @@ fn bad() -> crate::error::KnxError {
     .into()
 }
 fn unit(code: u8) -> Result<MeteringValueUnit> {
-    use MeteringValueUnit::*;
+    use MeteringValueUnit::{
+        DimensionlessCounter, EnergyJ, EnergyWh, HcaUnits, MassFlowKgPerHour, MassKg,
+        PowerJPerHour, PowerW, VolumeFlowM3PerHour, VolumeFlowM3PerMin, VolumeFlowM3PerSec,
+        VolumeM3,
+    };
     Ok(match code {
         0 => EnergyWh,
         8 => EnergyJ,
@@ -44,7 +48,11 @@ fn unit(code: u8) -> Result<MeteringValueUnit> {
     })
 }
 fn classify(code: u8) -> Result<(MeteringValueUnit, i8)> {
-    use MeteringValueUnit::*;
+    use MeteringValueUnit::{
+        DimensionlessCounter, EnergyJ, EnergyWh, HcaUnits, MassFlowKgPerHour, MassKg,
+        PowerJPerHour, PowerW, VolumeFlowM3PerHour, VolumeFlowM3PerMin, VolumeFlowM3PerSec,
+        VolumeM3,
+    };
     let (first, exponent, kind) = match code {
         0x00..=0x07 => (0x00, -3, EnergyWh),
         0x08..=0x0f => (0x08, 0, EnergyJ),
@@ -145,10 +153,18 @@ impl std::str::FromStr for MeteringValue {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTMeteringValue([u8; 6]);
 impl DPTMeteringValue {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: MeteringValue) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> MeteringValue {
         MeteringValue::decode(self.0).expect("validated unit")
     }
@@ -182,6 +198,10 @@ impl WriteValue<DPTMeteringValue> for MeteringValue {
 pub struct MeteringValueView<'a>(pub(super) &'a [u8]);
 impl<'a> MeteringValueView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> MeteringValue {
         MeteringValue::decode(self.0.try_into().expect("validated length")).expect("validated unit")
     }

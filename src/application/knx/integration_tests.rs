@@ -781,6 +781,7 @@ async fn individual_address_check_detects_connected_and_refusing_devices() {
 #[tokio::test]
 async fn programming_mode_property_switch_verifies_over_knust_loopback() {
     use crate::protocol::TpciFrame;
+    use crate::protocol::management::{PropertyValueResponse, PropertyValueWrite};
     use crate::transport::TunnelServer;
 
     let client_address = IndividualAddress::new(1, 1, 32);
@@ -806,7 +807,6 @@ async fn programming_mode_property_switch_verifies_over_knust_loopback() {
         .unwrap();
     let mut p2p = connect.await.unwrap().unwrap();
 
-    use crate::protocol::management::{PropertyValueResponse, PropertyValueWrite};
     let switching = tokio::spawn(async move {
         for (verify, expected_success) in
             [(true, true), (true, false), (false, true), (false, false)]
@@ -1933,7 +1933,7 @@ async fn p2p_session_connects_sends_acknowledged_data_and_closes() {
     memory_write_ack.telegram_type = TelegramType::IndividualControl;
     memory_write_ack.tpci = TpciFrame::Ack { sequence: 12 }.encode();
     server.send(memory_write_ack).await.unwrap();
-    let (mut p2p, _) = writing_memory.await.unwrap().unwrap();
+    let (mut p2p, ()) = writing_memory.await.unwrap().unwrap();
 
     let writing_user_memory = tokio::spawn(async move {
         p2p.write_user_memory(crate::protocol::management::UserMemoryWrite {
@@ -1959,7 +1959,7 @@ async fn p2p_session_connects_sends_acknowledged_data_and_closes() {
     user_memory_write_ack.telegram_type = TelegramType::IndividualControl;
     user_memory_write_ack.tpci = TpciFrame::Ack { sequence: 13 }.encode();
     server.send(user_memory_write_ack).await.unwrap();
-    let (mut p2p, _) = writing_user_memory.await.unwrap().unwrap();
+    let (mut p2p, ()) = writing_user_memory.await.unwrap().unwrap();
 
     assert!(
         p2p.read_memory_range(0, usize::MAX, 15, Duration::from_secs(2))
@@ -2558,10 +2558,7 @@ async fn p2p_session_connects_sends_acknowledged_data_and_closes() {
         let request =
             crate::protocol::management::PropertyDescriptionRead::decode(&property_probe.payload)
                 .unwrap();
-        assert_eq!(
-            request.object_index,
-            if request_sequence == 15 { 1 } else { 0 }
-        );
+        assert_eq!(request.object_index, u8::from(request_sequence == 15));
         assert_eq!(request.property_id, 0);
         assert_eq!(request.property_index, property_index);
         let mut property_probe_ack = Telegram::individual_data(client_address, Vec::new());
@@ -2912,7 +2909,7 @@ fn individual_apdus_preserve_connectionless_and_connected_tpci() {
         let request = TunnellingRequest::parse(&frame.body).unwrap();
         let cemi = CemiFrame::parse(&request.raw_cemi).unwrap();
         assert_eq!(cemi.tpci, tpci);
-        assert!(cemi.apci_data.is_empty());
+        assert_eq!(cemi.apci_data, [] as [u8; 0]);
     }
 }
 
@@ -3086,9 +3083,9 @@ async fn data_secure_group_telegrams_are_wrapped_and_replay_checked() {
         destination,
         SecurityKey::from_hex("dfdf23a59fbb40404091d1c162087e8b").unwrap(),
     );
-    keyring.set_sequence_number(source, 160170101606);
+    keyring.set_sequence_number(source, 160_170_101_606);
     let keyring = RwLock::new(Some(keyring));
-    let sequence = AtomicU64::new(160170101607);
+    let sequence = AtomicU64::new(160_170_101_607);
     let mut telegram = Telegram::group_read(destination);
     telegram.source = source;
 
@@ -3099,7 +3096,7 @@ async fn data_secure_group_telegrams_are_wrapped_and_replay_checked() {
     let request = TunnellingRequest::parse(&knxip.body).unwrap();
     let secure = CemiFrame::parse(&request.raw_cemi).unwrap();
     assert_eq!(secure.tpci, 0x03);
-    assert_eq!(sequence.load(Ordering::SeqCst), 160170101608);
+    assert_eq!(sequence.load(Ordering::SeqCst), 160_170_101_608);
     assert_eq!(
         secure.apci_data,
         [

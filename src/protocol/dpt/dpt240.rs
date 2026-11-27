@@ -65,6 +65,10 @@ impl std::str::FromStr for CombinedPosition {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTCombinedPosition([u8; 3]);
 impl DPTCombinedPosition {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: CombinedPosition) -> Result<Self> {
         Ok(Self(value.encode()?))
     }

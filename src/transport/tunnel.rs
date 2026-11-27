@@ -466,6 +466,10 @@ impl Tunnel {
     /// derivation or MAC verification fails, or the same errors as
     /// [`Self::connect`] for the KNX-layer handshake that follows.
     #[cfg(feature = "secure")]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn connect_secure(&mut self, security: &SecurityConfig) -> Result<()> {
         let transport = self.establish_transport().await?;
 
@@ -588,7 +592,7 @@ impl Tunnel {
             loop {
                 let deadline = activity.last().await + interval;
                 tokio::select! {
-                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+                    () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
                         if Instant::now() < deadline {
                             continue;
                         }
@@ -596,16 +600,15 @@ impl Tunnel {
                         if Instant::now() < activity.last().await + interval {
                             continue;
                         }
-                        let encrypted = match session.read().await.encrypt_frame(&keepalive).await {
-                            Ok(frame) => frame,
-                            Err(_) => break,
+                        let Ok(encrypted) = session.read().await.encrypt_frame(&keepalive).await else {
+                            break;
                         };
                         if transport.send_frame(&encrypted).await.is_err() {
                             break;
                         }
                         activity.touch().await;
                     }
-                    _ = activity.changed.notified() => {}
+                    () = activity.changed.notified() => {}
                     _ = &mut cancelled => break,
                 }
             }
@@ -760,7 +763,7 @@ impl Tunnel {
         }
     }
 
-    /// High-level UDP request delivery; raw send_frame remains unacknowledged.
+    /// High-level UDP request delivery; raw `send_frame` remains unacknowledged.
     pub(crate) async fn send_acknowledged(
         &self,
         data: &[u8],
@@ -810,7 +813,7 @@ impl Tunnel {
         if let Some(tx) = transmitted.as_mut() {
             tokio::select! {
                 result = self.send_frame(data) => result?,
-                _ = tx.closed() => return Err(TransportError::QueueClosed.into()),
+                () = tx.closed() => return Err(TransportError::QueueClosed.into()),
             }
         } else {
             self.send_frame(data).await?;

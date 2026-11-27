@@ -18,7 +18,7 @@ fn mbus_address_fields_round_trip_and_preserve_unknown_media() {
     for medium in 0..=u8::MAX {
         let value = MBusAddress {
             manufacturer_id: 0x1234,
-            identification_number: 0x89abcdef,
+            identification_number: 0x89ab_cdef,
             version: 0x56,
             medium,
         };

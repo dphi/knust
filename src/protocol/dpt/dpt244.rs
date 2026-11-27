@@ -91,10 +91,18 @@ impl std::str::FromStr for ConverterStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTConverterStatus([u8; 2]);
 impl DPTConverterStatus {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: ConverterStatus) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> ConverterStatus {
         ConverterStatus::decode(self.0).expect("validated status")
     }
@@ -128,6 +136,10 @@ impl WriteValue<DPTConverterStatus> for ConverterStatus {
 pub struct ConverterStatusView<'a>(pub(super) &'a [u8]);
 impl<'a> ConverterStatusView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> ConverterStatus {
         ConverterStatus::decode([self.0[0], self.0[1]]).expect("validated status")
     }

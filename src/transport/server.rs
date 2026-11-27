@@ -462,7 +462,7 @@ impl TunnelServer {
         }
     }
 
-    /// Dispatches plaintext frames and frames unwrapped from a SecureWrapper.
+    /// Dispatches plaintext frames and frames unwrapped from a `SecureWrapper`.
     /// Secure-only endpoints reject plaintext to avoid transport fallback.
     async fn dispatch_plain_frame(
         self: &Arc<Self>,
@@ -978,6 +978,10 @@ impl TunnelServer {
     }
 
     /// Signal the server and all of its connection loops to shut down.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the discovery handle lock was poisoned by another thread.
     pub fn shutdown(&self) {
         self.shutdown.send_replace(true);
         if let Some(discovery) = self.discovery_handle.lock().unwrap().take() {

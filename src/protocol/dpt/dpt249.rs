@@ -85,6 +85,10 @@ impl std::str::FromStr for ColorTemperatureTransition {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DPTColorTemperatureTransition([u8; 6]);
 impl DPTColorTemperatureTransition {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: ColorTemperatureTransition) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
@@ -120,6 +124,10 @@ impl WriteValue<DPTColorTemperatureTransition> for ColorTemperatureTransition {
 pub struct ColorTemperatureTransitionView<'a>(pub(super) &'a [u8]);
 impl<'a> ColorTemperatureTransitionView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> ColorTemperatureTransition {
         ColorTemperatureTransition::decode(self.0.try_into().expect("validated length"))
     }

@@ -97,8 +97,7 @@ impl DptType {
                     "cannot parse {s:?} as a date/time (expected \"YYYY-MM-DD HH:MM:SS\")"
                 ))
             }),
-            4 => Ok(DptPayload::String(s.to_string())),
-            16 => Ok(DptPayload::String(s.to_string())),
+            4 | 16 | 234 => Ok(DptPayload::String(s.to_string())),
             17 => parse_scene_number(s)
                 .map(DptPayload::Scene)
                 .ok_or_else(|| bad(format!("cannot parse {s:?} as a scene number (1-64)"))),
@@ -166,7 +165,6 @@ impl DptType {
             275 => s.parse().map(DptPayload::Setpoints4),
             238 if self.sub() == 1 => s.parse().map(DptPayload::SceneConfig),
             238 => s.parse().map(DptPayload::DALIDiagnostics),
-            234 => Ok(DptPayload::String(s.to_string())),
             232 => parse_rgb(s).ok_or_else(|| {
                 bad(format!(
                     "cannot parse {s:?} as RGB (try \"RGB(r, g, b)\" or \"#RRGGBB\")"

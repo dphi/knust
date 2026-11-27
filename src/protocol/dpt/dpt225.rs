@@ -55,6 +55,10 @@ macro_rules! scaling_time {
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub struct $name([u8; 3]);
         impl $name {
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the value is outside the valid range or cannot be encoded.
             pub fn new(value: ScalingTime) -> Result<Self> {
                 Ok(Self(value.encode($sub)?))
             }

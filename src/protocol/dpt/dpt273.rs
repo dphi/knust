@@ -134,6 +134,10 @@ macro_rules! forecast {
         #[derive(Debug, Clone, PartialEq)]
         pub struct $name([u8; 8]);
         impl $name {
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the value is outside the valid range or cannot be encoded.
             pub fn new(value: Forecast) -> Result<Self> {
                 Ok(Self(value.encode($sub)?))
             }
@@ -200,6 +204,10 @@ forecast!(
 pub struct ForecastView<'a>(pub(super) &'a [u8], pub(super) u16);
 impl<'a> ForecastView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> Forecast {
         Forecast::decode(self.0, self.1).expect("validated forecast")
     }

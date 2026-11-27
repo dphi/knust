@@ -49,6 +49,10 @@ impl std::str::FromStr for SceneInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTSceneInfo([u8; 1]);
 impl DPTSceneInfo {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: SceneInfo) -> Result<Self> {
         Ok(Self([value.encode()?]))
     }

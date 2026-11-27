@@ -169,13 +169,13 @@ impl Telegram {
 
     /// Encode the raw individual APDU or a group-value service with its payload format.
     pub(crate) fn encode_apdu(&self) -> Vec<u8> {
+        use super::GroupValueService;
         if matches!(
             self.telegram_type,
             TelegramType::IndividualData | TelegramType::IndividualControl
         ) {
             return self.payload.clone();
         }
-        use super::GroupValueService;
         let service = match self.telegram_type {
             TelegramType::GroupValueRead => GroupValueService::Read,
             TelegramType::GroupValueResponse => GroupValueService::Response(self.payload.clone()),

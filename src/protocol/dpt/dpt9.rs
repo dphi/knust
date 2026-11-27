@@ -13,9 +13,9 @@ impl Temperature {
     /// Returns [`ProtocolError::DptError`] if `value` is not finite or outside the DPT 9 wire range.
     pub fn new(value: f32) -> Result<Self> {
         let mut temp = Temperature([0, 0]);
-        let value = if value == 670_433.28_f32 {
+        let value = if value.to_bits() == 670_433.28_f32.to_bits() {
             670_433.28
-        } else if value == -671_088.6_f32 {
+        } else if value.to_bits() == (-671_088.6_f32).to_bits() {
             -671_088.64
         } else {
             f64::from(value)

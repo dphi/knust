@@ -66,27 +66,23 @@ impl PropertyDataType {
             | Self::BinaryInformation
             | Self::Bitset8
             | Self::Enum8
-            | Self::Scaling => Some(1),
-            Self::Int | Self::UnsignedInt | Self::KnxFloat | Self::Version | Self::Bitset16 => {
-                Some(2)
-            }
-            Self::Date | Self::Time | Self::PollGroupSettings => Some(3),
-            Self::Long | Self::UnsignedLong | Self::Float => Some(4),
-            Self::Double => Some(8),
-            Self::AlarmInfo => Some(6),
-            Self::CharBlock => Some(10),
-            Self::ShortCharBlock => Some(5),
-            Self::DateTime => Some(8),
-            Self::Generic01 => Some(1),
-            Self::Generic02 => Some(2),
-            Self::Generic03 => Some(3),
-            Self::Generic04 => Some(4),
-            Self::Generic05 => Some(5),
-            Self::Generic06 => Some(6),
+            | Self::Scaling
+            | Self::Generic01 => Some(1),
+
+            Self::Int
+            | Self::UnsignedInt
+            | Self::KnxFloat
+            | Self::Version
+            | Self::Bitset16
+            | Self::Generic02 => Some(2),
+            Self::Date | Self::Time | Self::PollGroupSettings | Self::Generic03 => Some(3),
+            Self::Long | Self::UnsignedLong | Self::Float | Self::Generic04 => Some(4),
+            Self::Double | Self::DateTime | Self::Generic08 => Some(8),
+            Self::AlarmInfo | Self::Generic06 => Some(6),
+            Self::CharBlock | Self::Generic10 => Some(10),
+            Self::ShortCharBlock | Self::Generic05 => Some(5),
             Self::Generic07 => Some(7),
-            Self::Generic08 => Some(8),
             Self::Generic09 => Some(9),
-            Self::Generic10 => Some(10),
             Self::Generic11 => Some(11),
             Self::Generic12 => Some(12),
             Self::Generic13 => Some(13),

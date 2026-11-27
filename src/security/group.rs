@@ -219,6 +219,10 @@ fn decrypt_group_payload(
 }
 
 /// Build the secure APDU fields for a group CEMI frame.
+///
+/// # Errors
+///
+/// Returns an error if the frame or security parameters are invalid or encryption fails.
 pub fn encrypt_group_frame(
     keyring: &KeyRing,
     frame: &CemiFrame,
@@ -320,7 +324,7 @@ mod tests {
             &reference_keyring(),
             &reference_frame(),
             &[0x00, 0x00],
-            160170101607,
+            160_170_101_607,
         )
         .unwrap();
 

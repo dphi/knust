@@ -561,7 +561,7 @@ impl DptType {
         }
     }
 
-    fn validate_mode(&self, value: u8) -> Result<()> {
+    fn validate_mode(self, value: u8) -> Result<()> {
         let max = match self {
             Self::ErrorClassSystem => 18,
             Self::ChangeoverMode => 2,
@@ -610,6 +610,10 @@ impl DptType {
     ///
     /// Returns [`ProtocolError::DptError`] if `bytes.len()` doesn't match this
     /// DPT's expected byte length.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal DPT byte-length invariant is violated.
     pub fn decode_ref<'a>(&self, bytes: &'a [u8]) -> Result<DptView<'a>> {
         let expected_len = self.byte_length();
         if expected_len > 0 && bytes.len() != expected_len {

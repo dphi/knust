@@ -122,10 +122,18 @@ impl std::str::FromStr for AlarmInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTAlarmInfo([u8; 6]);
 impl DPTAlarmInfo {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: AlarmInfo) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> AlarmInfo {
         AlarmInfo::decode(self.0).expect("validated alarm")
     }
@@ -159,6 +167,10 @@ impl WriteValue<DPTAlarmInfo> for AlarmInfo {
 pub struct AlarmInfoView<'a>(pub(super) &'a [u8]);
 impl<'a> AlarmInfoView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> AlarmInfo {
         AlarmInfo::decode(self.0.try_into().expect("validated length")).expect("validated alarm")
     }

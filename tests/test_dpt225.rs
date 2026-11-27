@@ -19,7 +19,7 @@ fn scaling_times_validate_writes_but_decode_zero_wire_values() {
                     percent,
                 };
                 let raw = dpt.encode(&DptPayload::ScalingTime(value)).unwrap();
-                assert_eq!(&raw[..2], (ticks as u16).to_be_bytes());
+                assert_eq!(&raw[..2], u16::try_from(ticks).unwrap().to_be_bytes());
                 let view = dpt.decode_ref(&raw).unwrap();
                 assert_eq!(DptPayload::from(view), DptPayload::ScalingTime(value));
                 assert_eq!(dpt.parse(&value.to_string()).unwrap(), raw);

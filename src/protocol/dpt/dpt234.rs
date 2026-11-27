@@ -32,6 +32,10 @@ macro_rules! code {
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub struct $name([u8; 2]);
         impl $name {
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the value is outside the valid range or cannot be encoded.
             pub fn new(value: &str) -> Result<Self> {
                 Ok(Self(encode_code(value, $upper)?))
             }
@@ -77,6 +81,10 @@ code!(
 pub struct CodeView<'a>(pub(super) &'a [u8], pub(super) bool);
 impl<'a> CodeView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> String {
         decode_code(self.0, self.1).expect("validated code")
     }

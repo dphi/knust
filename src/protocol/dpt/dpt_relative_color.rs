@@ -126,6 +126,10 @@ relative!(RelativeControlRGB,DPTRelativeControlRGB,3,"254.600","relative_control
 pub struct RelativeColorView<'a>(pub(super) &'a [u8], pub(super) u16);
 impl<'a> RelativeColorView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> super::DptPayload {
         decode_payload(self.0, self.1).expect("validated length")
     }

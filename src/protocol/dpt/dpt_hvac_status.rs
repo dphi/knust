@@ -79,6 +79,10 @@ impl Default for RFModeInfo {
     }
 }
 impl RFModeInfo {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn encode(self) -> Result<[u8; 1]> {
         if !self.asynchronous {
             return Err(bad("21.1000"));
@@ -131,9 +135,14 @@ impl std::str::FromStr for RFModeInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTRFModeInfo([u8; 1]);
 impl DPTRFModeInfo {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: RFModeInfo) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
+    #[must_use]
     pub fn value(&self) -> RFModeInfo {
         RFModeInfo::decode(&self.0)
     }

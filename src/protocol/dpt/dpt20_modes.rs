@@ -10,6 +10,10 @@ macro_rules! mode {
 
         impl $name {
             /// Construct a mode from its KNX value.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the value is outside the valid range or cannot be encoded.
             pub fn new(value: u8) -> Result<Self> {
                 if value > $max {
                     return Err(ProtocolError::DptError {

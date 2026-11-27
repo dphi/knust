@@ -99,6 +99,10 @@ macro_rules! datapoint {
         #[derive(Debug, Clone, PartialEq)]
         pub struct $name([u8; $length]);
         impl $name {
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the value is outside the valid range or cannot be encoded.
             pub fn new(value: $value) -> Result<Self> {
                 Ok(Self(value.encode($shift)?.try_into().expect("fixed size")))
             }
@@ -170,6 +174,10 @@ datapoint!(
 pub struct Setpoints3View<'a>(pub(super) &'a [u8], pub(super) bool);
 impl<'a> Setpoints3View<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> RoomTemperatureSetpoints3 {
         RoomTemperatureSetpoints3::decode(self.0, self.1).expect("validated fields")
     }
@@ -183,6 +191,10 @@ impl<'a> Setpoints3View<'a> {
 pub struct Setpoints4View<'a>(pub(super) &'a [u8], pub(super) bool);
 impl<'a> Setpoints4View<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> RoomTemperatureSetpoints4 {
         RoomTemperatureSetpoints4::decode(self.0, self.1).expect("validated fields")
     }

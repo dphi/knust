@@ -623,7 +623,9 @@ impl Knx {
                                     log_application!(LogLevel::Info, "Auto-reconnect enabled, starting reconnection task");
 
                                     // Check if reconnection is already in progress
-                                    if !reconnect_task.is_running() {
+                                    if reconnect_task.is_running() {
+                                        log_application!(LogLevel::Debug, "Reconnection already in progress");
+                                    } else {
                                         // Start reconnection task (following Python pattern)
                                         let reconnect_handle = Self::start_reconnection_task(
                                             config.clone(),
@@ -636,8 +638,6 @@ impl Knx {
 
                                         reconnect_task.replace(reconnect_handle);
                                         log_application!(LogLevel::Debug, "Reconnection task started");
-                                    } else {
-                                        log_application!(LogLevel::Debug, "Reconnection already in progress");
                                     }
                                 } else {
                                     log_application!(LogLevel::Warn, "Auto-reconnect disabled, tunnel connection closed");
@@ -1001,7 +1001,7 @@ impl Knx {
         };
         let result = tokio::select! {
             result = operation => result,
-            _ = &mut stopping => Err(crate::error::TransportError::QueueClosed.into()),
+            () = &mut stopping => Err(crate::error::TransportError::QueueClosed.into()),
         };
         self.unregister_callback(handle).await;
         guard.handle = None;
@@ -1084,7 +1084,7 @@ impl Knx {
                     heartbeat = None;
                     tokio::select! {
                         _ = active.changed() => {}
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                        () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                     }
                     continue;
                 };
@@ -1104,7 +1104,7 @@ impl Knx {
                     .map(Tunnel::channel_id);
 
                 tokio::select! {
-                    _ = async {
+                    () = async {
                         match heartbeat_lost.as_ref() {
                             Some(lost) => lost.notified().await,
                             None => std::future::pending().await,
@@ -1119,7 +1119,7 @@ impl Knx {
                         }).await;
                     }
                     _ = active.changed() => {}
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                    () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                     received = connection.recv() => {
                         let is_current = active.borrow().as_ref()
                             .is_some_and(|current| Arc::ptr_eq(current, &connection));
@@ -1158,7 +1158,7 @@ impl Knx {
                                 // Avoid spinning on EOF while control handles this generation.
                                 tokio::select! {
                                     _ = active.changed() => {}
-                                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                                    () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                                 }
                             }
                         }
@@ -1321,7 +1321,7 @@ impl Knx {
                             }
                             tokio::select! {
                                 _ = active.changed() => {}
-                                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                                () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                             }
                         }
                     }).await;
@@ -1463,15 +1463,14 @@ impl Knx {
         let mut untracked = None;
         let signal = receipt
             .as_mut()
-            .map(|receipt| &mut receipt.transmitted)
-            .unwrap_or(&mut untracked);
+            .map_or(&mut untracked, |receipt| &mut receipt.transmitted);
         if let Some(tunnel) = connection.as_any().downcast_ref::<Tunnel>() {
             tunnel.send_acknowledged(frame, attempts, signal).await
         } else {
             if let Some(tx) = signal.as_mut() {
                 tokio::select! {
                     result = connection.send(frame) => result?,
-                    _ = tx.closed() => return Err(crate::error::TransportError::QueueClosed.into()),
+                    () = tx.closed() => return Err(crate::error::TransportError::QueueClosed.into()),
                 }
             } else {
                 connection.send(frame).await?;
