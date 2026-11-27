@@ -441,17 +441,28 @@ impl SecureSession {
     }
 
     fn next_wrapper_sequence(&self) -> Result<[u8; 6]> {
-        let seq = self
-            .sequence_number
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
-                (value < (1 << 48)).then(|| value + 1)
-            })
-            .map_err(|_| SecurityError::CryptographicError {
-                operation: "encrypt".into(),
-                reason: "SecureWrapper sequence exhausted".into(),
-            })?;
-        let [_, _, sequence @ ..] = seq.to_be_bytes();
-        Ok(sequence)
+        let mut current = self.sequence_number.load(Ordering::Relaxed);
+        loop {
+            if current >= 1 << 48 {
+                return Err(SecurityError::CryptographicError {
+                    operation: "encrypt".into(),
+                    reason: "SecureWrapper sequence exhausted".into(),
+                }
+                .into());
+            }
+            match self.sequence_number.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    let [_, _, sequence @ ..] = current.to_be_bytes();
+                    return Ok(sequence);
+                }
+                Err(value) => current = value,
+            }
+        }
     }
 
     /// Close the session.
