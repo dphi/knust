@@ -107,33 +107,36 @@ pub(super) async fn run(options: Options) -> Result<ExitCode, Box<dyn std::error
 
 impl Options {
     async fn builder(&self) -> Result<KnxBuilder, Box<dyn std::error::Error>> {
-        let gateway = if let Some(value) = &self.gateway {
-            resolve_gateway(value, self.tcp, self.local_ip).await?
-        } else {
-            let interface = match self.local_ip {
-                Some(IpAddr::V4(ip)) => Some(ip),
-                Some(IpAddr::V6(_)) => {
-                    return Err("IPv4 discovery needs an IPv4 local address".into());
+        let gateway = match &self.gateway {
+            Some(value) => resolve_gateway(value, self.tcp, self.local_ip).await?,
+            None => {
+                let interface = match self.local_ip {
+                    Some(IpAddr::V4(ip)) => Some(ip),
+                    Some(IpAddr::V6(_)) => {
+                        return Err("IPv4 discovery needs an IPv4 local address".into());
+                    }
+                    None => None,
+                };
+                let mut gateways = super::scan::discover(interface, Duration::from_secs(3))
+                    .await?
+                    .into_iter()
+                    .filter(|gateway| {
+                        let caps = &gateway.capabilities;
+                        caps.tunneling_requires_secure != Some(true)
+                            && if self.tcp {
+                                caps.supports_tcp_tunneling
+                            } else {
+                                caps.supports_tunneling
+                            }
+                    });
+                let gateway = gateways.next().ok_or("no compatible gateway found")?;
+                if gateways.next().is_some() {
+                    return Err(
+                        "multiple compatible gateways found, select one with --gateway".into(),
+                    );
                 }
-                None => None,
-            };
-            let mut gateways = super::scan::discover(interface, Duration::from_secs(3))
-                .await?
-                .into_iter()
-                .filter(|gateway| {
-                    let caps = &gateway.capabilities;
-                    caps.tunneling_requires_secure != Some(true)
-                        && if self.tcp {
-                            caps.supports_tcp_tunneling
-                        } else {
-                            caps.supports_tunneling
-                        }
-                });
-            let gateway = gateways.next().ok_or("no compatible gateway found")?;
-            if gateways.next().is_some() {
-                return Err("multiple compatible gateways found, select one with --gateway".into());
+                gateway.addr
             }
-            gateway.addr
         };
         let builder = if self.tcp {
             Knx::builder().tcp_tunnel(gateway)
