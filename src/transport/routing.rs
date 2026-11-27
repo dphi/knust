@@ -304,8 +304,8 @@ impl Connection for RoutingConnection {
                     break;
                 }
                 tokio::select! {
-                    _ = tokio::time::sleep_until(until) => {}
-                    _ = &mut changed => {}
+                    () = tokio::time::sleep_until(until) => {}
+                    () = &mut changed => {}
                 }
             }
         }
@@ -650,12 +650,12 @@ mod health_tests {
         assert_eq!(connection.routing_stats().lost_message_count, 0);
         assert_eq!(connection.health().recv_errors, 0);
         let frame = KnxIpFrame::new(ServiceType::RoutingLostMessage, vec![4, 2, 1, 2]);
-        assert!(
+        assert_eq!(
             connection
                 .process_routing_message(&frame.serialize())
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            [] as [u8; 0]
         );
         assert_eq!(connection.routing_stats().lost_message_count, 1);
     }

@@ -14,12 +14,20 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tokio::sync::oneshot;
 
-/// Application supplied handler for KNXnet/IP M_PropRead and M_PropWrite
+/// Application supplied handler for KNXnet/IP `M_PropRead` and `M_PropWrite`
 /// requests. Return KNX cEMI error codes for unsupported or inaccessible
 /// properties.
 pub trait DeviceManagementHandler: Send + Sync {
+    ///
+    /// # Errors
+    ///
+    /// Returns a KNX cEMI error code if the property cannot be read or written.
     fn read_property(&self, property: CemiPropertyInfo) -> std::result::Result<Vec<u8>, u8>;
 
+    ///
+    /// # Errors
+    ///
+    /// Returns a KNX cEMI error code if the property cannot be read or written.
     fn write_property(
         &self,
         property: CemiPropertyInfo,
@@ -198,8 +206,8 @@ fn build_device_management_response(
     match cemi.first().copied() {
         Some(code) if code == MessageCode::MPropReadReq.to_u8() => {
             let request = CemiPropertyReadRequest::decode(cemi)?;
-            let (property, data, error_code) = match handler {
-                Some(handler) => match handler.read_property(request.property) {
+            let (property, data, error_code) = if let Some(handler) = handler {
+                match handler.read_property(request.property) {
                     Ok(data) if !data.is_empty() => (request.property, data, None),
                     Ok(_) => (request.property, Vec::new(), Some(0x01)),
                     Err(error_code) => {
@@ -209,14 +217,13 @@ fn build_device_management_response(
                         };
                         (property, Vec::new(), Some(error_code))
                     }
-                },
-                None => {
-                    let property = CemiPropertyInfo {
-                        number_of_elements: 0,
-                        ..request.property
-                    };
-                    (property, Vec::new(), Some(0x01))
                 }
+            } else {
+                let property = CemiPropertyInfo {
+                    number_of_elements: 0,
+                    ..request.property
+                };
+                (property, Vec::new(), Some(0x01))
             };
             CemiPropertyReadResponse {
                 property,

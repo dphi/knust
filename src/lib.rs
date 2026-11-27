@@ -52,6 +52,10 @@
 // - too_many_lines / struct_excessive_bools: size heuristics; splitting the
 //   protocol state machines or replacing config bools would churn the API
 //   without making it clearer.
+// Async signatures match lifecycle traits and APIs even when their current bodies are synchronous.
+#![allow(clippy::unused_async, clippy::unused_async_trait_impl)]
+// Owned parameters preserve the DPT constructor and callback interfaces.
+#![allow(clippy::needless_pass_by_value)]
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,

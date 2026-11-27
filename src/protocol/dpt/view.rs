@@ -1062,8 +1062,10 @@ pub(super) fn weekday_name(day: u8) -> Option<&'static str> {
 fn format_enum(value: u8, dpt: DptType) -> String {
     match dpt {
         DptType::ErrorClassSystem => crate::protocol::dpt::ErrorClassSystem::try_from(value)
-            .map(|class| class.label().to_owned())
-            .unwrap_or_else(|_| format!("System Error Class {value}")),
+            .map_or_else(
+                |_| format!("System Error Class {value}"),
+                |class| class.label().to_owned(),
+            ),
         DptType::ChangeoverMode => ["Auto", "Cooling Only", "Heating Only"]
             .get(value as usize)
             .unwrap_or(&"Unknown")

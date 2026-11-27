@@ -383,6 +383,13 @@ async fn stale_loss_event_cannot_close_replacement_connection() {
 
 #[tokio::test]
 async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
+    struct Received(mpsc::Sender<u8>);
+    #[async_trait::async_trait]
+    impl TelegramCallbackFn for Received {
+        async fn call(&self, telegram: &Telegram) {
+            self.0.send(telegram.payload[0]).await.unwrap();
+        }
+    }
     use crate::protocol::knxip::{
         ConnectResponse, DisconnectRequest, DisconnectResponse, Hpai, KnxIpFrame, ServiceType,
         TunnellingRequest,
@@ -496,13 +503,6 @@ async fn repeated_reconnect_with_reused_channel_restores_both_directions() {
     .await
     .unwrap();
     let (values_tx, mut values_rx) = mpsc::channel(8);
-    struct Received(mpsc::Sender<u8>);
-    #[async_trait::async_trait]
-    impl TelegramCallbackFn for Received {
-        async fn call(&self, telegram: &Telegram) {
-            self.0.send(telegram.payload[0]).await.unwrap();
-        }
-    }
     knx.register_telegram_callback(Received(values_tx)).await;
     timeout(Duration::from_secs(2), knx.connect())
         .await
@@ -620,7 +620,7 @@ async fn p2p_ack_deadline_starts_after_transmission() {
         knx: knx.clone(),
         destination: IndividualAddress::new(1, 1, 5),
         receiver,
-        pending: Default::default(),
+        pending: std::collections::VecDeque::default(),
         callback: None,
         send_sequence: 0,
         receive_sequence: 0,
@@ -667,7 +667,7 @@ async fn timed_out_p2p_send_is_not_transmitted_later() {
         knx: knx.clone(),
         destination: IndividualAddress::new(1, 1, 5),
         receiver,
-        pending: Default::default(),
+        pending: std::collections::VecDeque::default(),
         callback: None,
         send_sequence: 0,
         receive_sequence: 0,

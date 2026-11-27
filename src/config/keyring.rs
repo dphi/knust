@@ -35,6 +35,7 @@ pub struct KeyringConfig {
 }
 
 impl KeyringConfig {
+    #[must_use]
     pub fn into_data_secure_keyring(&self) -> KeyRing {
         self.build_data_secure_keyring(None)
     }
@@ -231,7 +232,7 @@ impl KeyringParser {
                     reason: "Missing keyring creation timestamp".to_string(),
                 })?;
         let digest = sha256_hash(created.as_bytes());
-        let iv = Zeroizing::new(<[u8; 16]>::try_from(&digest[..16]).expect("SHA-256 has 32 bytes"));
+        let iv = Zeroizing::new(std::array::from_fn::<_, 16, _>(|index| digest[index]));
         let group_addresses = Self::parse_encrypted_group_addresses(xml, &password_hash, &iv)?;
 
         Ok(KeyringConfig {

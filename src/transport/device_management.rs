@@ -111,7 +111,7 @@ impl SecureManagementTransport {
             loop {
                 let deadline = *task_activity.lock().await + interval;
                 tokio::select! {
-                    _ = tokio::time::sleep_until(deadline) => {
+                    () = tokio::time::sleep_until(deadline) => {
                         let _guard = task_send_lock.lock().await;
                         if tokio::time::Instant::now() < *task_activity.lock().await + interval {
                             continue;
@@ -121,9 +121,8 @@ impl SecureManagementTransport {
                             SessionStatus { status: SessionStatus::STATUS_KEEPALIVE }.serialize(),
                         )
                         .serialize();
-                        let encrypted = match task_session.read().await.encrypt_frame(&keepalive).await {
-                            Ok(frame) => frame,
-                            Err(_) => break,
+                        let Ok(encrypted) = task_session.read().await.encrypt_frame(&keepalive).await else {
+                            break;
                         };
                         if task_transport.send(task_destination, &encrypted).await.is_err() {
                             break;
@@ -131,7 +130,7 @@ impl SecureManagementTransport {
                         *task_activity.lock().await = tokio::time::Instant::now();
                         task_changed.notify_one();
                     }
-                    _ = task_changed.notified() => {}
+                    () = task_changed.notified() => {}
                     _ = &mut cancelled => break,
                 }
             }
@@ -289,6 +288,10 @@ async fn secure_management_transport(
 
 impl DeviceManagementConnection {
     /// Open a UDP device-management connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn connect(
         gateway: SocketAddr,
         local: SocketAddr,
@@ -325,6 +328,10 @@ impl DeviceManagementConnection {
 
     #[cfg(feature = "secure")]
     /// Open a UDP device-management connection over KNX IP Secure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn connect_secure(
         gateway: SocketAddr,
         local: SocketAddr,
@@ -369,6 +376,10 @@ impl DeviceManagementConnection {
     }
 
     /// Open a TCP device-management connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn connect_tcp(gateway: SocketAddr, timeout: Duration) -> Result<Self> {
         let (transport, _) = TcpFrameTransport::connect(gateway, timeout).await?;
         let hpai = Hpai::new_tcp_route_back();
@@ -385,6 +396,10 @@ impl DeviceManagementConnection {
 
     #[cfg(feature = "secure")]
     /// Open a TCP device-management connection over KNX IP Secure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn connect_tcp_secure(
         gateway: SocketAddr,
         security: &SecurityConfig,
@@ -480,6 +495,10 @@ impl DeviceManagementConnection {
     ///
     /// The KNXnet/IP request is repeated up to three times if its device-configuration
     /// acknowledgement is lost. `timeout` bounds each acknowledgement and response wait.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn request_cemi(
         &mut self,
         cemi: &[u8],
@@ -496,6 +515,10 @@ impl DeviceManagementConnection {
     }
 
     /// Read a property of the KNXnet/IP server's own interface objects.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_property(
         &mut self,
         property: crate::protocol::cemi::CemiPropertyInfo,
@@ -526,6 +549,10 @@ impl DeviceManagementConnection {
     }
 
     /// Write a property of the KNXnet/IP server's own interface objects.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn write_property(
         &mut self,
         property: crate::protocol::cemi::CemiPropertyInfo,
@@ -638,8 +665,11 @@ impl DeviceManagementConnection {
                 Ok(Ok(DeviceManagementEvent::Indication(indication))) => {
                     self.pending_indications.push_back(indication);
                 }
-                Ok(Ok(DeviceManagementEvent::Acknowledged | DeviceManagementEvent::Ignored))
-                | Ok(Ok(DeviceManagementEvent::Response(_))) => {}
+                Ok(Ok(
+                    DeviceManagementEvent::Acknowledged
+                    | DeviceManagementEvent::Ignored
+                    | DeviceManagementEvent::Response(_),
+                )) => {}
                 Ok(Err(error)) => return Err(error),
                 Err(_) => {
                     return Err(TransportError::Timeout {
@@ -651,10 +681,14 @@ impl DeviceManagementConnection {
         }
     }
 
-    /// Wait for the next unsolicited M_PropInfo.ind message from the server.
+    /// Wait for the next unsolicited `M_PropInfo.ind` message from the server.
     ///
     /// Indications received while another request is in progress are queued
     /// and returned here afterward.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn receive_property_info_indication(
         &mut self,
         timeout: Duration,
@@ -671,8 +705,11 @@ impl DeviceManagementConnection {
                 .await
             {
                 Ok(Ok(DeviceManagementEvent::Indication(indication))) => return Ok(indication),
-                Ok(Ok(DeviceManagementEvent::Acknowledged | DeviceManagementEvent::Ignored))
-                | Ok(Ok(DeviceManagementEvent::Response(_))) => {}
+                Ok(Ok(
+                    DeviceManagementEvent::Acknowledged
+                    | DeviceManagementEvent::Ignored
+                    | DeviceManagementEvent::Response(_),
+                )) => {}
                 Ok(Err(error)) => return Err(error),
                 Err(_) => {
                     return Err(TransportError::Timeout {
@@ -685,6 +722,10 @@ impl DeviceManagementConnection {
     }
 
     /// Check that the device-management channel is still open.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn heartbeat(&mut self, timeout: Duration) -> Result<()> {
         if self.closed {
             return Err(TransportError::ConnectionClosed.into());
@@ -721,6 +762,10 @@ impl DeviceManagementConnection {
     }
 
     /// Close the device-management channel with a KNXnet/IP disconnect exchange.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn disconnect(&mut self, timeout: Duration) -> Result<()> {
         if self.closed {
             return Ok(());

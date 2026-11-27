@@ -370,7 +370,7 @@ impl CemiFrame {
     ///
     /// # Errors
     ///
-    /// Returns [ProtocolError::InvalidFrame] when the hop count cannot be
+    /// Returns [`ProtocolError::InvalidFrame`] when the hop count cannot be
     /// represented by the three-bit Ctrl2 field.
     pub fn serialize(&self) -> Result<Vec<u8>> {
         if self.control_field.hop_count > 7 {
@@ -592,6 +592,7 @@ impl MessageCode {
         }
     }
 
+    #[must_use]
     pub const fn to_u8(self) -> u8 {
         match self {
             MessageCode::LDataReq => 0x11,
@@ -610,7 +611,7 @@ impl MessageCode {
     }
 }
 
-/// KNXnet/IP cEMI property addressing fields shared by M_Prop requests and responses.
+/// KNXnet/IP cEMI property addressing fields shared by `M_Prop` requests and responses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CemiPropertyInfo {
     pub object_type: u16,
@@ -624,6 +625,10 @@ impl CemiPropertyInfo {
     const LENGTH: usize = 6;
 
     /// Encode the fixed six-byte property header.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(self) -> Result<[u8; Self::LENGTH]> {
         if self.number_of_elements > 0x0F || self.start_index > 0x0FFF {
             return Err(ProtocolError::InvalidFrame {
@@ -643,6 +648,10 @@ impl CemiPropertyInfo {
     }
 
     /// Decode a fixed six-byte property header.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.len() != Self::LENGTH {
             return Err(ProtocolError::ParseError {
@@ -665,19 +674,27 @@ impl CemiPropertyInfo {
     }
 }
 
-/// M_PropRead.req cEMI message.
+/// `M_PropRead.req` cEMI message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CemiPropertyReadRequest {
     pub property: CemiPropertyInfo,
 }
 
 impl CemiPropertyReadRequest {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let mut bytes = vec![MessageCode::MPropReadReq.to_u8()];
         bytes.extend_from_slice(&self.property.encode()?);
         Ok(bytes)
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.first() != Some(&MessageCode::MPropReadReq.to_u8()) {
             return Err(ProtocolError::ParseError {
@@ -692,7 +709,7 @@ impl CemiPropertyReadRequest {
     }
 }
 
-/// M_PropRead.con cEMI message.
+/// `M_PropRead.con` cEMI message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CemiPropertyReadResponse {
     pub property: CemiPropertyInfo,
@@ -701,6 +718,10 @@ pub struct CemiPropertyReadResponse {
 }
 
 impl CemiPropertyReadResponse {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let mut bytes = vec![MessageCode::MPropReadCon.to_u8()];
         bytes.extend_from_slice(&self.property.encode()?);
@@ -730,6 +751,10 @@ impl CemiPropertyReadResponse {
         Ok(bytes)
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.first() != Some(&MessageCode::MPropReadCon.to_u8()) || bytes.len() < 7 {
             return Err(ProtocolError::ParseError {
@@ -768,7 +793,7 @@ impl CemiPropertyReadResponse {
     }
 }
 
-/// M_PropWrite.req cEMI message.
+/// `M_PropWrite.req` cEMI message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CemiPropertyWriteRequest {
     pub property: CemiPropertyInfo,
@@ -776,6 +801,10 @@ pub struct CemiPropertyWriteRequest {
 }
 
 impl CemiPropertyWriteRequest {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         if self.data.is_empty() || self.property.number_of_elements == 0 {
             return Err(ProtocolError::InvalidFrame {
@@ -789,6 +818,10 @@ impl CemiPropertyWriteRequest {
         Ok(bytes)
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.first() != Some(&MessageCode::MPropWriteReq.to_u8()) || bytes.len() <= 7 {
             return Err(ProtocolError::ParseError {
@@ -812,7 +845,7 @@ impl CemiPropertyWriteRequest {
     }
 }
 
-/// M_PropWrite.con cEMI message.
+/// `M_PropWrite.con` cEMI message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CemiPropertyWriteResponse {
     pub property: CemiPropertyInfo,
@@ -820,6 +853,10 @@ pub struct CemiPropertyWriteResponse {
 }
 
 impl CemiPropertyWriteResponse {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let mut bytes = vec![MessageCode::MPropWriteCon.to_u8()];
         bytes.extend_from_slice(&self.property.encode()?);
@@ -829,6 +866,10 @@ impl CemiPropertyWriteResponse {
         Ok(bytes)
     }
 
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is malformed or cannot be represented on the wire.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.first() != Some(&MessageCode::MPropWriteCon.to_u8())
             || !(7..=8).contains(&bytes.len())
@@ -858,12 +899,12 @@ pub struct CemiPropertyInfoIndication {
 }
 
 impl CemiPropertyInfoIndication {
-    /// Decode a complete M_PropInfo.ind cEMI message.
+    /// Decode a complete `M_PropInfo.ind` cEMI message.
     ///
     /// # Errors
     ///
-    /// Returns ProtocolError::ParseError if the message code is not
-    /// M_PropInfo.ind or the fixed property header is truncated.
+    /// Returns `ProtocolError::ParseError` if the message code is not
+    /// `M_PropInfo.ind` or the fixed property header is truncated.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         if bytes.first() != Some(&MessageCode::MPropInfoInd.to_u8()) {
             return Err(ProtocolError::ParseError {
@@ -895,7 +936,7 @@ impl CemiPropertyInfoIndication {
     ///
     /// # Errors
     ///
-    /// Returns ProtocolError::InvalidFrame if the element count or start
+    /// Returns `ProtocolError::InvalidFrame` if the element count or start
     /// index do not fit their wire fields.
     pub fn serialize(&self) -> Result<Vec<u8>> {
         if self.element_count > 0x0f || self.start_index > 0x0fff {

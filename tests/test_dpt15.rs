@@ -10,7 +10,7 @@ fn access_data_encodes_decimal_digits_and_validates() {
         registry.dpt_number_for_value_type("access_data").unwrap(),
         "15.000"
     );
-    for code in [0, 1, 123, 123456, 999999] {
+    for code in [0, 1, 123, 123_456, 999_999] {
         for flags in 0..=u8::MAX {
             let value = AccessData {
                 access_code: code,
@@ -31,7 +31,7 @@ fn access_data_encodes_decimal_digits_and_validates() {
         }
     }
     let value = AccessData {
-        access_code: 123456,
+        access_code: 123_456,
         detection_error: true,
         permission: false,
         read_right_to_left: true,

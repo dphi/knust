@@ -94,7 +94,11 @@ pub(crate) struct SendReceipt {
 }
 impl SendReceipt {
     pub(crate) fn is_closed(&self) -> bool {
-        self.completed.is_closed() || self.transmitted.as_ref().is_some_and(|tx| tx.is_closed())
+        self.completed.is_closed()
+            || self
+                .transmitted
+                .as_ref()
+                .is_some_and(tokio::sync::oneshot::Sender::is_closed)
     }
 }
 

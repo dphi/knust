@@ -112,10 +112,18 @@ impl std::fmt::Debug for DPTAccessData {
     }
 }
 impl DPTAccessData {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: AccessData) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> AccessData {
         AccessData::decode(self.0).expect("validated access data")
     }
@@ -154,6 +162,10 @@ impl std::fmt::Debug for AccessDataView<'_> {
 }
 impl<'a> AccessDataView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> AccessData {
         AccessData::decode(self.0.try_into().expect("validated length"))
             .expect("validated access data")

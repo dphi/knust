@@ -52,10 +52,18 @@ impl std::str::FromStr for GeographicalLocation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DPTGeographicalLocation([u8; 8]);
 impl DPTGeographicalLocation {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: GeographicalLocation) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> GeographicalLocation {
         GeographicalLocation::decode(self.0).expect("validated coordinates")
     }
@@ -89,6 +97,10 @@ impl WriteValue<DPTGeographicalLocation> for GeographicalLocation {
 pub struct GeographicalLocationView<'a>(pub(super) &'a [u8]);
 impl<'a> GeographicalLocationView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> GeographicalLocation {
         GeographicalLocation::decode(self.0.try_into().expect("validated length"))
             .expect("validated coordinates")

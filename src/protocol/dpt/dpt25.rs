@@ -55,6 +55,10 @@ impl std::str::FromStr for DoubleNibble {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTDoubleNibble([u8; 1]);
 impl DPTDoubleNibble {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: DoubleNibble) -> Result<Self> {
         Ok(Self([value.encode()?]))
     }

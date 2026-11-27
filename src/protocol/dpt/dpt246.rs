@@ -78,6 +78,10 @@ impl std::str::FromStr for BatteryInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTBatteryInfo([u8; 2]);
 impl DPTBatteryInfo {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: BatteryInfo) -> Result<Self> {
         Ok(Self(value.encode()?))
     }

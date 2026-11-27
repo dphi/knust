@@ -98,6 +98,10 @@ macro_rules! actuator {
         }
         #[derive(Debug, Clone, PartialEq, Eq, Hash)] pub struct $dpt([u8;2]);
         impl $dpt {
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the value is outside the valid range or cannot be encoded.
             pub fn new(value: $value) -> Result<Self> { Ok(Self(value.encode()?)) }
             #[must_use] pub fn value(&self) -> $value { $value::decode(self.0).expect("validated percentage") }
         }
@@ -157,6 +161,10 @@ actuator!(LightingActuatorStatus,DPTStatusLightingActuator,600,"207.600","lighti
 pub struct ActuatorView<'a>(pub(super) &'a [u8], pub(super) u16);
 impl<'a> ActuatorView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> super::DptPayload {
         decode_payload([self.0[0], self.0[1]], self.1).expect("validated actuator")
     }

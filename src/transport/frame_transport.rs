@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(first, malformed);
         assert!(crate::protocol::knxip::KnxIpFrame::parse(&first).is_err());
         assert_eq!(try_extract_frame(&mut buf).unwrap(), Some(next));
-        assert!(buf.is_empty());
+        assert_eq!(buf, [] as [u8; 0]);
     }
 
     #[test]

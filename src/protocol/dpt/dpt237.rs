@@ -80,10 +80,18 @@ impl std::str::FromStr for DALIControlGearDiagnostic {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTDALIControlGearDiagnostic([u8; 2]);
 impl DPTDALIControlGearDiagnostic {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: DALIControlGearDiagnostic) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> DALIControlGearDiagnostic {
         DALIControlGearDiagnostic::decode(self.0).expect("validated address")
     }
@@ -117,6 +125,10 @@ impl WriteValue<DPTDALIControlGearDiagnostic> for DALIControlGearDiagnostic {
 pub struct DALIControlGearDiagnosticView<'a>(pub(super) &'a [u8]);
 impl<'a> DALIControlGearDiagnosticView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> DALIControlGearDiagnostic {
         DALIControlGearDiagnostic::decode([self.0[0], self.0[1]]).expect("validated address")
     }

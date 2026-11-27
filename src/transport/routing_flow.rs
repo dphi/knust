@@ -52,8 +52,7 @@ impl FlowControl {
         self.decay(now);
         let spacing = self
             .last_send
-            .map(|sent| sent + Duration::from_millis(20))
-            .unwrap_or(now);
+            .map_or(now, |sent| sent + Duration::from_millis(20));
         spacing.max(self.busy_until.unwrap_or(now)).max(now)
     }
 

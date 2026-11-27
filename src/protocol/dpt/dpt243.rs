@@ -107,6 +107,10 @@ impl std::str::FromStr for XYYColorTransition {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DPTColorXYYTransition([u8; 8]);
 impl DPTColorXYYTransition {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: XYYColorTransition) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
@@ -142,6 +146,10 @@ impl WriteValue<DPTColorXYYTransition> for XYYColorTransition {
 pub struct XYYColorTransitionView<'a>(pub(super) &'a [u8]);
 impl<'a> XYYColorTransitionView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> XYYColorTransition {
         XYYColorTransition::decode(self.0.try_into().expect("validated length"))
     }

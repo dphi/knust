@@ -117,10 +117,18 @@ impl std::str::FromStr for ConverterTestResult {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTConverterTestResult([u8; 6]);
 impl DPTConverterTestResult {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: ConverterTestResult) -> Result<Self> {
         Ok(Self(value.encode()?))
     }
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> ConverterTestResult {
         ConverterTestResult::decode(self.0).expect("validated result")
     }
@@ -154,6 +162,10 @@ impl WriteValue<DPTConverterTestResult> for ConverterTestResult {
 pub struct ConverterTestResultView<'a>(pub(super) &'a [u8]);
 impl<'a> ConverterTestResultView<'a> {
     #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes violate the validation invariant established at construction.
     pub fn value(&self) -> ConverterTestResult {
         ConverterTestResult::decode(self.0.try_into().expect("validated length"))
             .expect("validated result")

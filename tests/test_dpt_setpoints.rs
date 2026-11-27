@@ -77,7 +77,7 @@ fn optional_temperature_fields_and_subtype_bounds() {
             if mask & (1 << bit) == 0 {
                 None
             } else {
-                Some((bit + 1) as f64)
+                Some(f64::from(u32::try_from(bit + 1).unwrap()))
             }
         });
         let value = RoomTemperatureSetpoints4 {

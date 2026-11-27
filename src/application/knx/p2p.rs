@@ -84,7 +84,7 @@ pub struct P2pConnection {
 
 /// An address-scoped receive context for unnumbered individual telegrams.
 ///
-/// Dropping the context releases its address reservation. Use [Self::close] to
+/// Dropping the context releases its address reservation. Use [`Self::close`] to
 /// also wait for callback removal.
 pub struct P2pConnectionless {
     registration: P2pCallbackRegistration,
@@ -93,6 +93,10 @@ pub struct P2pConnectionless {
 
 impl P2pConnectionless {
     /// Send an unnumbered APDU after discarding previously buffered replies.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn send(&mut self, apdu: Vec<u8>) -> Result<()> {
         if !(2..=u8::MAX as usize).contains(&apdu.len()) {
             return Err(crate::error::ProtocolError::InvalidFrame {
@@ -105,7 +109,7 @@ impl P2pConnectionless {
         let knx = &self.registration.knx;
         tokio::select! {
             biased;
-            _ = Self::wait_for_shutdown(knx) => Err(crate::error::TransportError::QueueClosed.into()),
+            () = Self::wait_for_shutdown(knx) => Err(crate::error::TransportError::QueueClosed.into()),
             result = knx.send_telegram_confirmed(&telegram) => result,
         }
     }
@@ -114,6 +118,10 @@ impl P2pConnectionless {
     ///
     /// Reuse the same deadline to receive several replies within one window.
     /// Returns a queue error if more than 16 telegrams accumulate unread.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn receive(
         &mut self,
         expected_service: Option<[u8; 2]>,
@@ -147,12 +155,16 @@ impl P2pConnectionless {
         };
         tokio::select! {
             biased;
-            _ = Self::wait_for_shutdown(knx) => Err(crate::error::TransportError::QueueClosed.into()),
+            () = Self::wait_for_shutdown(knx) => Err(crate::error::TransportError::QueueClosed.into()),
             result = received => result,
         }
     }
 
     /// Send an APDU and return the first matching reply.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn request(
         &mut self,
         apdu: Vec<u8>,
@@ -194,6 +206,10 @@ impl Knx {
     ///
     /// The two-byte APCI service prefix identifies the expected response. Requests are
     /// serialized because connectionless responses do not carry a request sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn request_individual(
         &self,
         destination: crate::protocol::IndividualAddress,
@@ -214,6 +230,10 @@ impl Knx {
     ///
     /// A descriptor response or an explicit P2P refusal indicates an occupied
     /// address. A timeout indicates no device answered the probe.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn check_individual_address(
         &self,
         destination: crate::protocol::IndividualAddress,
@@ -238,6 +258,10 @@ impl Knx {
     ///
     /// Returns all responders before the timeout elapses. Set `raise_if_multiple`
     /// to return an error when a second device responds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_individual_addresses_in_programming_mode(
         &self,
         timeout_duration: std::time::Duration,
@@ -268,6 +292,10 @@ impl Knx {
     ///
     /// Rejects an occupied address unless it belongs to the programming-mode device.
     /// A device that does not answer an address check is considered absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn write_individual_address_in_programming_mode(
         &self,
         address: crate::protocol::IndividualAddress,
@@ -293,8 +321,7 @@ impl Knx {
         if !occupied {
             let mut apdu = vec![0x00, 0xc0];
             apdu.extend_from_slice(&u16::from(address).to_be_bytes());
-            let broadcast =
-                RawGroupAddress::try_new(0, 0, 0).expect("0/0/0 is a valid group address");
+            let broadcast = RawGroupAddress::broadcast();
             let mut telegram = Telegram::group_write(broadcast, apdu);
             telegram.telegram_type = TelegramType::IndividualData;
             telegram.compact_payload = false;
@@ -311,6 +338,10 @@ impl Knx {
     }
 
     /// Read the address assigned to a device with the given serial number.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_individual_address_by_serial_number(
         &self,
         serial: [u8; 6],
@@ -340,13 +371,17 @@ impl Knx {
 
     /// Assign an individual address to the device with the given serial number
     /// and verify the address by reading it back.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn write_individual_address_by_serial_number(
         &self,
         serial: [u8; 6],
         address: crate::protocol::IndividualAddress,
         timeout_duration: std::time::Duration,
     ) -> Result<()> {
-        let broadcast = RawGroupAddress::try_new(0, 0, 0).expect("0/0/0 is a valid group address");
+        let broadcast = RawGroupAddress::broadcast();
         let mut telegram = Telegram::group_write(
             broadcast,
             crate::protocol::IndividualAddressSerialWrite { serial, address }.encode(),
@@ -388,7 +423,7 @@ impl Knx {
             return Err(crate::error::TransportError::QueueClosed.into());
         }
 
-        let broadcast = RawGroupAddress::try_new(0, 0, 0).expect("0/0/0 is a valid group address");
+        let broadcast = RawGroupAddress::broadcast();
         let (tx, mut rx) = mpsc::channel(16);
         let filter = TelegramFilter::Custom(Arc::new(move |telegram| {
             telegram.destination == Address::Group(broadcast)
@@ -424,7 +459,7 @@ impl Knx {
             tokio::pin!(deadline);
             loop {
                 tokio::select! {
-                    _ = &mut deadline => return Ok(responses),
+                    () = &mut deadline => return Ok(responses),
                     response = rx.recv() => match response {
                         Some(response) => {
                             responses.push(response);
@@ -439,7 +474,7 @@ impl Knx {
         };
         let result = tokio::select! {
             result = operation => result,
-            _ = &mut stopping => Err(crate::error::TransportError::QueueClosed.into()),
+            () = &mut stopping => Err(crate::error::TransportError::QueueClosed.into()),
         };
         self.unregister_callback(handle).await;
         callback_guard.handle = None;
@@ -451,6 +486,10 @@ impl Knx {
     /// Only one connected session per peer may be active on a Knx instance.
     /// Connectionless requests remain available through
     /// [`Self::request_individual`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn connect_p2p(
         &self,
         destination: crate::protocol::IndividualAddress,
@@ -479,6 +518,10 @@ impl Knx {
     ///
     /// Only one context per peer can be open. A connected P2P link to the same
     /// device can be active at the same time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn connectionless_p2p(
         &self,
         destination: crate::protocol::IndividualAddress,
@@ -549,6 +592,10 @@ impl Knx {
     /// Open a P2P connection and switch the device's programming mode.
     ///
     /// The mask version determines whether the device uses memory or a property.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn switch_programming_mode(
         &self,
         destination: crate::protocol::IndividualAddress,
@@ -567,6 +614,10 @@ impl Knx {
     /// Restart a device using a temporary P2P connection.
     ///
     /// A basic restart is unconfirmed; success means the request was sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn restart_device(
         &self,
         destination: crate::protocol::IndividualAddress,
@@ -628,8 +679,12 @@ impl P2pConnection {
     }
 
     /// Send one connected-data APDU, repeating it up to three times after the
-    /// initial transmission if its matching T_ACK is lost or rejected. Success
-    /// does not wait for a CEMI L_Data.con bus confirmation.
+    /// initial transmission if its matching `T_ACK` is lost or rejected. Success
+    /// does not wait for a CEMI `L_Data.con` bus confirmation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn send_data(&mut self, apdu: Vec<u8>, wait_for_ack: bool) -> Result<()> {
         if self.closed {
             return Err(crate::error::TransportError::QueueClosed.into());
@@ -705,6 +760,10 @@ impl P2pConnection {
 
     /// Receive one APDU from the connected peer, optionally filtering by its
     /// two-byte response service. Connected data is acknowledged before return.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn receive(
         &mut self,
         expected_service: Option<[u8; 2]>,
@@ -754,7 +813,7 @@ impl P2pConnection {
             }
             let matches_service = expected_service.is_none_or(|service| {
                 // Memory and descriptor responses carry payload bits in the service octet.
-                if service[1] & 0xC0 == 0x40 && service[1] & 0x3F == 0 {
+                if service[1] == 0x40 {
                     event.payload.first() == Some(&service[0])
                         && event.payload.get(1).is_some_and(|byte| byte & 0xC0 == 0x40)
                 } else {
@@ -769,6 +828,10 @@ impl P2pConnection {
 
     /// Send a connected request and return the first response with the expected
     /// APCI service within `timeout`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn request(
         &mut self,
         apdu: Vec<u8>,
@@ -780,6 +843,10 @@ impl P2pConnection {
     }
 
     /// Tear down the transport link and unregister its receive callback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn close(&mut self) -> Result<()> {
         let result = if self.closed {
             Ok(())

@@ -13,6 +13,10 @@ pub struct ScannedInterfaceObject {
 
 impl P2pConnection {
     /// Read a single property-value range over this P2P session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_property_value(
         &mut self,
         request: crate::protocol::management::PropertyValueRead,
@@ -35,6 +39,10 @@ impl P2pConnection {
     }
 
     /// Read a property value range, splitting it into APDUs that fit the negotiated limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_property_values(
         &mut self,
         request: crate::protocol::management::PropertyValueRead,
@@ -119,6 +127,10 @@ impl P2pConnection {
     }
 
     /// Write a single property-value range over this P2P session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn write_property_value(
         &mut self,
         request: crate::protocol::management::PropertyValueWrite,
@@ -140,10 +152,14 @@ impl P2pConnection {
         Ok(response)
     }
 
-    /// Switch programming mode through Device Object property PID_PROGMODE (54).
+    /// Switch programming mode through Device Object property `PID_PROGMODE` (54).
     ///
     /// Use this property-based procedure for Realisation Type 1 devices.
     /// With `verify`, the write response must echo the requested value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn switch_programming_mode_property(
         &mut self,
         enabled: bool,
@@ -185,6 +201,10 @@ impl P2pConnection {
     }
 
     /// Verify a property value range by reading it back and comparing its bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn verify_property_values(
         &mut self,
         request: crate::protocol::management::PropertyValueRead,
@@ -209,6 +229,10 @@ impl P2pConnection {
     }
 
     /// Write a property value range, splitting it into APDUs that fit the negotiated limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn write_property_values(
         &mut self,
         request: crate::protocol::management::PropertyValueWrite,
@@ -283,6 +307,10 @@ impl P2pConnection {
     }
 
     /// Read one range from the standard 64 KiB memory address space.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_memory(
         &mut self,
         request: crate::protocol::management::MemoryRead,
@@ -304,6 +332,10 @@ impl P2pConnection {
     /// Write one range to the standard 64 KiB memory address space.
     ///
     /// Memory writes have a transport acknowledgement but no application response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn write_memory(
         &mut self,
         request: crate::protocol::management::MemoryWrite,
@@ -324,6 +356,10 @@ impl P2pConnection {
     ///
     /// Preserves the other bits and toggles the parity bit when the mode changes.
     /// `verify` reads the byte back after the transport-acknowledged write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn switch_programming_mode_memory(
         &mut self,
         enabled: bool,
@@ -377,6 +413,10 @@ impl P2pConnection {
     }
 
     /// Read one range from the 1 MiB user-memory address space.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_user_memory(
         &mut self,
         request: crate::protocol::management::UserMemoryRead,
@@ -398,6 +438,10 @@ impl P2pConnection {
     /// Write one range to the 1 MiB user-memory address space.
     ///
     /// Memory writes have a transport acknowledgement but no application response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn write_user_memory(
         &mut self,
         request: crate::protocol::management::UserMemoryWrite,
@@ -416,6 +460,10 @@ impl P2pConnection {
     }
 
     /// Read a standard-memory range in response-sized chunks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_memory_range(
         &mut self,
         address: u16,
@@ -459,6 +507,10 @@ impl P2pConnection {
     }
 
     /// Read a user-memory range in response-sized chunks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_user_memory_range(
         &mut self,
         address: u32,
@@ -507,6 +559,10 @@ impl P2pConnection {
     }
 
     /// Write a standard-memory range in bounded chunks, optionally reading each back.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn write_memory_range(
         &mut self,
         address: u16,
@@ -554,6 +610,10 @@ impl P2pConnection {
     }
 
     /// Write a user-memory range in bounded chunks, optionally reading each back.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn write_user_memory_range(
         &mut self,
         address: u32,
@@ -601,6 +661,10 @@ impl P2pConnection {
     }
 
     /// Read metadata for one interface-object property over this P2P session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_property_description(
         &mut self,
         request: crate::protocol::management::PropertyDescriptionRead,
@@ -623,6 +687,10 @@ impl P2pConnection {
     }
 
     /// Authorize this P2P session with a device access key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn authorize(
         &mut self,
         key: u32,
@@ -639,6 +707,10 @@ impl P2pConnection {
     }
 
     /// Try free access and the configured key, returning the better access level.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn authorize_best(
         &mut self,
         client_key: u32,
@@ -653,6 +725,10 @@ impl P2pConnection {
     }
 
     /// Read one device descriptor over this P2P session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_device_descriptor(
         &mut self,
         descriptor: u8,
@@ -682,6 +758,10 @@ impl P2pConnection {
     }
 
     /// Confirm device management access and return the device mask version.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn read_mask_version(&mut self, timeout: std::time::Duration) -> Result<u16> {
         let response = self.read_device_descriptor(0, timeout).await?;
         if response.data.len() != 2 {
@@ -696,6 +776,10 @@ impl P2pConnection {
     /// Switch programming mode using the mechanism associated with the mask version.
     ///
     /// Unknown mask versions return an error without writing to the device.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn switch_programming_mode(
         &mut self,
         enabled: bool,
@@ -737,13 +821,21 @@ impl P2pConnection {
     ///
     /// The device can restart before acknowledging the telegram and the P2P
     /// link may stop working. Close the connection after this operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn restart(&mut self) -> Result<()> {
         self.send_data(vec![0x03, 0x80], false).await
     }
 
     /// Perform a confirmed Master Reset on the connected device.
     ///
-    /// Wait at least the returned process_time before sending another request.
+    /// Wait at least the returned `process_time` before sending another request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn master_reset(
         &mut self,
         erase_code: u8,
@@ -781,6 +873,10 @@ impl P2pConnection {
     }
 
     /// Discover interface objects and their property descriptions on this device.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid, the connection fails, or a response is invalid or times out.
     pub async fn scan_interface_objects(
         &mut self,
         timeout: std::time::Duration,

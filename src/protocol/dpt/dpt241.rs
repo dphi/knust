@@ -128,6 +128,10 @@ impl std::str::FromStr for StatusSAB {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTStatusSAB([u8; 4]);
 impl DPTStatusSAB {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: StatusSAB) -> Result<Self> {
         Ok(Self(value.encode()?))
     }

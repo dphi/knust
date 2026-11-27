@@ -63,6 +63,10 @@ impl std::str::FromStr for PrioritisedModeControl {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DPTPrioritisedModeControl([u8; 1]);
 impl DPTPrioritisedModeControl {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is outside the valid range or cannot be encoded.
     pub fn new(value: PrioritisedModeControl) -> Result<Self> {
         Ok(Self([value.encode()?]))
     }
