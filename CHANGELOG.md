@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- The minimum supported Rust version is 1.89.
+- Updated dependencies, including AES and Base64.
+
 ## [0.3.0]
 
 ### Added
