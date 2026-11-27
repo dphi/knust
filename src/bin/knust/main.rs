@@ -1,3 +1,6 @@
+// Match keeps explicit gateway selection and the multi-step discovery fallback distinct.
+#![allow(clippy::single_match_else)]
+
 use clap::{Parser, Subcommand};
 use std::net::Ipv4Addr;
 use std::process::ExitCode;

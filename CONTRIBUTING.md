@@ -37,8 +37,8 @@ cargo test --all-features
 All three must be clean. The clippy invocation runs `clippy::pedantic` as a
 warn-level lint promoted by `-D warnings`, not a suggestion — fix the
 lint, don't `#[allow]` it, unless you're adding a *new* crate-level allow to
-`src/lib.rs` with a one-line rationale comment explaining why the lint
-doesn't apply here.
+the relevant crate root (`src/lib.rs` for the library or `src/bin/knust/main.rs`
+for the CLI), with a one-line rationale explaining why the lint doesn't apply.
 
 If you add or remove a `#[cfg(feature = ...)]` boundary, also check the
 feature matrix compiles:
