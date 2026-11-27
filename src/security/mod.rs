@@ -4,6 +4,7 @@
 //! for KNX Data Security and KNX IP Secure protocols.
 
 mod group;
+mod ip_wrapper;
 pub mod keys;
 pub mod primitives;
 pub mod session;

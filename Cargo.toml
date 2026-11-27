@@ -36,7 +36,7 @@ cli = ["dep:clap", "dep:if-addrs", "dpt", "tokio/io-std", "tokio/signal"]
 # NOTE: KNX IP Secure (session handshake) is verified against real hardware.
 # Data Secure group APDUs are integrated behind an explicit keyring opt-in;
 # interoperability with real Data-Secure devices is not yet validated.
-secure = ["dep:aes", "dep:base64", "dep:ctr", "dep:sha2", "dep:pbkdf2", "dep:x25519-dalek", "dep:zeroize", "ets"]
+secure = ["dep:aes", "dep:base64", "dep:ctr", "dep:sha2", "dep:pbkdf2", "dep:subtle", "dep:x25519-dalek", "dep:zeroize", "ets"]
 
 [dependencies]
 # Only the tokio pieces the library actually touches. rt-multi-thread and
@@ -58,6 +58,7 @@ base64 = { version = "0.22", default-features = false, features = ["alloc"], opt
 ctr = { version = "0.10", default-features = false, optional = true }
 sha2 = { version = "0.11", default-features = false, optional = true }
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"], optional = true }
+subtle = { version = "2.6", default-features = false, optional = true }
 x25519-dalek = { version = "3.0", default-features = false, features = ["static_secrets"], optional = true }
 zeroize = { version = "1.9", default-features = false, features = ["derive", "alloc"], optional = true }
 

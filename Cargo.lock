@@ -658,6 +658,7 @@ dependencies = [
  "sha2",
  "socket2",
  "strum",
+ "subtle",
  "thiserror",
  "tokio",
  "tokio-test",

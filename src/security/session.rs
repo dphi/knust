@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use zeroize::Zeroize;
 
+use super::ip_wrapper::SecureWrapper;
 use super::primitives::{
     EcdhKeyPair, bytes_xor, calculate_mac_cbc, decrypt_ctr, derive_device_authentication_password,
     derive_user_password, encrypt_ctr, sha256_hash,
@@ -397,50 +398,13 @@ impl SecureSession {
             .into());
         }
 
-        let sequence_info = self.get_next_sequence_number();
-        let message_tag = MESSAGE_TAG_TUNNELLING;
-        let payload_length = plain_frame.len();
-
-        // Total length: 6 header + 2 session_id + 6 sequence + 6 serial + 2 tag + 16 MAC = 38 + payload
-        let total_length = 38 + payload_length;
-
-        // SecureWrapper header: 06 10 09 50 + length
-        let mut wrapper_header = vec![0x06, 0x10, 0x09, 0x50];
-        wrapper_header.extend_from_slice(&(total_length as u16).to_be_bytes());
-
-        // Build block_0 for MAC calculation
-        let mut block_0 = Vec::with_capacity(16);
-        block_0.extend_from_slice(&sequence_info);
-        block_0.extend_from_slice(&DEVICE_SERIAL_NUMBER);
-        block_0.extend_from_slice(&message_tag);
-        block_0.extend_from_slice(&(payload_length as u16).to_be_bytes());
-
-        // Additional data: wrapper_header + session_id
-        let mut additional_data = wrapper_header.clone();
-        additional_data.extend_from_slice(&self.session_id.to_be_bytes());
-
-        let mac_cbc = calculate_mac_cbc(&session_key.key, &additional_data, plain_frame, &block_0)?;
-
-        // Build counter_0 for CTR encryption
-        let mut counter_0 = Vec::with_capacity(16);
-        counter_0.extend_from_slice(&sequence_info);
-        counter_0.extend_from_slice(&DEVICE_SERIAL_NUMBER);
-        counter_0.extend_from_slice(&message_tag);
-        counter_0.extend_from_slice(&[0xFF, 0x00]);
-
-        let (encrypted_data, encrypted_mac) =
-            encrypt_ctr(&session_key.key, &counter_0, &mac_cbc, plain_frame)?;
-
-        // Build SecureWrapper frame
-        let mut result = wrapper_header;
-        result.extend_from_slice(&self.session_id.to_be_bytes());
-        result.extend_from_slice(&sequence_info);
-        result.extend_from_slice(&DEVICE_SERIAL_NUMBER);
-        result.extend_from_slice(&message_tag);
-        result.extend_from_slice(&encrypted_data);
-        result.extend_from_slice(&encrypted_mac);
-
-        Ok(result)
+        let wrapper = SecureWrapper {
+            session_id: self.session_id,
+            sequence: self.next_wrapper_sequence()?,
+            serial_number: DEVICE_SERIAL_NUMBER,
+            message_tag: MESSAGE_TAG_TUNNELLING,
+        };
+        wrapper.seal(&session_key.key, plain_frame)
     }
 
     /// Decrypt a `SecureWrapper` frame.
@@ -459,74 +423,9 @@ impl SecureSession {
             .into());
         }
 
-        // Parse SecureWrapper: header(6) + session_id(2) + sequence(6) + serial(6) + tag(2) + data + mac(16)
-        if encrypted_frame.len() < 38 {
-            return Err(SecurityError::CryptographicError {
-                operation: "decrypt".to_string(),
-                reason: "Frame too short for SecureWrapper".to_string(),
-            }
-            .into());
-        }
-
-        let frame_session_id = u16::from_be_bytes([encrypted_frame[6], encrypted_frame[7]]);
-        if frame_session_id != self.session_id {
-            return Err(SecurityError::CryptographicError {
-                operation: "decrypt".to_string(),
-                reason: format!(
-                    "Session ID mismatch: expected {}, got {}",
-                    self.session_id, frame_session_id
-                ),
-            }
-            .into());
-        }
-
-        let sequence_info = &encrypted_frame[8..14];
-        let serial_number = &encrypted_frame[14..20];
-        let message_tag = &encrypted_frame[20..22];
-        let encrypted_data = &encrypted_frame[22..encrypted_frame.len() - 16];
-        let mac = &encrypted_frame[encrypted_frame.len() - 16..];
-
-        let received_seq = u64::from_be_bytes({
-            let mut arr = [0u8; 8];
-            arr[2..].copy_from_slice(sequence_info);
-            arr
-        });
-        // Build counter_0 for CTR decryption
-        let mut counter_0 = Vec::with_capacity(16);
-        counter_0.extend_from_slice(sequence_info);
-        counter_0.extend_from_slice(serial_number);
-        counter_0.extend_from_slice(message_tag);
-        counter_0.extend_from_slice(&[0xFF, 0x00]);
-
-        let (decrypted_data, mac_tr) =
-            decrypt_ctr(&session_key.key, &counter_0, mac, encrypted_data)?;
-
-        // Verify MAC
-        let wrapper_header = &encrypted_frame[..6];
-        let mut additional_data = wrapper_header.to_vec();
-        additional_data.extend_from_slice(&self.session_id.to_be_bytes());
-
-        let mut block_0 = Vec::with_capacity(16);
-        block_0.extend_from_slice(sequence_info);
-        block_0.extend_from_slice(serial_number);
-        block_0.extend_from_slice(message_tag);
-        block_0.extend_from_slice(&(decrypted_data.len() as u16).to_be_bytes());
-
-        let mac_cbc = calculate_mac_cbc(
-            &session_key.key,
-            &additional_data,
-            &decrypted_data,
-            &block_0,
-        )?;
-
-        if mac_cbc != mac_tr {
-            return Err(SecurityError::CryptographicError {
-                operation: "decrypt".to_string(),
-                reason: "MAC verification failed".to_string(),
-            }
-            .into());
-        }
-
+        let (wrapper, decrypted_data) =
+            SecureWrapper::open(&session_key.key, self.session_id, encrypted_frame)?;
+        let received_seq = wrapper.sequence_value();
         let next = self
             .next_receive_sequence
             .fetch_max(received_seq + 1, Ordering::SeqCst);
@@ -541,13 +440,18 @@ impl SecureSession {
         Ok(decrypted_data)
     }
 
-    /// Get the next sequence number and increment the counter.
-    fn get_next_sequence_number(&self) -> [u8; 6] {
-        let seq = self.sequence_number.fetch_add(1, Ordering::SeqCst);
-        let bytes = seq.to_be_bytes();
-        let mut result = [0u8; 6];
-        result.copy_from_slice(&bytes[2..]);
-        result
+    fn next_wrapper_sequence(&self) -> Result<[u8; 6]> {
+        let seq = self
+            .sequence_number
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+                (value < (1 << 48)).then(|| value + 1)
+            })
+            .map_err(|_| SecurityError::CryptographicError {
+                operation: "encrypt".into(),
+                reason: "SecureWrapper sequence exhausted".into(),
+            })?;
+        let [_, _, sequence @ ..] = seq.to_be_bytes();
+        Ok(sequence)
     }
 
     /// Close the session.
@@ -572,5 +476,22 @@ impl Drop for SecureSession {
         if let Some(ref mut auth) = self.device_auth_code {
             auth.zeroize();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrapper_sequence_stops_after_the_last_48_bit_value() {
+        let session = SecureSession::new(&SessionConfig::default());
+        session
+            .sequence_number
+            .store((1 << 48) - 1, Ordering::SeqCst);
+
+        assert_eq!(session.next_wrapper_sequence().unwrap(), [u8::MAX; 6]);
+        assert!(session.next_wrapper_sequence().is_err());
+        assert!(session.next_wrapper_sequence().is_err());
     }
 }
